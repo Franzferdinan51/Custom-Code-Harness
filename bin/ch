@@ -1,30 +1,35 @@
-#!/usr/bin/env node
-// Launcher for CodingHarness.
-// We use tsx at dev time and node on the compiled dist/ at install time.
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+#!/usr/bin/env bash
+# Launcher for CodingHarness.
+# Prefers bun (required by @opentui/core for native FFI), falls back
+# to node with the compiled dist/ if bun isn't available.
 
-const here = dirname(fileURLToPath(import.meta.url));
-const compiled = join(here, "..", "dist", "cli.js");
-const src = join(here, "..", "src", "cli.ts");
+set -e
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
-if (existsSync(compiled)) {
-  await import(compiled);
-} else {
-  // Dev mode: use tsx to load the TypeScript source directly.
-  const child = spawn(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      src,
-      ...process.argv.slice(2),
-    ],
-    { stdio: "inherit" }
-  );
-  child.on("exit", (code) => process.exit(code ?? 0));
-  process.on("SIGINT", () => child.kill("SIGINT"));
-  process.on("SIGTERM", () => child.kill("SIGTERM"));
-}
+# Resolve symlinks (npm link creates one in /Users/duckets/.npm-global/bin/).
+if [ -L "$0" ]; then
+  TARGET="$(readlink -f "$0" 2>/dev/null || readlink "$0")"
+  if [ -n "$TARGET" ] && [ -f "$TARGET" ]; then
+    HERE="$(cd "$(dirname "$TARGET")" && pwd)"
+  fi
+fi
+
+ROOT="$(cd "$HERE/.." && pwd)"
+
+DIST="$ROOT/dist/cli.js"
+SRC="$ROOT/src/cli.ts"
+
+# Prefer bun if available (needed for @opentui/core's native FFI binding).
+if command -v bun >/dev/null 2>&1; then
+  if [ -f "$DIST" ]; then
+    exec bun "$DIST" "$@"
+  else
+    exec bun --import tsx "$SRC" "$@"
+  fi
+else
+  if [ -f "$DIST" ]; then
+    exec node "$DIST" "$@"
+  else
+    exec node --import tsx "$SRC" "$@"
+  fi
+fi

@@ -52,16 +52,31 @@ The legacy flag style still works: `ch -p "hi"` is equivalent to
 
 ## TUI mode
 
-`ch` in a TTY automatically opens a full-screen TUI:
+`ch` in a TTY automatically opens a full-screen TUI built on
+[OpenTUI](https://github.com/anomalyco/opentui) — the native Zig
+TUI library that powers [OpenCode](https://opencode.ai) in
+production. The harness owns no TUI code itself; we just compose
+OpenTUI primitives (`Box`, `Text`, `Textarea`, `ScrollBox`) under a
+Yoga flexbox layout.
 
-- **Status header** — model, provider, session, token count, cwd
-- **Scrollable message area** — user prompts, tool calls (with ✓/✗
-  status), assistant streaming output
-- **Multi-line input editor** — Shift+Enter for newline, ↑/↓ for
-  history, Tab to autocomplete slash commands, Ctrl+A/E/K/U/W for
-  line operations, Ctrl+C to abort, Ctrl+D to quit, Ctrl+L to clear
-  messages
-- **Footer** — always-visible keybind hints
+What you get:
+
+- **RGBA colors** — no more ANSI 16-color palette; full 24-bit color
+  per cell
+- **Yoga flexbox layout** — header / messages / input / footer are
+  flex children that reflow on resize
+- **Native rendering** — the draw loop runs in Zig, not by emitting
+  ANSI strings
+- **Mouse support** — click to focus, drag to select text
+- **Box borders, titles, focus states** — keyboard nav between focusables
+- **ScrollBox** — the message area scrolls and sticks to the bottom
+  on new content
+- **Textarea** — multi-line input with selection, undo, word-jump,
+  paste handling
+
+The TUI binding is the same as before: ⏎ send · ⇧⏎ newline · Tab
+slash autocomplete · ↑/↓ history · Ctrl+C abort · Ctrl+D quit ·
+Ctrl+L clear.
 
 If you'd rather not have the TUI (e.g. in a script or a tiny terminal):
 
@@ -69,9 +84,10 @@ If you'd rather not have the TUI (e.g. in a script or a tiny terminal):
 ch repl           # or: ch --no-tui
 ```
 
-The TUI is built from scratch with raw ANSI escapes — no TUI library,
-zero runtime dependencies. The rendering is diff-based, so streaming
-tokens don't flicker.
+**Runtime requirement:** OpenTUI needs `bun` (or Node with
+`--experimental-ffi --allow-ffi`) for the native FFI binding. The
+`ch` launcher auto-detects `bun` and falls back to node if bun
+isn't installed. Install bun with `curl -fsSL https://bun.sh/install | sh`.
 
 ## Self-updating
 

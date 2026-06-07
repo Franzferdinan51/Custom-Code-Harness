@@ -1,6 +1,6 @@
 {
   "name": "codingharness",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A versatile terminal coding harness — multi-provider, extensible, crash-resistant.",
   "type": "module",
   "private": true,
@@ -12,7 +12,8 @@
     "start": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/__tests__/*.test.ts",
+    "test": "bun test src/__tests__/*.test.ts",
+    "test:node": "tsx --test src/__tests__/*.test.ts",
     "test:smoke": "tsx src/__tests__/smoke.ts"
   },
   "engines": {
@@ -23,5 +24,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@opentui/core": "^0.3.4"
+  }
 }

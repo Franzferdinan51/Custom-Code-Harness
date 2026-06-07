@@ -3,6 +3,35 @@
 All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.1] - 2026-06-07
+
+### Changed
+
+- **TUI is now built on [OpenTUI](https://github.com/anomalyco/opentui)**
+  (Zig core + TypeScript bindings, the library that powers
+  [OpenCode](https://opencode.ai)). The hand-rolled ANSI diff
+  renderer in v0.2.0 (~1,600 LoC) is replaced by OpenTUI's Yoga
+  layout + native renderables. The runtime-facing `Tui` interface
+  is unchanged.
+- Added `@opentui/core` as a runtime dependency.
+- The `ch` launcher now prefers `bun` (required by OpenTUI's FFI
+  binding) and falls back to `node` if bun is unavailable.
+
+### Added
+
+- **RGBA colors** throughout the TUI (no more 16-color ANSI palette)
+- **Mouse support** (click to focus, drag-select text)
+- **Box borders, titles, focus states** via OpenTUI's `BoxRenderable`
+- **Real ScrollBox** for the message area (sticky-scroll to bottom)
+- **Textarea** editor with selection, undo, word-jump, paste handling
+- 6 new TUI tests using OpenTUI's `TestRenderer` (49 total)
+
+### Removed
+
+- `src/ui/tui/screen.ts`, `src/ui/tui/editor.ts`, `src/ui/tui/buffer.ts`,
+  `src/ui/tui/render.ts`, `src/ui/tui/layout.ts` — replaced by
+  OpenTUI's native equivalents. Net: ~1,200 fewer LoC.
+
 ## [0.2.0] - 2026-06-07
 
 ### Added

@@ -10,11 +10,10 @@ import { parseArgs } from "node:util";
 import { ensurePaths } from "./config/paths.js";
 import { loadSettings } from "./config/settings.js";
 import { HarnessRuntime } from "./runtime.js";
-import { startRepl } from "./ui/repl.js";
 import { c } from "./ui/colors.js";
 import { log } from "./util/logger.js";
-import { tryParseSlash } from "./slash/registry.js";
 import { BUILTIN_REGISTRY } from "./slash/builtin.js";
+import { runTui, isTuiCapable } from "./ui/tui-app.js";
 
 // ---------- Subcommand registry ----------
 
@@ -34,6 +33,7 @@ interface SubcommandContext {
   maxSteps?: string;
   port?: string;
   host?: string;
+  noTui?: boolean;
 }
 
 const SUBCOMMANDS = new Map<string, { description: string; usage: string; run: SubcommandHandler }>();
@@ -41,9 +41,17 @@ function registerSubcommand(name: string, description: string, usage: string, ru
   SUBCOMMANDS.set(name, { description, usage, run });
 }
 
-registerSubcommand("chat", "Start an interactive chat session (the default).",
-  "ch chat [--cwd <path>] [--provider <id>] [--model <name>] [-c | -r | -s <id>]",
+registerSubcommand("chat", "Start an interactive chat session (the default — uses the TUI when available).",
+  "ch chat [--cwd <path>] [--provider <id>] [--model <name>] [-c | -r | -s <id>] [--no-tui]",
   async (ctx) => { return startReplSession(ctx); });
+
+registerSubcommand("repl", "Force the simple line-based REPL (no TUI). Useful for piping or old terminals.",
+  "ch repl [--cwd <path>] [--provider <id>] [--model <name>] [-c | -r | -s <id>]",
+  async (ctx) => { return startReplSession({ ...ctx, noTui: true }); });
+
+registerSubcommand("tui", "Force the full TUI (auto-detected by default in a TTY).",
+  "ch tui",
+  async (ctx) => { return startReplSession({ ...ctx, noTui: false }); });
 
 registerSubcommand("run", "Quick one-shot: run a single prompt and exit.",
   "ch run <prompt>  [-p, --print] [--provider <id>] [--model <name>] [--cwd <path>]",
@@ -101,6 +109,10 @@ registerSubcommand("serve", "Run a headless HTTP server that exposes the agent o
   "ch serve [--port <n>] [--host <addr>]",
   async (ctx) => { return runServeCmd(ctx); });
 
+registerSubcommand("update", "Update CodingHarness to the latest version and rebuild.",
+  "ch update [--check] [--channel stable|beta|dev]",
+  async (ctx) => { return runUpdateCmd(ctx); });
+
 // ---------- Help / version ----------
 
 const VERSION = "0.2.0";
@@ -118,14 +130,14 @@ function showHelp(cmd?: string): number {
     "",
     "Subcommands:",
   ];
-  const order = ["chat", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve"];
+  const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "update"];
   for (const name of order) {
     const s = SUBCOMMANDS.get(name);
     if (!s) continue;
     lines.push("  " + name.padEnd(10) + s.description);
   }
   lines.push("");
-  lines.push("Run `ch help <subcommand>` for details. Inside the REPL, type `/help` for slash commands.");
+  lines.push("Run `ch help <subcommand>` for details. Inside the TUI, type `/help` for slash commands.");
   lines.push("");
   lines.push("Common options (work with most subcommands):");
   lines.push("  --cwd <path>          Working directory (default: process.cwd)");
@@ -135,6 +147,7 @@ function showHelp(cmd?: string): number {
   lines.push("  -r, --resume [id]     Resume a session (lists if no id)");
   lines.push("  -s, --session <id>    Use a specific session");
   lines.push("  --no-session          Ephemeral mode (do not save)");
+  lines.push("  --no-tui              Force the simple REPL (skip the TUI)");
   lines.push("  -j, --json            Output events as JSON lines (one-shot modes)");
   lines.push("  -p, --print <text>    Print mode (one-shot)");
   lines.push("");
@@ -153,6 +166,7 @@ function showHelp(cmd?: string): number {
   lines.push("  ch loop 5 \"run the test suite until it passes\"");
   lines.push("  ch doctor");
   lines.push("  ch sessions");
+  lines.push("  ch update");
   process.stdout.write(lines.join("\n") + "\n");
   return 0;
 }
@@ -162,29 +176,24 @@ function showHelp(cmd?: string): number {
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
   if (argv.length === 0) {
-    // Default: REPL.
     return startReplSession({ args: [], cwd: process.cwd(), ephemeral: false });
   }
 
-  // First check: is the first arg a flag? Then it's the legacy flag-style mode.
   if (argv[0]!.startsWith("-")) {
     return runLegacyFlagMode(argv);
   }
 
-  // First check: is it help/version?
   if (argv[0] === "help") return showHelp(argv[1]);
   if (argv[0] === "version") { process.stdout.write("CodingHarness " + VERSION + "\n"); return 0; }
   if (argv[0] === "-h" || argv[0] === "--help") return showHelp();
   if (argv[0] === "-v" || argv[0] === "--version") { process.stdout.write("CodingHarness " + VERSION + "\n"); return 0; }
 
-  // Is it a known subcommand?
   const sub = SUBCOMMANDS.get(argv[0]!);
   if (sub) {
     const ctx = await buildContext(argv.slice(1));
     return await sub.run(ctx);
   }
 
-  // Unknown: treat the whole thing as a prompt that starts the REPL with an initial line.
   return startReplSession({ args: argv, cwd: process.cwd(), ephemeral: false, initialPrompt: argv.join(" ") });
 }
 
@@ -208,6 +217,9 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
         "max-steps": { type: "string" },
         port: { type: "string" },
         host: { type: "string" },
+        "no-tui": { type: "boolean" },
+        check: { type: "boolean" },
+        channel: { type: "string" },
       },
       allowPositionals: true,
       strict: false,
@@ -230,6 +242,7 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
     maxSteps: parsed.values["max-steps"] ? String(parsed.values["max-steps"]) : undefined,
     port: parsed.values.port ? String(parsed.values.port) : undefined,
     host: parsed.values.host ? String(parsed.values.host) : undefined,
+    noTui: !!parsed.values["no-tui"],
   };
 }
 
@@ -240,6 +253,9 @@ async function startReplSession(ctx: SubcommandContext & { initialPrompt?: strin
   const settings = loadSettings();
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
+
+  // Decide TUI vs simple REPL.
+  const wantTui = !ctx.noTui && isTuiCapable();
 
   const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
 
@@ -255,9 +271,16 @@ async function startReplSession(ctx: SubcommandContext & { initialPrompt?: strin
     if (list[0]) { try { await runtime.setSession(list[0].id); } catch { /* ignore */ } }
   }
 
-  if (ctx.initialPrompt) {
-    await runtime.runUserTurn(ctx.initialPrompt);
+  if (wantTui) {
+    return runTui(runtime, ctx);
   }
+
+  return runSimpleRepl(runtime, ctx);
+}
+
+async function runSimpleRepl(runtime: HarnessRuntime, ctx: SubcommandContext & { initialPrompt?: string }): Promise<number> {
+  const { startRepl } = await import("./ui/repl.js");
+  if (ctx.initialPrompt) await runtime.runUserTurn(ctx.initialPrompt);
 
   if (process.stdout.isTTY) {
     const provider = runtime.providerId() ?? "(no provider)";
@@ -295,7 +318,6 @@ async function runOneShot(ctx: SubcommandContext, mode: "run" | "agent" | "code"
   if (ctx.sessionId) { try { await runtime.setSession(ctx.sessionId); } catch (e) { process.stderr.write(c.red("error: ") + (e as Error).message + "\n"); return 1; } }
 
   if (ctx.json) {
-    // JSON output mode: just stream events as JSONL.
     const { runAgent, DEFAULT_LIMITS } = await import("./agent/loop.js");
     const provider = runtime.providerRegistry.default();
     if (!provider) { process.stderr.write("error: no provider configured\n"); return 1; }
@@ -335,7 +357,6 @@ async function runOneShot(ctx: SubcommandContext, mode: "run" | "agent" | "code"
     return 0;
   }
 
-  // Default text mode.
   await runtime.runUserTurn(prompt);
   return 0;
 }
@@ -364,7 +385,6 @@ async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
 }
 
 async function runLoopCmd(ctx: SubcommandContext): Promise<number> {
-  // Parse: ch loop [N] [sentinel] <prompt>  OR  ch loop N
   const args = ctx.args;
   let n = 5;
   let sentinel = "";
@@ -482,20 +502,20 @@ async function runServeCmd(ctx: SubcommandContext): Promise<number> {
   return 0;
 }
 
-// ---------- Lightweight runtime for "no model" subcommands ----------
+async function runUpdateCmd(ctx: SubcommandContext): Promise<number> {
+  const channel = (ctx as { channel?: string }).channel ?? "stable";
+  const checkOnly = !!(ctx as { check?: boolean }).check;
+  const { runUpdate } = await import("./updater.js");
+  return runUpdate({ cwd: ctx.cwd, channel, checkOnly });
+}
 
-/** Build a runtime that has settings/memory/skills wired but skips
- *  any provider/model setup. Used by subcommands that don't need
- *  the LLM (memory, cron, sessions, init, etc). */
-function makeLightRuntime(ctx: SubcommandContext): HarnessRuntime {
+function makeLightRuntime(ctx: SubcommandContext): import("./runtime.js").HarnessRuntime {
   ensurePaths();
   const settings = loadSettings();
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
   return new HarnessRuntime({ cwd: ctx.cwd, ephemeral: true });
 }
-
-// ---------- Legacy flag-mode ----------
 
 async function runLegacyFlagMode(argv: string[]): Promise<number> {
   let parsed;
@@ -509,6 +529,7 @@ async function runLegacyFlagMode(argv: string[]): Promise<number> {
         resume: { type: "string", short: "r" },
         session: { type: "string", short: "s" },
         "no-session": { type: "boolean" },
+        "no-tui": { type: "boolean" },
         cwd: { type: "string" },
         provider: { type: "string" },
         model: { type: "string" },
@@ -531,7 +552,6 @@ async function runLegacyFlagMode(argv: string[]): Promise<number> {
   if (opts.skills) return listSkillsCmd({ args: [], cwd: String(opts.cwd ?? process.cwd()), ephemeral: false });
   if (opts.agents) return listAgentsCmd({ args: [], cwd: String(opts.cwd ?? process.cwd()), ephemeral: false });
 
-  // Treat positional as prompt.
   const positional = parsed.positionals.join(" ").trim();
   if (opts.print !== undefined) {
     let prompt = String(opts.print);
@@ -547,51 +567,32 @@ async function runLegacyFlagMode(argv: string[]): Promise<number> {
     const stdin = (await readStdin()).trim();
     if (stdin) return runOneShot({ args: [stdin], cwd: String(opts.cwd ?? process.cwd()), ephemeral: !!opts["no-session"], provider: opts.provider ? String(opts.provider) : undefined, model: opts.model ? String(opts.model) : undefined, sessionId: opts.session ? String(opts.session) : undefined, json: !!opts.json }, "agent");
   }
-  return startReplSession({ args: [], cwd: String(opts.cwd ?? process.cwd()), ephemeral: !!opts["no-session"], provider: opts.provider ? String(opts.provider) : undefined, model: opts.model ? String(opts.model) : undefined, sessionId: opts.session ? String(opts.session) : undefined, cont: !!opts.continue, resume: opts.resume ? String(opts.resume) : undefined });
+  return startReplSession({ args: [], cwd: String(opts.cwd ?? process.cwd()), ephemeral: !!opts["no-session"], provider: opts.provider ? String(opts.provider) : undefined, model: opts.model ? String(opts.model) : undefined, sessionId: opts.session ? String(opts.session) : undefined, cont: !!opts.continue, resume: opts.resume ? String(opts.resume) : undefined, noTui: !!opts["no-tui"] });
 }
 
-// ---------- Headless server ----------
-
-async function startServer(runtime: HarnessRuntime, opts: { port: number; host: string }): Promise<void> {
-  // Tiny HTTP API: POST /v1/chat { messages: [{role, content}] } -> { text, usage }
-  // GET /v1/status -> { ok, model, provider }
-  // GET /v1/sessions -> [...]
-  // GET /v1/agents -> [...]
-  // GET /v1/skills -> [...]
+async function startServer(runtime: import("./runtime.js").HarnessRuntime, opts: { port: number; host: string }): Promise<void> {
   const { createServer } = await import("node:http");
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://" + (req.headers.host ?? "localhost"));
       if (req.method === "GET" && url.pathname === "/v1/status") {
-        const body = JSON.stringify({
-          ok: true,
-          version: VERSION,
-          model: runtime.model(),
-          provider: runtime.providerId(),
-        });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(body);
-        return;
+        const body = JSON.stringify({ ok: true, version: VERSION, model: runtime.model(), provider: runtime.providerId() });
+        res.writeHead(200, { "content-type": "application/json" }); res.end(body); return;
       }
       if (req.method === "GET" && url.pathname === "/v1/agents") {
         const body = JSON.stringify({ agents: runtime.subagents.list() });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(body);
-        return;
+        res.writeHead(200, { "content-type": "application/json" }); res.end(body); return;
       }
       if (req.method === "GET" && url.pathname === "/v1/skills") {
         const all = await runtime.skills.list();
         const body = JSON.stringify({ skills: all.map((s) => ({ name: s.name, description: s.description })) });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(body);
-        return;
+        res.writeHead(200, { "content-type": "application/json" }); res.end(body); return;
       }
       if (req.method === "GET" && url.pathname === "/v1/sessions") {
         const { Session } = await import("./agent/session.js");
         const list = await Session.list(50);
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ sessions: list }));
-        return;
+        res.end(JSON.stringify({ sessions: list })); return;
       }
       if (req.method === "POST" && url.pathname === "/v1/chat") {
         const chunks: Buffer[] = [];
@@ -642,17 +643,10 @@ async function startServer(runtime: HarnessRuntime, opts: { port: number; host: 
   });
   server.listen(opts.port, opts.host, () => {
     process.stdout.write("CodingHarness server listening on http://" + opts.host + ":" + opts.port + "\n");
-    process.stdout.write("  GET  /v1/status    — runtime info\n");
-    process.stdout.write("  GET  /v1/agents    — list sub-agents\n");
-    process.stdout.write("  GET  /v1/skills    — list skills\n");
-    process.stdout.write("  GET  /v1/sessions  — list sessions\n");
-    process.stdout.write("  POST /v1/chat      — { messages: [{role, content}] } -> { text, usage, steps }\n");
-    process.stdout.write("  POST /v1/spawn     — { agent, prompt } -> sub-agent result\n");
+    process.stdout.write("  GET  /v1/status\n  GET  /v1/agents\n  GET  /v1/skills\n  GET  /v1/sessions\n  POST /v1/chat\n  POST /v1/spawn\n");
   });
   await new Promise(() => { /* run until killed */ });
 }
-
-// ---------- Utilities ----------
 
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";

@@ -5,7 +5,18 @@ extensible, and built to never crash mid-edit.
 
 ```
 $ ch
-ch › list the files in src/ and tell me which ones import lodash
+┌─ CodingHarness v0.2.0 ──────────────────────────────────────────┐
+│ openai/gpt-4o · session:abc123 · 1.2k in / 340 out                 │
+├───────────────────────────────────────────────────────────────────┤
+│  › list the files in src/ and tell me which ones import lodash   │
+│                                                                   │
+│  ✓ read /Users/you/Desktop/CodingHarness/src/cli.ts (210 lines)  │
+│                                                                   │
+│  The CLI entrypoint parses args and routes to one of 16            │
+│  subcommands...                                                   │
+├───────────────────────────────────────────────────────────────────┤
+│ ⏎ send · ⇧⏎ newline · Tab complete · ↑/↓ history · Ctrl+C abort │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ## Startup commands
@@ -14,8 +25,10 @@ Following the same pattern as `grok` / `grok agent` / `codex`:
 
 | Command        | What it does                                                     |
 | -------------- | ---------------------------------------------------------------- |
-| `ch`           | Interactive REPL (the default)                                   |
-| `ch chat`      | REPL, explicit                                                   |
+| `ch`           | **TUI** (auto-detected in a TTY), or simple REPL                 |
+| `ch chat`      | TUI / REPL (explicit)                                            |
+| `ch repl`      | Force the simple line-based REPL (no TUI)                        |
+| `ch tui`       | Force the full TUI                                               |
 | `ch run`       | Quick one-shot prompt, exits after one response                  |
 | `ch agent`     | Full-power one-shot: sub-agents, skills, all tools              |
 | `ch code`      | Code-focused one-shot (editor persona)                           |
@@ -30,20 +43,51 @@ Following the same pattern as `grok` / `grok agent` / `codex`:
 | `ch sessions`  | List, show, fork, or send to a session                          |
 | `ch init`      | Generate a starter `.codingharness/AGENTS.md` in the cwd        |
 | `ch serve`     | Run a headless HTTP server with `/v1/chat`, `/v1/spawn`, etc.    |
+| `ch update`    | Self-update: `git pull && npm install && build && link`          |
 | `ch version`   | Print the version                                                |
 | `ch help`      | Show help (or `ch help <subcommand>` for a specific one)        |
 
-Examples:
-```bash
-ch agent "add a /healthcheck slash command that pings the configured provider"
-ch code "review src/auth.ts for security issues"
-ch goal "wire up OAuth for the dashboard" --max-steps=8
-ch loop 5 "run the test suite"
-ch serve --port 7777
-```
-
 The legacy flag style still works: `ch -p "hi"` is equivalent to
 `ch run "hi"`. So is `ch --doctor` to `ch doctor`.
+
+## TUI mode
+
+`ch` in a TTY automatically opens a full-screen TUI:
+
+- **Status header** — model, provider, session, token count, cwd
+- **Scrollable message area** — user prompts, tool calls (with ✓/✗
+  status), assistant streaming output
+- **Multi-line input editor** — Shift+Enter for newline, ↑/↓ for
+  history, Tab to autocomplete slash commands, Ctrl+A/E/K/U/W for
+  line operations, Ctrl+C to abort, Ctrl+D to quit, Ctrl+L to clear
+  messages
+- **Footer** — always-visible keybind hints
+
+If you'd rather not have the TUI (e.g. in a script or a tiny terminal):
+
+```bash
+ch repl           # or: ch --no-tui
+```
+
+The TUI is built from scratch with raw ANSI escapes — no TUI library,
+zero runtime dependencies. The rendering is diff-based, so streaming
+tokens don't flicker.
+
+## Self-updating
+
+`ch update` pulls the latest source, reinstalls deps, rebuilds, and
+re-links the global `ch` binary:
+
+```bash
+ch update         # pull + install + build + link
+ch update --check # just check, don't apply
+ch update --channel dev
+```
+
+The updater only works if CodingHarness was installed from a git repo
+(`ch` is a symlink back to the source tree via `npm link`). For an
+npm-published install, run `npm install -g codingharness@latest`
+instead.
 
 ## What's in v0.2
 
@@ -51,9 +95,10 @@ A full **sub-agent** system, a **skills** system following the
 [agentskills.io](https://agentskills.io) standard, **persistent memory**,
 **AGENTS.md** context loading, **automatic + manual compaction**,
 **cron scheduling**, **30+ slash commands**, **doctor diagnostics**,
-a fresh **extension manifest** format, and a **`serve` mode** that
-exposes the agent over HTTP — all inspired by the best parts of
-Hermes, OpenClaw, openclaude, pi, goose, and codex.
+a fresh **extension manifest** format, a **`serve` mode** that
+exposes the agent over HTTP, a full **TUI**, and a self-updater —
+all inspired by the best parts of Hermes, OpenClaw, openclaude, pi,
+goose, and codex.
 
 | From              | What we pulled                                                                                |
 | ----------------- | --------------------------------------------------------------------------------------------- |

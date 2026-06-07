@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+// Launcher for CodingHarness.
+// We use tsx at dev time and node on the compiled dist/ at install time.
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const compiled = join(here, "..", "dist", "cli.js");
+const src = join(here, "..", "src", "cli.ts");
+
+if (existsSync(compiled)) {
+  await import(compiled);
+} else {
+  // Dev mode: use tsx to load the TypeScript source directly.
+  const child = spawn(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      src,
+      ...process.argv.slice(2),
+    ],
+    { stdio: "inherit" }
+  );
+  child.on("exit", (code) => process.exit(code ?? 0));
+  process.on("SIGINT", () => child.kill("SIGINT"));
+  process.on("SIGTERM", () => child.kill("SIGTERM"));
+}

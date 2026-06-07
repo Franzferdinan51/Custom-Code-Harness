@@ -7,6 +7,7 @@
 import type { SlashCommand, SlashContext, SlashRuntime } from "./registry.js";
 import { SlashRegistry, tryParseSlash } from "./registry.js";
 import { c } from "../ui/colors.js";
+import { formatUSD } from "../agent/cost.js";
 import { Session, sessionToMessages } from "../agent/session.js";
 import { compact as runCompaction, roughTokenCount, defaultCutoff } from "../agent/compaction.js";
 import { CronStore, formatSchedule, parseHumanSchedule, nextRun } from "../agent/cron.js";
@@ -61,6 +62,57 @@ const resetCommand: SlashCommand = {
   name: "reset",
   description: "Alias for /clear.",
   run(_a, ctx) { ctx.runtime?.().clearHistory(); return "history reset"; },
+};
+
+// ---------- /cost ----------
+
+const costCommand: SlashCommand = {
+  name: "cost",
+  description: "Show cumulative token usage and cost for this session.",
+  async run(_a, ctx) {
+    const rt = ctx.runtime as { cost?: { total(): { inputTokens: number; outputTokens: number; cost: number }; perModel(): Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>; perAgent(): Array<{ agent: string; cost: number; calls: number }> } } | undefined;
+    if (!rt?.cost) return "(cost tracking not available)";
+    const t = rt.cost.total();
+    const out: string[] = [];
+    out.push("Session totals: " + t.inputTokens + " in / " + t.outputTokens + " out · " + formatUSD(t.cost));
+    const perModel = rt.cost.perModel();
+    if (perModel.length > 0) {
+      out.push("");
+      out.push("By model:");
+      for (const m of perModel.slice(0, 10)) {
+        out.push("  " + (m.model.padEnd(36)) + " " + m.inputTokens + " in / " + m.outputTokens + " out · " + formatUSD(m.cost));
+      }
+    }
+    const perAgent = rt.cost.perAgent();
+    if (perAgent.length > 0) {
+      out.push("");
+      out.push("By agent (incl. sub-agents):");
+      for (const a of perAgent) {
+        out.push("  " + a.agent.padEnd(20) + " " + a.calls + " call" + (a.calls === 1 ? "" : "s") + " · " + formatUSD(a.cost));
+      }
+    }
+    return out.join("\n");
+  },
+};
+
+// ---------- /approval ----------
+
+const approvalCommand: SlashCommand = {
+  name: "approval",
+  description: "Show or set bash approval mode.",
+  usage: "/approval [off|allowlist|blocklist|on-mutation|ask]",
+  async run(args, ctx) {
+    const rt = ctx.runtime as { approval?: { mode: string } } | undefined;
+    if (!rt?.approval) return "(approval not configured)";
+    const trimmed = args.trim();
+    if (!trimmed) {
+      return "approval mode: " + rt.approval.mode + "\n(use /approval off|allowlist|blocklist|on-mutation|ask)";
+    }
+    const valid = ["off", "allowlist", "blocklist", "on-mutation", "ask"];
+    if (!valid.includes(trimmed)) return "valid modes: " + valid.join(", ");
+    rt.approval.mode = trimmed as "off";
+    return "approval mode set to " + trimmed;
+  },
 };
 
 // ---------- /quit / /exit ----------
@@ -637,3 +689,5 @@ BUILTIN_REGISTRY.register(forkCommand);
 BUILTIN_REGISTRY.register(promptsCommand);
 BUILTIN_REGISTRY.register(mcpCommand);
 BUILTIN_REGISTRY.register(personalityCommand);
+BUILTIN_REGISTRY.register(costCommand);
+BUILTIN_REGISTRY.register(approvalCommand);

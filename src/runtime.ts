@@ -19,6 +19,8 @@ import { loadExtensions } from "./agent/extensions.js";
 import { compact as runCompaction, roughTokenCount } from "./agent/compaction.js";
 import { paths } from "./config/paths.js";
 import type { ChatMessage, ToolCall, ToolResult, Provider } from "./types.js";
+import { CostTracker, formatUSD, callCost } from "./agent/cost.js";
+import { DEFAULT_APPROVAL, type ApprovalConfig } from "./agent/approval.js";
 
 export interface RuntimeOptions {
   cwd: string;
@@ -35,6 +37,8 @@ export class HarnessRuntime implements SlashRuntime {
   readonly skills: SkillRegistry;
   readonly memory: MemoryStore;
   readonly tools: ToolRegistry;
+  /** Sub-agents spawned during this session. */
+  readonly subagentHistory: Array<{ name: string; prompt: string; status: string; at: number; cost: number; steps: number }> = [];
 
   private session: Session | null = null;
   private ephemeral = false;
@@ -48,6 +52,12 @@ export class HarnessRuntime implements SlashRuntime {
   private lastTokensOut = 0;
   private verbose = false;
   private trace = false;
+  /** Cumulative usage for the lifetime of this Runtime. */
+  readonly cost = new CostTracker();
+  /** Currently-running sub-agents (for the sidebar). */
+  readonly activeSubagents = new Map<string, { prompt: string; startedAt: number; status: "running" | "ok" | "err" }>();
+  /** Approval config (settings-driven). */
+  approval: ApprovalConfig = DEFAULT_APPROVAL;
 
   constructor(opts: RuntimeOptions) {
     this.cwd = opts.cwd;
@@ -58,6 +68,15 @@ export class HarnessRuntime implements SlashRuntime {
     this.skills = new SkillRegistry({ cwd: this.cwd });
     this.memory = new MemoryStore();
     this.tools = defaultToolRegistry();
+    // Wire approval config from settings.
+    if (this.settings.approval) {
+      this.approval = {
+        mode: this.settings.approval.mode ?? DEFAULT_APPROVAL.mode,
+        allowlist: this.settings.approval.allowlist ?? [],
+        blocklist: this.settings.approval.blocklist ?? [],
+        override: this.settings.approval.override,
+      };
+    }
   }
 
   async ensureSession(): Promise<Session> {
@@ -168,8 +187,10 @@ export class HarnessRuntime implements SlashRuntime {
           onUsage: (u) => {
             this.lastTokensIn = u.inputTokens;
             this.lastTokensOut = u.outputTokens;
+            this.cost.record(model, provider.id, u.inputTokens, u.outputTokens);
             if (this.settings.ui?.showTokenUsage !== false) {
-              process.stdout.write(c.dim("  (tokens in=" + u.inputTokens + " out=" + u.outputTokens + ")") + "\n");
+              const t = this.cost.total();
+              process.stdout.write(c.dim("  (tokens in=" + u.inputTokens + " out=" + u.outputTokens + " · session cost " + formatUSD(t.cost) + ")") + "\n");
             }
           },
           onError: (e) => { this.print(c.red("  ! " + e.message)); },
@@ -207,12 +228,22 @@ export class HarnessRuntime implements SlashRuntime {
   // ---- Internals ----
 
   private buildToolServices(provider: Provider, model: string) {
+    const rt = this;
     return {
       spawnSubagent: async (input: { agent: string; prompt: string; model?: string; providerId?: string; cwd?: string }) => {
         const ac = new AbortController();
         process.once("SIGINT", () => ac.abort());
+        const id = input.agent + ":" + Date.now().toString(36);
+        rt.activeSubagents.set(id, { prompt: input.prompt, startedAt: Date.now(), status: "running" });
         try {
-          return await this.subagents.spawn({ ...input, cwd: input.cwd ?? this.cwd, signal: ac.signal });
+          const r = await rt.subagents.spawn({ ...input, cwd: input.cwd ?? rt.cwd, signal: ac.signal });
+          rt.activeSubagents.set(id, { prompt: input.prompt, startedAt: Date.now(), status: r.status === "ok" ? "ok" : r.status === "error" ? "err" : "running" });
+          // Track sub-agent cost.
+          if (r.usage) rt.cost.record(input.model ?? model, input.providerId ?? provider.id, r.usage.inputTokens, r.usage.outputTokens, input.agent);
+          rt.subagentHistory.push({ name: input.agent, prompt: input.prompt, status: r.status, at: Date.now(), cost: r.usage ? callCost(input.model ?? model, r.usage.inputTokens, r.usage.outputTokens) : 0, steps: r.steps });
+          // Auto-evict after 5s.
+          setTimeout(() => rt.activeSubagents.delete(id), 5_000);
+          return r;
         } finally {
           process.removeListener("SIGINT", () => ac.abort());
         }
@@ -230,6 +261,7 @@ export class HarnessRuntime implements SlashRuntime {
       searchMemory: async (q: string) => { return this.memory.search(q); },
       readTodo: () => this.todoItems,
       writeTodo: async (items: string[]) => { this.todoItems = items; if (this.session) void this.session.append({ kind: "meta", data: { todo: items } }); },
+      getApproval: () => this.approval,
     };
   }
   private todoItems: string[] = [];

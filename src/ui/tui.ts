@@ -2,34 +2,36 @@
 // Zig TUI library. We keep the same public API as the v0.2.0
 // hand-rolled version so the runtime doesn't change.
 //
-// Architecture:
-//   - CliRenderer owns the alt screen, the input loop, and the render
-//     loop. Everything draws to a single Yoga layout tree under
-//     `renderer.root`.
-//   - Header: a Box with flex-row and two Text children.
-//   - Messages: a ScrollBox with a vertical flex column of Text
-//     children. New messages get appended; the ScrollBox auto-scrolls.
-//   - Input: a Textarea (multi-line editor) inside a Box with a border.
-//   - Footer: a Box with a single Text child (the keybind hints).
+// Layout (top-to-bottom, root is a column):
 //
-// Streaming tokens append to the last "assistant" Text renderable.
+//   ┌─ header (2 rows) ────────────────────────────────────┐
+//   ├─ body (flex 1) ──────────────────────────────────────┤
+//   │  ┌─ sidebar (24 cols) ─┐  ┌─ main (flex 1) ──────┐  │
+//   │  │ sessions            │  │  scroll (messages)   │  │
+//   │  │ active sub-agents   │  │                      │  │
+//   │  │ cost                │  │                      │  │
+//   │  └─────────────────────┘  └──────────────────────┘  │
+//   ├─ input (5 rows) ─────────────────────────────────────┤
+//   ├─ footer (1 row) ─────────────────────────────────────┘
 
-import { CliRenderer, BoxRenderable, TextRenderable, ScrollBoxRenderable, TextareaRenderable, RGBA, type KeyEvent } from "@opentui/core";
+import { CliRenderer, BoxRenderable, TextRenderable, ScrollBoxRenderable, TextareaRenderable, RGBA } from "@opentui/core";
 import { BUILTIN_REGISTRY } from "../slash/builtin.js";
 import { tryParseSlash } from "../slash/registry.js";
 import { runAgent, DEFAULT_LIMITS } from "../agent/loop.js";
 import { sessionToMessages } from "../agent/session.js";
 import type { HarnessRuntime } from "../runtime.js";
 import { c as color } from "./colors.js";
+import { formatUSD } from "../agent/cost.js";
+import { Session } from "../agent/session.js";
 
-const VERSION = "0.2.1";
+const VERSION = "0.2.2";
 
 /** Is the current environment TUI-capable? */
 export function isTuiCapable(): boolean {
   return !!process.stdin.isTTY && !!process.stdout.isTTY;
 }
 
-// --- Status / message types (unchanged from v0.2.0) ---
+// --- Status / message types ---
 
 export interface TuiStatus {
   model: string;
@@ -56,6 +58,8 @@ export interface TuiOptions {
   slashNames: string[];
   status?: Partial<TuiStatus>;
   history?: string[];
+  /** Runtime reference — used for sidebar data (sessions, cost, sub-agents). */
+  runtime?: HarnessRuntime;
 }
 
 export interface Tui {
@@ -82,13 +86,13 @@ const COLORS = {
   bg:        RGBA.fromHex("#0e1116"),
   bgHeader:  RGBA.fromHex("#1a1f29"),
   bgFooter:  RGBA.fromHex("#1a1f29"),
+  bgSidebar: RGBA.fromHex("#11151c"),
   bgInput:   RGBA.fromHex("#11151c"),
-  bgUser:    RGBA.fromHex("#0f1923"),
-  bgTool:    RGBA.fromHex("#161b24"),
   border:    RGBA.fromHex("#3a4150"),
   borderFocused: RGBA.fromHex("#6c8cff"),
   fg:        RGBA.fromHex("#e6e6e6"),
   fgDim:     RGBA.fromHex("#7a8190"),
+  fgFaint:   RGBA.fromHex("#4a5160"),
   fgAccent:  RGBA.fromHex("#6c8cff"),
   fgCyan:    RGBA.fromHex("#5ed1ff"),
   fgGreen:   RGBA.fromHex("#7ed4a3"),
@@ -105,21 +109,15 @@ export function createTui(opts: TuiOptions): Tui {
     useMouse: true,
     enableMouseMovement: true,
     autoFocus: true,
-    useKittyKeyboard: null, // disable — we handle our own key events
+    useKittyKeyboard: null,
     backgroundColor: COLORS.bg,
   });
   renderer.setupTerminal();
 
-  // Root layout: vertical flex column.
-  //   ┌─ header (height 2) ────────────────────────────────┐
-  //   │                                                       │
-  //   │   messages (flex 1, ScrollBox)                       │
-  //   │                                                       │
-  //   ├─ input (height auto, ~3) ────────────────────────────┤
-  //   ├─ footer (height 1) ──────────────────────────────────┘
+  const runtime = opts.runtime;
+
   const root = renderer.root;
   root.flexDirection = "column";
-  // root.backgroundColor = COLORS.bg; // RootRenderable doesn't accept this; the renderer config sets it
 
   // --- header ---
   const header = new BoxRenderable(renderer, {
@@ -134,27 +132,85 @@ export function createTui(opts: TuiOptions): Tui {
   });
   root.add(header);
 
-  const headerLeft = new TextRenderable(renderer, {
-    id: "header-left",
-    content: "",
-    fg: COLORS.fgCyan,
-    attributes: 1, // bold
-  });
+  const headerLeft = new TextRenderable(renderer, { id: "header-left", content: "", fg: COLORS.fgCyan, attributes: 1 });
   header.add(headerLeft);
-
-  const headerRight = new TextRenderable(renderer, {
-    id: "header-right",
-    content: "",
-    fg: COLORS.fgDim,
-  });
+  const headerRight = new TextRenderable(renderer, { id: "header-right", content: "", fg: COLORS.fgDim });
   header.add(headerRight);
 
-  const headerLine = new TextRenderable(renderer, {
-    id: "header-line",
-    content: "─".repeat((process.stdout.columns || 100)),
-    fg: COLORS.border,
+  // --- body: sidebar + main ---
+  const body = new BoxRenderable(renderer, {
+    id: "body",
+    flexDirection: "row",
+    flexGrow: 1,
+    flexShrink: 1,
   });
-  header.add(headerLine);
+  root.add(body);
+
+  // --- sidebar (left, 28 cols) ---
+  const sidebar = new BoxRenderable(renderer, {
+    id: "sidebar",
+    backgroundColor: COLORS.bgSidebar,
+    flexDirection: "column",
+    width: 28,
+    paddingLeft: 1,
+    paddingRight: 1,
+    paddingTop: 1,
+    borderStyle: "single",
+    border: ["right"],
+    borderColor: COLORS.border,
+  });
+  body.add(sidebar);
+
+  // Sidebar header
+  const sidebarTitle = new TextRenderable(renderer, { id: "sb-title", content: " CodingHarness", fg: COLORS.fgAccent, attributes: 1 });
+  sidebar.add(sidebarTitle);
+
+  const sbSessionsLabel = new TextRenderable(renderer, { id: "sb-sess-label", content: " sessions", fg: COLORS.fgDim });
+  sidebar.add(sbSessionsLabel);
+
+  const sbSessionsList = new TextRenderable(renderer, { id: "sb-sess-list", content: "  (loading...)", fg: COLORS.fgDim });
+  sidebar.add(sbSessionsList);
+
+  const sbSpacer1 = new TextRenderable(renderer, { id: "sb-spacer-1", content: "" });
+  sidebar.add(sbSpacer1);
+
+  const sbAgentsLabel = new TextRenderable(renderer, { id: "sb-agents-label", content: " active sub-agents", fg: COLORS.fgDim });
+  sidebar.add(sbAgentsLabel);
+  const sbAgentsList = new TextRenderable(renderer, { id: "sb-agents-list", content: "  (none)", fg: COLORS.fgDim });
+  sidebar.add(sbAgentsList);
+
+  const sbSpacer2 = new TextRenderable(renderer, { id: "sb-spacer-2", content: "" });
+  sidebar.add(sbSpacer2);
+
+  const sbCostLabel = new TextRenderable(renderer, { id: "sb-cost-label", content: " cost (session)", fg: COLORS.fgDim });
+  sidebar.add(sbCostLabel);
+  const sbCostTotal = new TextRenderable(renderer, { id: "sb-cost-total", content: "  $0.00", fg: COLORS.fgCyan, attributes: 1 });
+  sidebar.add(sbCostTotal);
+  const sbCostTokens = new TextRenderable(renderer, { id: "sb-cost-tokens", content: "  0 in / 0 out", fg: COLORS.fgFaint });
+  sidebar.add(sbCostTokens);
+  const sbCostPerModel = new TextRenderable(renderer, { id: "sb-cost-model", content: "", fg: COLORS.fgFaint });
+  sidebar.add(sbCostPerModel);
+
+  // --- main (right) ---
+  const main = new BoxRenderable(renderer, {
+    id: "main",
+    flexDirection: "column",
+    flexGrow: 1,
+  });
+  body.add(main);
+
+  // --- info banner (transient) ---
+  const infoBox = new BoxRenderable(renderer, {
+    id: "info-box",
+    backgroundColor: COLORS.bg,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 1,
+    height: 1,
+  });
+  main.add(infoBox);
+  const infoText = new TextRenderable(renderer, { id: "info", content: "", fg: COLORS.fgYellow });
+  infoBox.add(infoText);
 
   // --- messages (ScrollBox) ---
   const scroll = new ScrollBoxRenderable(renderer, {
@@ -169,9 +225,9 @@ export function createTui(opts: TuiOptions): Tui {
     scrollX: false,
     verticalScrollbarOptions: { visible: false },
   });
-  root.add(scroll);
+  main.add(scroll);
 
-  // --- input area (Textarea inside a Box with border) ---
+  // --- input area ---
   const inputBox = new BoxRenderable(renderer, {
     id: "input-box",
     borderStyle: "single",
@@ -181,13 +237,8 @@ export function createTui(opts: TuiOptions): Tui {
     flexDirection: "row",
     alignItems: "stretch",
     height: 5,
-    paddingTop: 0,
-    paddingBottom: 0,
   });
-  root.add(inputBox);
-  // Note: input box is added after scroll, before footer. The infoBox
-  // is inserted via add(index) once it's constructed below.
-
+  main.add(inputBox);
   const textarea = new TextareaRenderable(renderer, {
     id: "prompt",
     backgroundColor: COLORS.bgInput,
@@ -221,27 +272,8 @@ export function createTui(opts: TuiOptions): Tui {
     fg: COLORS.fgDim,
   });
   footer.add(footerLeft);
-
-  const footerRight = new TextRenderable(renderer, {
-    id: "footer-right",
-    content: "",
-    fg: COLORS.fgDim,
-  });
+  const footerRight = new TextRenderable(renderer, { id: "footer-right", content: "", fg: COLORS.fgDim });
   footer.add(footerRight);
-
-  // --- transient info banner above the input (for "thinking...") ---
-  const infoBox = new BoxRenderable(renderer, {
-    id: "info-box",
-    backgroundColor: COLORS.bg,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingLeft: 1,
-    height: 1,
-  });
-  // Insert between messages (index 1) and input (index 2).
-  root.add(infoBox, 2);
-  const infoText = new TextRenderable(renderer, { id: "info", content: "", fg: COLORS.fgYellow });
-  infoBox.add(infoText);
 
   // --- state ---
 
@@ -253,32 +285,89 @@ export function createTui(opts: TuiOptions): Tui {
   let slashNames = opts.slashNames.slice();
   let currentStreamText = "";
   let currentStreamTextEl: TextRenderable | null = null;
-  const messageEls: TextRenderable[] = [];  // most-recent last
+  const messageEls: TextRenderable[] = [];
   let infoTimer: NodeJS.Timeout | null = null;
   let quitRequested = false;
-  let submitted = false;
+  let sidebarDirty = true;
 
   const submitListeners = new Set<(text: string) => void>();
   const actionListeners = new Set<(a: TuiAction) => void>();
 
+  // --- sidebar refresh ---
+
+  function refreshSidebar(): void {
+    if (!sidebarDirty) return;
+    sidebarDirty = false;
+    void doRefresh();
+  }
+  function markSidebarDirty(): void { sidebarDirty = true; }
+
+  async function doRefresh(): Promise<void> {
+    // Sessions list: most recent 5.
+    try {
+      const list = await Session.list(5);
+      const lines = list.map((m, i) => {
+        const marker = m.id === status.session ? "●" : " ";
+        const short = m.id.slice(0, 8);
+        const when = formatAgo(m.updatedAt);
+        return " " + marker + " " + short + "  " + when;
+      });
+      sbSessionsList.content = lines.length === 0 ? "  (none)" : lines.join("\n");
+    } catch { sbSessionsList.content = "  (error)"; }
+
+    // Active sub-agents.
+    if (runtime && runtime.activeSubagents.size > 0) {
+      const lines: string[] = [];
+      for (const [id, a] of runtime.activeSubagents) {
+        const mark = a.status === "ok" ? "✓" : a.status === "err" ? "✗" : "⋯";
+        const shortPrompt = a.prompt.length > 16 ? a.prompt.slice(0, 14) + "…" : a.prompt;
+        lines.push(" " + mark + " " + id.split(":")[0] + "  " + shortPrompt);
+      }
+      sbAgentsList.content = lines.join("\n");
+    } else if (runtime && runtime.subagentHistory.length > 0) {
+      // Show the last 3.
+      const recent = runtime.subagentHistory.slice(-3).reverse();
+      sbAgentsList.content = recent.map((s) => {
+        const mark = s.status === "ok" ? "✓" : s.status === "err" ? "✗" : "·";
+        return " " + mark + " " + s.name + "  " + formatUSD(s.cost);
+      }).join("\n");
+    } else {
+      sbAgentsList.content = "  (none)";
+    }
+
+    // Cost.
+    if (runtime && runtime.cost) {
+      const t = runtime.cost.total();
+      sbCostTotal.content = "  " + formatUSD(t.cost);
+      sbCostTokens.content = "  " + t.inputTokens + " in / " + t.outputTokens + " out";
+      const perModel = runtime.cost.perModel();
+      if (perModel.length > 0) {
+        const top = perModel[0]!;
+        sbCostPerModel.content = "  " + (top.model.length > 22 ? top.model.slice(0, 20) + "…" : top.model) + "  " + formatUSD(top.cost);
+      } else {
+        sbCostPerModel.content = "";
+      }
+    } else {
+      sbCostTotal.content = "  $0.00";
+      sbCostTokens.content = "  0 in / 0 out";
+      sbCostPerModel.content = "";
+    }
+  }
+
   // --- rendering helpers ---
 
   function updateStatus(): void {
-    const left = ` CodingHarness v${VERSION}  ${status.provider}/${status.model}  ${status.cwd}`;
-    headerLeft.content = left;
-    const right = `tokens ${status.tokensIn} in / ${status.tokensOut} out  `;
-    headerRight.content = right;
-    footerRight.content = `steps ${status.steps}  `;
+    headerLeft.content = " CodingHarness v" + VERSION + "  " + (status.provider || "—") + "/" + (status.model || "—") + "  " + (status.cwd || "—");
+    const costText = runtime && runtime.cost ? " · " + formatUSD(runtime.cost.total().cost) : "";
+    headerRight.content = "tokens " + status.tokensIn + " in / " + status.tokensOut + " out" + costText + "  ";
+    footerRight.content = "steps " + status.steps + "  ";
+    markSidebarDirty();
   }
 
-  function updateHeaderLine(): void {
-    headerLine.content = "─".repeat(Math.max(20, renderer.width));
-  }
-
-  function addMessageEl(text: string, fg: RGBA, opts: { bg?: RGBA; prefix?: string } = {}): TextRenderable {
+  function addMessageEl(text: string, fg: RGBA, opts2: { prefix?: string } = {}): TextRenderable {
     const t = new TextRenderable(renderer, {
       id: "msg-" + messageEls.length,
-      content: (opts.prefix ?? "") + text,
+      content: (opts2.prefix ?? "") + text,
       fg,
     });
     scroll.content.add(t);
@@ -289,7 +378,6 @@ export function createTui(opts: TuiOptions): Tui {
 
   function addMessageToUI(msg: TuiMessage): void {
     let fg = COLORS.fg;
-    let bg: RGBA | undefined;
     let prefix = "";
     if (msg.kind === "user") { fg = COLORS.fgGreen; prefix = " › "; }
     else if (msg.kind === "assistant") { fg = COLORS.fg; }
@@ -301,22 +389,15 @@ export function createTui(opts: TuiOptions): Tui {
     else if (msg.kind === "system") { fg = COLORS.fgDim; prefix = " · "; }
     else if (msg.kind === "info") { fg = COLORS.fgCyan; prefix = " · "; }
     else if (msg.kind === "error") { fg = COLORS.fgRed; prefix = " ! "; }
-    addMessageEl(msg.text, fg, { bg, prefix });
+    addMessageEl(msg.text, fg, { prefix });
   }
 
-  // --- text input handling ---
+  // --- input handling ---
 
-  // Hook OpenTUI's input events. We use the textarea's onSubmit, but
-  // we ALSO need to intercept Ctrl+C, Ctrl+D, Ctrl+L, etc. at the
-  // renderer level.
   renderer.addInputHandler((sequence) => {
     if (sequence === "\x03") {  // Ctrl+C
-      // If the textarea has content, clear it; otherwise act as cancel.
-      if (textarea.plainText.length > 0) {
-        textarea.clear();
-      } else {
-        for (const cb of actionListeners) cb({ action: "cancel" });
-      }
+      if (textarea.plainText.length > 0) textarea.clear();
+      else for (const cb of actionListeners) cb({ action: "cancel" });
       return true;
     }
     if (sequence === "\x04") {  // Ctrl+D
@@ -324,17 +405,13 @@ export function createTui(opts: TuiOptions): Tui {
       quitRequested = true;
       return true;
     }
-    if (sequence === "\x0c") {  // Ctrl+L — clear messages
+    if (sequence === "\x0c") {  // Ctrl+L
       for (const cb of actionListeners) cb({ action: "clear-messages" });
       return true;
     }
     return false;
   });
 
-  // Slash command autocomplete: when user types /something and hits Tab,
-  // we cycle through completions. OpenTUI's textarea already handles
-  // tab as a focus advance, so we override with a custom keybinding.
-  // Add our tab handler at the renderer level.
   renderer.addInputHandler((sequence) => {
     if (sequence === "\t") {
       const text = textarea.plainText;
@@ -342,8 +419,7 @@ export function createTui(opts: TuiOptions): Tui {
         const base = text.slice(1);
         const matches = slashNames.filter((n) => n.startsWith(base));
         if (matches.length > 0) {
-          const m = matches[0]!;
-          textarea.editBuffer.setText("/" + m + " ");
+          textarea.editBuffer.setText("/" + matches[0]! + " ");
           return true;
         }
       }
@@ -352,42 +428,41 @@ export function createTui(opts: TuiOptions): Tui {
     return false;
   });
 
-  // Listen for submit.
   textarea.onSubmit = () => {
     const text = textarea.plainText;
     if (text.trim().length === 0) return;
-    // Echo the user message.
     addMessageEl(text, COLORS.fgGreen, { prefix: " › " });
     textarea.clear();
-    submitted = true;
+    markSidebarDirty();
     for (const cb of submitListeners) {
       try { cb(text); } catch (e) { console.error("submit error:", e); }
     }
   };
+
+  // Periodic sidebar refresh.
+  const sidebarTimer = setInterval(() => { markSidebarDirty(); refreshSidebar(); }, 2_000);
 
   // --- public API ---
 
   return {
     async start() {
       updateStatus();
-      updateHeaderLine();
       addMessageEl("Welcome to CodingHarness v" + VERSION + ". Type /help for commands.", COLORS.fgCyan, { prefix: " · " });
+      await doRefresh();
       renderer.start();
-      // Wait until quit is requested.
       await new Promise<void>((resolve) => {
         const check = setInterval(() => {
-          if (quitRequested) {
-            clearInterval(check);
-            resolve();
-          }
+          if (quitRequested) { clearInterval(check); resolve(); }
         }, 100);
       });
+      clearInterval(sidebarTimer);
       renderer.stop();
       renderer.destroy();
     },
 
     stop() {
       quitRequested = true;
+      clearInterval(sidebarTimer);
       try { renderer.stop(); } catch {}
       try { renderer.destroy(); } catch {}
     },
@@ -395,12 +470,7 @@ export function createTui(opts: TuiOptions): Tui {
     appendText(text) {
       currentStreamText += text;
       if (!currentStreamTextEl) {
-        // Create a new streaming text element.
-        currentStreamTextEl = new TextRenderable(renderer, {
-          id: "stream",
-          content: currentStreamText,
-          fg: COLORS.fg,
-        });
+        currentStreamTextEl = new TextRenderable(renderer, { id: "stream", content: currentStreamText, fg: COLORS.fg });
         scroll.content.add(currentStreamTextEl);
         messageEls.push(currentStreamTextEl);
       } else {
@@ -409,29 +479,16 @@ export function createTui(opts: TuiOptions): Tui {
     },
 
     endStream() {
-      if (currentStreamTextEl && currentStreamText) {
-        // The text element stays in the message list as a normal message.
-        currentStreamTextEl = null;
-        currentStreamText = "";
-      } else if (currentStreamTextEl) {
-        scroll.content.remove(currentStreamTextEl.id);
-        currentStreamTextEl = null;
-        currentStreamText = "";
-      }
+      currentStreamTextEl = null;
+      currentStreamText = "";
     },
 
-    addMessage(msg) {
-      addMessageToUI(msg);
-    },
+    addMessage(msg) { addMessageToUI(msg); },
 
     appendMessage(text) {
-      // Append to the last message element if any.
       const last = messageEls[messageEls.length - 1];
-      if (last) {
-        last.content = (last.content ?? "") + text;
-      } else {
-        addMessageEl(text, COLORS.fg);
-      }
+      if (last) last.content = (last.content ?? "") + text;
+      else addMessageEl(text, COLORS.fg);
     },
 
     addToolCall(name, args, st, detail) {
@@ -444,12 +501,10 @@ export function createTui(opts: TuiOptions): Tui {
     setStatus(s) {
       Object.assign(status, s);
       updateStatus();
+      markSidebarDirty();
     },
 
-    setSlashNames(names) {
-      slashNames = names.slice();
-    },
-
+    setSlashNames(names) { slashNames = names.slice(); },
     onSubmit(cb) { submitListeners.add(cb); },
     onAction(cb) { actionListeners.add(cb); },
 
@@ -463,11 +518,19 @@ export function createTui(opts: TuiOptions): Tui {
 
     getInput() { return textarea.plainText; },
     setInput(text) { textarea.editBuffer.setText(text); },
-    redraw() { renderer.requestRender(); },
+    redraw() { renderer.requestRender(); markSidebarDirty(); },
   };
 }
 
 function truncateArgs(args: string): string {
   const trimmed = args.replace(/\s+/g, " ").trim();
   return trimmed.length > 60 ? trimmed.slice(0, 57) + "…" : trimmed;
+}
+
+function formatAgo(t: number): string {
+  const dt = Date.now() - t;
+  if (dt < 60_000) return Math.floor(dt / 1000) + "s ago";
+  if (dt < 3_600_000) return Math.floor(dt / 60_000) + "m ago";
+  if (dt < 86_400_000) return Math.floor(dt / 3_600_000) + "h ago";
+  return Math.floor(dt / 86_400_000) + "d ago";
 }

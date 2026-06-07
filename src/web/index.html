@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodingHarness</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-title">CodingHarness</div>
+        <div class="sidebar-version" id="version">v0.2.1</div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">sessions</div>
+        <div class="sidebar-list" id="session-list"><div class="sidebar-empty">loading…</div></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">active sub-agents</div>
+        <div class="sidebar-list" id="agents-list"><div class="sidebar-empty">none</div></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">cost (session)</div>
+        <div class="sidebar-cost-total" id="cost-total">$0.00</div>
+        <div class="sidebar-cost-tokens" id="cost-tokens">0 in / 0 out</div>
+        <div class="sidebar-cost-model" id="cost-model"></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">approval</div>
+        <div class="sidebar-list" id="approval-status">on-mutation</div>
+      </div>
+      <div class="sidebar-footer">
+        <button class="sidebar-button" id="new-session">+ new session</button>
+        <button class="sidebar-button" id="settings">⚙ settings</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="header">
+        <div class="header-left">
+          <span class="header-title">CodingHarness</span>
+          <span class="header-model" id="model">— / —</span>
+        </div>
+        <div class="header-right">
+          <span class="header-tokens" id="tokens">tokens 0 in / 0 out</span>
+          <span class="header-cost" id="cost">$0.00</span>
+        </div>
+      </header>
+
+      <div class="messages" id="messages">
+        <div class="message message-system">
+          <div class="message-prefix">·</div>
+          <div class="message-body">Welcome to CodingHarness. Type a prompt or <code>/help</code> for commands.</div>
+        </div>
+      </div>
+
+      <div class="info-banner" id="info-banner"></div>
+
+      <form class="input-form" id="input-form">
+        <textarea
+          class="input-box"
+          id="input"
+          placeholder="Type a prompt or /command..."
+          rows="3"
+          autofocus
+        ></textarea>
+        <div class="input-toolbar">
+          <div class="input-hint">⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear</div>
+          <button type="submit" class="send-button" id="send-button">send</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <div class="approval-modal" id="approval-modal" hidden>
+    <div class="approval-content">
+      <div class="approval-title">⚠ Bash command requires approval</div>
+      <div class="approval-reason" id="approval-reason"></div>
+      <div class="approval-cmd-label">Command:</div>
+      <pre class="approval-cmd" id="approval-cmd"></pre>
+      <div class="approval-actions">
+        <button class="approval-button approval-allow" id="approval-allow">y · allow once</button>
+        <button class="approval-button approval-always" id="approval-always">a · always</button>
+        <button class="approval-button approval-deny" id="approval-deny">n · deny</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-modal" id="settings-modal" hidden>
+    <div class="settings-content">
+      <div class="settings-title">⚙ Settings</div>
+      <div class="settings-row">
+        <label>Provider</label>
+        <select id="setting-provider"></select>
+      </div>
+      <div class="settings-row">
+        <label>Model</label>
+        <input type="text" id="setting-model" />
+      </div>
+      <div class="settings-row">
+        <label>Approval mode</label>
+        <select id="setting-approval">
+          <option value="off">off</option>
+          <option value="on-mutation">on-mutation</option>
+          <option value="allowlist">allowlist</option>
+          <option value="blocklist">blocklist</option>
+          <option value="ask">ask</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <label>Thinking</label>
+        <select id="setting-thinking">
+          <option value="off">off</option>
+          <option value="minimal">minimal</option>
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+        </select>
+      </div>
+      <div class="settings-actions">
+        <button class="settings-save" id="settings-save">save</button>
+        <button class="settings-cancel" id="settings-cancel">cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

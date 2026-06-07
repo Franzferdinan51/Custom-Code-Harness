@@ -2,12 +2,18 @@
 // always with the AbortSignal plumbed through. We capture stdout and
 // stderr separately and cap total output size — runaway commands used
 // to be a big source of context-budget explosions.
+//
+// If the command is flagged by the approval flow, we return a result
+// with isError=true and a message explaining it needs approval. The
+// TUI/runtime is expected to surface a confirmation prompt; once
+// approved, the tool re-runs the command with approval.bypass=true.
 
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import type { Tool, ToolContext } from "./registry.js";
 import { asNumber, asString, parseToolArgs } from "./registry.js";
 import type { ToolSpec } from "../../types.js";
+import { needsApproval, type ApprovalConfig } from "../../agent/approval.js";
 
 const MAX_OUTPUT_BYTES = 200_000;
 
@@ -44,7 +50,28 @@ export const bashTool: Tool = {
     return out as unknown as Record<string, unknown>;
   },
   async run(rawArgs, ctx: ToolContext) {
-    const raw = rawArgs as unknown as BashArgs;
+    const raw = rawArgs as unknown as BashArgs & { __approval_bypass?: boolean };
+    // Approval flow. If the runtime has already decided this command
+    // is OK, `__approval_bypass` is set on the args.
+    if (!raw.__approval_bypass) {
+      const approval: ApprovalConfig = ctx.services?.getApproval
+        ? ctx.services.getApproval()
+        : { mode: "off", allowlist: [], blocklist: [] };
+      const r = needsApproval(raw.command, approval);
+      if (r.decision === "ask") {
+        return {
+          toolCallId: "",
+          display: "bash: approval required",
+          content:
+            "Bash command needs approval: " + r.reason + "\n" +
+            "\n" +
+            "Command: " + raw.command + "\n" +
+            "\n" +
+            "(Approval flow: " + approval.mode + ")",
+          isError: true,
+        };
+      }
+    }
     const timeoutMs = raw.timeout_ms ?? ctx.limits.bashTimeoutMs;
     return await new Promise((resolveP) => {
       const child: ChildProcessByStdio<null, Readable, Readable> = spawn("bash", ["-lc", raw.command], {

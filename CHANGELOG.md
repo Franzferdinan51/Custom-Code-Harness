@@ -3,6 +3,58 @@
 All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.2] - 2026-06-07
+
+### Added
+
+- **Web UI** (`ch web` and `ch serve`): full dark-mode web frontend at
+  `http://127.0.0.1:<port>/`. Sidebar with sessions + active sub-agents +
+  cost totals (refreshed every 2s), streaming chat with Server-Sent Events,
+  slash-command autocomplete, approval modal, settings modal.
+  - `src/web/index.html`, `src/web/styles.css`, `src/web/app.js` — vanilla
+    JS, zero build step, no framework
+  - `src/server.ts` — unified HTTP + SSE server: `/`, `/v1/status`,
+    `/v1/agents`, `/v1/skills`, `/v1/sessions`, `/v1/usage`, `/v1/commands`,
+    `/v1/settings`, `/v1/session`, `/v1/chat`, `/v1/chat/stream` (SSE:
+    text / tool_start / tool_end / info / error / approval_required /
+    usage / done), `/v1/spawn`, `/v1/approval/respond`, `/v1/memory/*`
+  - `scripts/copy-web.mjs` — copies `src/web/` to `dist/web/` on build
+  - `ch web` opens the browser automatically (`open` / `start` / `xdg-open`)
+- **Cost tracking** (`/cost`, `src/agent/cost.ts`):
+  - `CostTracker` accumulates per-model + per-agent token / dollar totals
+  - `priceFor(model)` looks up USD per million tokens; `callCost()` computes
+    incremental cost; `formatUSD()` renders values
+  - 17 new unit tests
+- **Bash approval flow** (`/approval`, `src/agent/approval.ts`):
+  - `needsApproval(command, mode)` blocks obvious foot-guns (rm -rf,
+    git push --force, sudo, curl|bash) under `on-mutation` mode
+  - `SAFE_PATTERNS` exempts read-only commands from allowlist mode
+  - Modes: `off`, `allowlist`, `blocklist`, `on-mutation`, `ask`
+  - Bash tool consults `ctx.services.getApproval()`; returns `isError: true`
+    with a "needs approval" message when blocked. Re-running an
+    already-approved command passes `__approval_bypass: true`
+  - Web UI shows an approval modal and sends back via `/v1/approval/respond`
+- **TUI sidebar** showing sessions, active sub-agents, and cost totals
+  (refreshed every 2s, "dirty-flag" style to keep the renderer simple).
+- **Electron desktop shell** (`electron/main.cjs` + `electron/preload.cjs`):
+  - Spawns `ch serve` as a child on a random port
+  - Waits for `/v1/status` to return 200
+  - Opens a `BrowserWindow` pointing at the server URL
+  - System tray icon for show/hide/quit
+  - macOS hide-on-close convention; clean SIGTERM → SIGKILL shutdown
+  - `electron-builder` config for `dmg` / `nsis` / `AppImage` packages
+  - Scripts: `npm run electron`, `npm run dist:mac` / `dist:win` /
+    `dist:linux`
+
+### Changed
+
+- `runtime.ts` gained `cost: CostTracker`, `activeSubagents: Map`, and
+  `approval: ApprovalConfig` fields; the bash tool now blocks on
+  `getApproval()`.
+- `package.json` is now `0.2.2`. `electron` and `electron-builder` are
+  devDependencies.
+- Build is `tsc && node scripts/copy-web.mjs` (was just `tsc`).
+
 ## [0.2.1] - 2026-06-07
 
 ### Changed

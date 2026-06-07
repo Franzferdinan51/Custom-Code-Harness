@@ -26,7 +26,7 @@ test("tryParseSlash returns null for non-slash input", () => {
 
 test("builtin registry has all expected commands", () => {
   const names = BUILTIN_REGISTRY.names();
-  for (const want of ["help", "clear", "quit", "session", "resume", "model", "provider", "goal", "loop"]) {
+  for (const want of ["help", "clear", "quit", "session", "resume", "model", "provider", "goal", "loop", "cost", "approval"]) {
     assert.ok(names.includes(want), "missing /" + want);
   }
 });

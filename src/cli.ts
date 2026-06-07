@@ -34,6 +34,7 @@ interface SubcommandContext {
   port?: string;
   host?: string;
   noTui?: boolean;
+  noOpen?: boolean;
 }
 
 const SUBCOMMANDS = new Map<string, { description: string; usage: string; run: SubcommandHandler }>();
@@ -105,9 +106,13 @@ registerSubcommand("init", "Generate a starter .codingharness/AGENTS.md in the c
   "ch init",
   async (ctx) => { return runInitCmd(ctx); });
 
-registerSubcommand("serve", "Run a headless HTTP server that exposes the agent over an API.",
-  "ch serve [--port <n>] [--host <addr>]",
+registerSubcommand("serve", "Run a headless HTTP server that exposes the agent over an API + web UI.",
+  "ch serve [--port <n>] [--host <addr>] [--no-open]",
   async (ctx) => { return runServeCmd(ctx); });
+
+registerSubcommand("web", "Start the server AND open the web UI in your default browser.",
+  "ch web [--port <n>] [--host <addr>]",
+  async (ctx) => { return runWebCmd(ctx); });
 
 registerSubcommand("update", "Update CodingHarness to the latest version and rebuild.",
   "ch update [--check] [--channel stable|beta|dev]",
@@ -115,7 +120,7 @@ registerSubcommand("update", "Update CodingHarness to the latest version and reb
 
 // ---------- Help / version ----------
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.2";
 
 function showHelp(cmd?: string): number {
   if (cmd && SUBCOMMANDS.has(cmd)) {
@@ -130,7 +135,7 @@ function showHelp(cmd?: string): number {
     "",
     "Subcommands:",
   ];
-  const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "update"];
+  const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "update"];
   for (const name of order) {
     const s = SUBCOMMANDS.get(name);
     if (!s) continue;
@@ -167,6 +172,7 @@ function showHelp(cmd?: string): number {
   lines.push("  ch doctor");
   lines.push("  ch sessions");
   lines.push("  ch update");
+  lines.push("  ch web    # open the web UI in your default browser");
   process.stdout.write(lines.join("\n") + "\n");
   return 0;
 }
@@ -218,6 +224,7 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
         port: { type: "string" },
         host: { type: "string" },
         "no-tui": { type: "boolean" },
+        "no-open": { type: "boolean" },
         check: { type: "boolean" },
         channel: { type: "string" },
       },
@@ -243,6 +250,7 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
     port: parsed.values.port ? String(parsed.values.port) : undefined,
     host: parsed.values.host ? String(parsed.values.host) : undefined,
     noTui: !!parsed.values["no-tui"],
+    noOpen: !!parsed.values["no-open"],
   };
 }
 
@@ -489,6 +497,7 @@ async function runInitCmd(ctx: SubcommandContext): Promise<number> {
 async function runServeCmd(ctx: SubcommandContext): Promise<number> {
   const port = parseInt(ctx.port ?? "7777", 10);
   const host = ctx.host ?? "127.0.0.1";
+  const noOpen = !!(ctx as { noOpen?: boolean }).noOpen;
   if (!Number.isFinite(port) || port < 1 || port > 65535) {
     process.stderr.write("error: --port must be 1..65535\n");
     return 2;
@@ -498,8 +507,39 @@ async function runServeCmd(ctx: SubcommandContext): Promise<number> {
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
   const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: false });
+  const { startServer } = await import("./server.js");
   await startServer(runtime, { port, host });
   return 0;
+}
+
+async function runWebCmd(ctx: SubcommandContext): Promise<number> {
+  const port = parseInt(ctx.port ?? "7777", 10);
+  const host = ctx.host ?? "127.0.0.1";
+  if (!Number.isFinite(port) || port < 1 || port > 65535) {
+    process.stderr.write("error: --port must be 1..65535\n");
+    return 2;
+  }
+  ensurePaths();
+  const settings = loadSettings();
+  if (ctx.provider) settings.defaultProvider = ctx.provider;
+  if (ctx.model) settings.defaultModel = ctx.model;
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: false });
+  const { startServer } = await import("./server.js");
+  const url = `http://${host}:${port}/`;
+  // Open the browser after a short delay (let the server start).
+  setTimeout(() => { openBrowser(url).catch(() => {}); }, 300);
+  await startServer(runtime, { port, host });
+  return 0;
+}
+
+function openBrowser(url: string): Promise<void> {
+  const { execFile } = require("node:child_process") as typeof import("node:child_process");
+  return new Promise<void>((resolve, reject) => {
+    const cmd = process.platform === "darwin" ? "open" :
+                process.platform === "win32" ? "start" : "xdg-open";
+    const args = process.platform === "win32" ? ["", url] : [url];
+    execFile(cmd, args, (err) => err ? reject(err) : resolve());
+  });
 }
 
 async function runUpdateCmd(ctx: SubcommandContext): Promise<number> {
@@ -571,81 +611,9 @@ async function runLegacyFlagMode(argv: string[]): Promise<number> {
 }
 
 async function startServer(runtime: import("./runtime.js").HarnessRuntime, opts: { port: number; host: string }): Promise<void> {
-  const { createServer } = await import("node:http");
-  const server = createServer(async (req, res) => {
-    try {
-      const url = new URL(req.url ?? "/", "http://" + (req.headers.host ?? "localhost"));
-      if (req.method === "GET" && url.pathname === "/v1/status") {
-        const body = JSON.stringify({ ok: true, version: VERSION, model: runtime.model(), provider: runtime.providerId() });
-        res.writeHead(200, { "content-type": "application/json" }); res.end(body); return;
-      }
-      if (req.method === "GET" && url.pathname === "/v1/agents") {
-        const body = JSON.stringify({ agents: runtime.subagents.list() });
-        res.writeHead(200, { "content-type": "application/json" }); res.end(body); return;
-      }
-      if (req.method === "GET" && url.pathname === "/v1/skills") {
-        const all = await runtime.skills.list();
-        const body = JSON.stringify({ skills: all.map((s) => ({ name: s.name, description: s.description })) });
-        res.writeHead(200, { "content-type": "application/json" }); res.end(body); return;
-      }
-      if (req.method === "GET" && url.pathname === "/v1/sessions") {
-        const { Session } = await import("./agent/session.js");
-        const list = await Session.list(50);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ sessions: list })); return;
-      }
-      if (req.method === "POST" && url.pathname === "/v1/chat") {
-        const chunks: Buffer[] = [];
-        for await (const c of req) chunks.push(c as Buffer);
-        const body = JSON.parse(Buffer.concat(chunks).toString("utf-8") || "{}");
-        const messages = Array.isArray(body.messages) ? body.messages : [];
-        const prompt = messages.length > 0 ? messages[messages.length - 1]?.content ?? "" : "";
-        if (!prompt) { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "no messages" })); return; }
-        const { runAgent, DEFAULT_LIMITS } = await import("./agent/loop.js");
-        const { sessionToMessages } = await import("./agent/session.js");
-        const provider = runtime.providerRegistry.default();
-        if (!provider) { res.writeHead(503, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "no provider" })); return; }
-        const model = runtime.model() ?? "default";
-        const session = await runtime.ensureSession();
-        await session.append({ kind: "message", message: { role: "user", content: prompt } });
-        const result = await runAgent({
-          provider, model,
-          system: await runtime["buildSystemPrompt"](),
-          messages: sessionToMessages(session),
-          tools: runtime.tools,
-          cwd: process.cwd(),
-          signal: new AbortController().signal,
-          limits: { ...DEFAULT_LIMITS },
-        });
-        await session.append({ kind: "message", message: result.final });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ text: result.final.content, usage: result.usage, steps: result.steps }));
-        return;
-      }
-      if (req.method === "POST" && url.pathname === "/v1/spawn") {
-        const chunks: Buffer[] = [];
-        for await (const c of req) chunks.push(c as Buffer);
-        const body = JSON.parse(Buffer.concat(chunks).toString("utf-8") || "{}");
-        const agent = String(body.agent ?? "");
-        const prompt = String(body.prompt ?? "");
-        if (!agent || !prompt) { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "agent and prompt required" })); return; }
-        const r = await runtime.subagents.spawn({ agent, prompt, cwd: process.cwd(), signal: new AbortController().signal });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(r));
-        return;
-      }
-      res.writeHead(404, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "not found" }));
-    } catch (e) {
-      res.writeHead(500, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: (e as Error).message }));
-    }
-  });
-  server.listen(opts.port, opts.host, () => {
-    process.stdout.write("CodingHarness server listening on http://" + opts.host + ":" + opts.port + "\n");
-    process.stdout.write("  GET  /v1/status\n  GET  /v1/agents\n  GET  /v1/skills\n  GET  /v1/sessions\n  POST /v1/chat\n  POST /v1/spawn\n");
-  });
-  await new Promise(() => { /* run until killed */ });
+  // Delegated to ./server.js.
+  const { startServer: realStartServer } = await import("./server.js");
+  await realStartServer(runtime, opts);
 }
 
 async function readStdin(): Promise<string> {

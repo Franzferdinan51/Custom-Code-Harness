@@ -20,6 +20,7 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
   const slashNames = BUILTIN_REGISTRY.names();
   const tui: Tui = createTui({
     slashNames,
+    runtime,
     status: {
       model: runtime.model() ?? "—",
       provider: runtime.providerId() ?? "—",
@@ -92,7 +93,7 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
   });
 }
 
-const RUNTIME_VERSION = "0.2.0";
+const RUNTIME_VERSION = "0.2.2";
 
 async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd: string): Promise<void> {
   // Initialize or load a session.

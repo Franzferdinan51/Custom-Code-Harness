@@ -33,6 +33,8 @@ export interface ToolServices {
   writeTodo?: (items: string[]) => Promise<void>;
   httpFetch?: (url: string, opts?: { method?: string; headers?: Record<string, string>; body?: string; maxBytes?: number }) => Promise<{ status: number; body: string; contentType: string }>;
   webSearch?: (query: string, maxResults?: number) => Promise<Array<{ title: string; url: string; snippet: string }>>;
+  /** Returns the current approval config (settable from settings). */
+  getApproval?: () => import("../../agent/approval.js").ApprovalConfig;
 }
 
 export interface Tool {

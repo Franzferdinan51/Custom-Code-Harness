@@ -43,6 +43,34 @@ Following the same pattern as `grok` / `grok agent` / `codex`:
 | `ch sessions`  | List, show, fork, or send to a session                          |
 | `ch init`      | Generate a starter `.codingharness/AGENTS.md` in the cwd        |
 | `ch serve`     | Run a headless HTTP server with `/v1/chat`, `/v1/spawn`, etc.    |
+
+## Web UI & desktop app
+
+The same `ch serve` server powers three UIs:
+
+1. **TUI** (the default in a TTY) — built on OpenTUI.
+2. **Web UI** — `ch web` starts the server and opens your browser at
+   `http://127.0.0.1:<port>/`. Dark mode, sidebar with sessions / active
+   sub-agents / cost totals, streaming chat, slash autocomplete,
+   approval modal, settings modal. Vanilla JS, zero build step.
+3. **Native desktop app** — `npm run electron` from the project root
+   opens the web UI in a real `BrowserWindow` with a system-tray icon.
+   Build distributables with `npm run dist:mac` (`.dmg` + `.zip`),
+   `dist:win` (`.exe` + portable), or `dist:linux` (`.AppImage` + `.deb`).
+
+The HTTP+SSE API is stable and can also be driven by anything that
+speaks `fetch` and `EventSource`:
+
+```bash
+# status
+curl http://127.0.0.1:18800/v1/status
+
+# stream a chat
+curl -N -X POST http://127.0.0.1:18800/v1/chat/stream \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"list the files in src/","sessionId":"default"}'
+```
+| `ch web`       | Start the server AND open the web UI in your browser            |
 | `ch update`    | Self-update: `git pull && npm install && build && link`          |
 | `ch version`   | Print the version                                                |
 | `ch help`      | Show help (or `ch help <subcommand>` for a specific one)        |
@@ -419,9 +447,11 @@ npx tsc --noEmit       # type check
 - [ ] Docker sandbox runtime
 - [ ] Session branching UI (`/tree`)
 - [ ] Trajectory export for training (Hermes-style)
-- [ ] Web UI (alongside TUI)
+- [x] Web UI (alongside TUI) — done in v0.2.2
 - [ ] Provider failover in the loop (config is there, runner is not)
 - [ ] Compaction UI: show diff of what was summarized
+- [ ] Wire the TUI approval modal into the bash tool flow (modal exists,
+      not yet connected)
 
 ## License
 

@@ -87,6 +87,21 @@ export interface Settings {
     /** Commands to run after each user turn. */
     postTurn?: string[];
   };
+  /** Bash approval flow. */
+  approval?: {
+    /** Mode. Default: "on-mutation". */
+    mode?: "off" | "allowlist" | "blocklist" | "on-mutation" | "ask";
+    /** Regex patterns the command must match to be auto-approved (mode=allowlist). */
+    allowlist?: string[];
+    /** Regex patterns that always require confirmation. */
+    blocklist?: string[];
+    /** Override all decisions. */
+    override?: "always-allow" | "always-ask";
+  };
+  /** Per-model cost rates. Override the defaults. */
+  cost?: {
+    rates?: Array<{ match: string; input: number; output: number }>;
+  };
 }
 
 export const DEFAULT_SETTINGS: Settings = {

@@ -183,6 +183,10 @@ html, body {
   cursor: default;
 }
 
+.sidebar-run-chip:disabled {
+  opacity: 0.72;
+}
+
 .sidebar-run-session-meta {
   color: var(--fg-faint);
   font-size: 11px;

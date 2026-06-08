@@ -21,7 +21,6 @@ import { tryParseSlash } from "../slash/registry.js";
 import { runAgent, DEFAULT_LIMITS } from "../agent/loop.js";
 import { sessionToMessages } from "../agent/session.js";
 import type { HarnessRuntime } from "../runtime.js";
-import { c as color } from "./colors.js";
 import { formatUSD } from "../agent/cost.js";
 import { Session } from "../agent/session.js";
 import { askApproval as showApprovalModal, type ApprovalDecision } from "./approval-modal.js";

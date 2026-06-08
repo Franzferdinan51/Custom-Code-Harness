@@ -14,15 +14,15 @@
         <div class="sidebar-version" id="version">v0.2.2</div>
       </div>
       <div class="sidebar-section">
-        <div class="sidebar-label" id="sessions-label">sessions</div>
-        <input class="sidebar-search" id="session-search" type="text" placeholder="search sessions, previews, cwd" />
-        <div class="sidebar-list" id="session-list"><div class="sidebar-empty">loading…</div></div>
-      </div>
-      <div class="sidebar-section">
         <div class="sidebar-label">current run</div>
         <div class="sidebar-goal" id="goal-activity">
           <div class="sidebar-empty">idle</div>
         </div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label" id="sessions-label">sessions</div>
+        <input class="sidebar-search" id="session-search" type="text" placeholder="search sessions, previews, cwd" />
+        <div class="sidebar-list" id="session-list"><div class="sidebar-empty">loading…</div></div>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-label">active sub-agents</div>
@@ -58,10 +58,10 @@
         </div>
         <div class="header-right">
           <button class="header-action header-action-goal" id="goal-button" type="button">goal</button>
-        <button class="header-action" id="command-palette-button" type="button">commands</button>
-        <span class="header-tokens" id="tokens">tokens 0 in / 0 out</span>
-        <span class="header-cost" id="cost">$0.00</span>
-      </div>
+          <button class="header-action" id="command-palette-button" type="button">commands</button>
+          <span class="header-tokens" id="tokens">tokens 0 in / 0 out</span>
+          <span class="header-cost" id="cost">$0.00</span>
+        </div>
       </header>
 
       <div class="messages" id="messages">

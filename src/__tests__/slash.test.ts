@@ -11,6 +11,17 @@ import { Session } from "../agent/session.js";
 
 process.env.CODINGHARNESS_HOME = mkdtempSync(join(tmpdir(), "ch-slash-"));
 
+type GoalStateSnapshot = {
+  mode: string;
+  objective: string;
+  phase: string;
+  step: number;
+  maxSteps: number;
+  startedAt: number;
+  updatedAt: number;
+  statusText?: string;
+};
+
 test("tryParseSlash parses a basic command", () => {
   const r = tryParseSlash("/model gpt-5");
   assert.equal(r?.name, "model");
@@ -62,10 +73,10 @@ test("/goal uses internal prompts instead of recursively invoking slash commands
   assert.ok(goal);
   const seen: string[] = [];
   const printed: string[] = [];
-  const states: Array<{ phase: string; step: number; statusText?: string }> = [];
+  const states: Array<{ mode: string; objective: string; phase: string; step: number; maxSteps: number; startedAt: number; updatedAt: number; statusText?: string }> = [];
   const rt = {
     print(text: string) { printed.push(text); },
-    setGoalActivity(state: { phase: string; step: number; statusText?: string } | null) {
+    setGoalActivity(state: { mode: string; objective: string; phase: string; step: number; maxSteps: number; startedAt: number; updatedAt: number; statusText?: string } | null) {
       if (state) states.push(state);
     },
     async sendPrompt(prompt: string) { seen.push(prompt); },
@@ -93,10 +104,10 @@ test("/goal uses internal prompts instead of recursively invoking slash commands
 test("/goal reports blocked state and max-step fallback", async () => {
   const goal = BUILTIN_REGISTRY.get("goal");
   assert.ok(goal);
-  const states: Array<{ phase: string; step: number; maxSteps: number; startedAt: number; updatedAt: number; statusText?: string }> = [];
+  const states: GoalStateSnapshot[] = [];
   const rt = {
     print() {},
-    setGoalActivity(state: { phase: string; step: number; maxSteps: number; startedAt: number; updatedAt: number; statusText?: string } | null) {
+    setGoalActivity(state: GoalStateSnapshot | null) {
       if (state) states.push({ ...state });
     },
     async sendPrompt() {},
@@ -119,11 +130,11 @@ test("/goal reports blocked state and max-step fallback", async () => {
 test("/goal reports max-step exhaustion when the agent never completes", async () => {
   const goal = BUILTIN_REGISTRY.get("goal");
   assert.ok(goal);
-  const states: Array<{ phase: string; step: number; maxSteps: number; statusText?: string }> = [];
+  const states: GoalStateSnapshot[] = [];
   const responses = ["still working", "still working"];
   const rt = {
     print() {},
-    setGoalActivity(state: { phase: string; step: number; maxSteps: number; statusText?: string } | null) {
+    setGoalActivity(state: GoalStateSnapshot | null) {
       if (state) states.push({ ...state });
     },
     async sendPrompt() {},
@@ -145,30 +156,37 @@ test("/goal reports max-step exhaustion when the agent never completes", async (
 
 test("goal activity snapshots are copied on read", async () => {
   const home = mkdtempSync(join(tmpdir(), "ch-goal-"));
+  const previousHome = process.env.CODINGHARNESS_HOME;
   process.env.CODINGHARNESS_HOME = home;
-  for (const sub of ["sessions", "logs", "cache", "extensions", "prompts", "skills", "agents", "cron", "memory", "context"]) {
-    mkdirSync(join(home, sub), { recursive: true });
+  try {
+    for (const sub of ["sessions", "logs", "cache", "extensions", "prompts", "skills", "agents", "cron", "memory", "context"]) {
+      mkdirSync(join(home, sub), { recursive: true });
+    }
+    const { HarnessRuntime } = await import("../runtime.js");
+    const rt = new HarnessRuntime({ cwd: home, ephemeral: true });
+    rt.setGoalActivity({
+      mode: "goal",
+      objective: "ship it",
+      phase: "planning",
+      step: 0,
+      maxSteps: 3,
+      startedAt: 123,
+      updatedAt: 456,
+      statusText: "Planning approach",
+    });
+    const snapshot = rt.getGoalActivity();
+    assert.ok(snapshot);
+    snapshot!.phase = "blocked";
+    snapshot!.statusText = "mutated";
+    assert.equal(rt.getGoalActivity()?.phase, "planning");
+    assert.equal(rt.getGoalActivity()?.statusText, "Planning approach");
+    rt.setGoalActivity(null);
+    assert.equal(rt.getGoalActivity(), null);
+  } finally {
+    if (previousHome === undefined) delete process.env.CODINGHARNESS_HOME;
+    else process.env.CODINGHARNESS_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
   }
-  const { HarnessRuntime } = await import("../runtime.js");
-  const rt = new HarnessRuntime({ cwd: home, ephemeral: true });
-  rt.setGoalActivity({
-    mode: "goal",
-    objective: "ship it",
-    phase: "planning",
-    step: 0,
-    maxSteps: 3,
-    startedAt: 123,
-    updatedAt: 456,
-    statusText: "Planning approach",
-  });
-  const snapshot = rt.getGoalActivity();
-  assert.ok(snapshot);
-  snapshot!.phase = "blocked";
-  snapshot!.statusText = "mutated";
-  assert.equal(rt.getGoalActivity()?.phase, "planning");
-  assert.equal(rt.getGoalActivity()?.statusText, "Planning approach");
-  rt.setGoalActivity(null);
-  assert.equal(rt.getGoalActivity(), null);
 });
 
 test("/sessions search finds transcript content", async () => {

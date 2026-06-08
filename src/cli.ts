@@ -118,6 +118,10 @@ registerSubcommand("update", "Update CodingHarness to the latest version and reb
   "ch update [--check] [--channel stable|beta|dev]",
   async (ctx) => { return runUpdateCmd(ctx); });
 
+registerSubcommand("export", "Export a session as a training-friendly JSONL trajectory.",
+  "ch export [session-id|--latest] [--format hermes|openai|share] [--out <dir>]",
+  async (ctx) => { return runExportCmd(ctx); });
+
 // ---------- Help / version ----------
 
 const VERSION = "0.2.2";
@@ -135,7 +139,7 @@ function showHelp(cmd?: string): number {
     "",
     "Subcommands:",
   ];
-  const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "update"];
+    const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "update", "export"];
   for (const name of order) {
     const s = SUBCOMMANDS.get(name);
     if (!s) continue;
@@ -547,6 +551,53 @@ async function runUpdateCmd(ctx: SubcommandContext): Promise<number> {
   const checkOnly = !!(ctx as { check?: boolean }).check;
   const { runUpdate } = await import("./updater.js");
   return runUpdate({ cwd: ctx.cwd, channel, checkOnly });
+}
+
+async function runExportCmd(ctx: SubcommandContext): Promise<number> {
+  const args = ctx.args ?? [];
+  let sessionId: string | null = null;
+  let latest = false;
+  let format: "hermes" | "openai" | "share" = "openai";
+  let outDir: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--latest" || a === "-l") { latest = true; continue; }
+    if (a.startsWith("--format=")) { format = a.slice("--format=".length) as "hermes" | "openai" | "share"; continue; }
+    if (a === "--format" && args[i + 1]) { format = args[++i] as "hermes" | "openai" | "share"; continue; }
+    if (a.startsWith("--out=")) { outDir = a.slice("--out=".length); continue; }
+    if (a === "--out" && args[i + 1]) { outDir = args[++i]!; continue; }
+    if (a.startsWith("--")) continue;
+    if (!sessionId) { sessionId = a; continue; }
+    process.stderr.write(c.yellow("warning: ignoring extra arg: ") + a + "\n");
+  }
+  if (!["hermes", "openai", "share"].includes(format)) {
+    process.stderr.write(c.red("error: ") + "invalid --format: " + format + " (use hermes, openai, or share)\n");
+    return 2;
+  }
+  const { Session } = await import("./agent/session.js");
+  const { exportSession, defaultExportDir } = await import("./agent/trajectory.js");
+  let session;
+  try {
+    if (latest || !sessionId) {
+      const list = await Session.list(1);
+      if (list.length === 0) { process.stderr.write(c.red("error: ") + "no sessions to export\n"); return 1; }
+      session = await Session.open(list[0]!.id);
+      process.stdout.write(c.dim("exporting latest session: " + list[0]!.id) + "\n");
+    } else {
+      session = await Session.open(sessionId);
+    }
+  } catch (e) {
+    process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+    return 1;
+  }
+  try {
+    const r = await exportSession(session, { format, outDir: outDir ?? defaultExportDir() });
+    process.stdout.write(c.green("✓ exported ") + r.lineCount + " line" + (r.lineCount === 1 ? "" : "s") + " to " + r.path + "\n");
+    return 0;
+  } catch (e) {
+    process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+    return 1;
+  }
 }
 
 function makeLightRuntime(ctx: SubcommandContext): import("./runtime.js").HarnessRuntime {

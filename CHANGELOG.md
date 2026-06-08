@@ -55,6 +55,34 @@ All notable changes to CodingHarness are documented here. Format follows
   devDependencies.
 - Build is `tsc && node scripts/copy-web.mjs` (was just `tsc`).
 
+### Added (post-0.2.2 commit, in the same release)
+
+- **TUI approval modal wired into the bash flow**: the bash tool now
+  calls `ctx.services.askApproval(command, reason)` when
+  `needsApproval()` returns `"ask"`. The TUI registers a handler via
+  `runtime.setApprovalRequestHandler()` that pops the modal. Decisions:
+  - `allow-once` / `allow-always` → set `__approval_bypass=true` on
+    the args, fall through to the real run.
+  - `deny` → return `isError=true` with a "denied" message.
+  - No handler registered (CLI JSON mode, server JSON mode) → fall
+    back to the static "needs approval" error.
+  - `allow-always` appends an exact-match regex to
+    `runtime.approval.allowlist` AND mirrors to `settings.json` via
+    `saveSettings` so the rule persists across restarts. Users can
+    hand-edit `~/.codingharness/settings.json` to broaden the pattern.
+- **`Tui.askApproval(command, reason)`** — defocuses the textarea,
+  shows the modal, refocuses on resolve.
+- **`ch export [session-id] [--format hermes|openai|share] [--out <dir>]`**:
+  exports a session as a JSONL trajectory in one of three formats:
+  - `hermes` — full event log with `{ type, ts, payload }` per line.
+  - `openai` — `{ messages: [...] }` in chat-completions format
+    suitable for SFT.
+  - `share` — same as `openai` but anonymized: API keys / tokens
+    redacted, absolute cwd paths replaced with `./`, output
+    truncated.
+  Default: latest session, format=openai, output to
+  `~/.codingharness/exports/`. 9 new tests.
+
 ## [0.2.1] - 2026-06-07
 
 ### Changed

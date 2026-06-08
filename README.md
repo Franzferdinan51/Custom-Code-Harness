@@ -43,6 +43,11 @@ Following the same pattern as `grok` / `grok agent` / `codex`:
 | `ch sessions`  | List, show, fork, or send to a session                          |
 | `ch init`      | Generate a starter `.codingharness/AGENTS.md` in the cwd        |
 | `ch serve`     | Run a headless HTTP server with `/v1/chat`, `/v1/spawn`, etc.    |
+| `ch export`    | Export a session as a JSONL trajectory (hermes / openai / share) |
+| `ch web`       | Start the server AND open the web UI in your browser            |
+| `ch update`    | Self-update: `git pull && npm install && build && link`          |
+| `ch version`   | Print the version                                                |
+| `ch help`      | Show help (or `ch help <subcommand>` for a specific one)        |
 
 ## Web UI & desktop app
 
@@ -70,10 +75,18 @@ curl -N -X POST http://127.0.0.1:18800/v1/chat/stream \
   -H 'content-type: application/json' \
   -d '{"prompt":"list the files in src/","sessionId":"default"}'
 ```
-| `ch web`       | Start the server AND open the web UI in your browser            |
-| `ch update`    | Self-update: `git pull && npm install && build && link`          |
-| `ch version`   | Print the version                                                |
-| `ch help`      | Show help (or `ch help <subcommand>` for a specific one)        |
+
+## Trajectory export
+
+`ch export` writes a session as JSONL for fine-tuning or sharing:
+
+```bash
+ch export --latest --format=hermes   # full event log
+ch export --latest --format=openai   # chat-completions format for SFT
+ch export --latest --format=share    # anonymized openai (no secrets, relative paths)
+```
+
+Default output: `~/.codingharness/exports/<session-prefix>-<timestamp>-<format>.jsonl`.
 
 The legacy flag style still works: `ch -p "hi"` is equivalent to
 `ch run "hi"`. So is `ch --doctor` to `ch doctor`.
@@ -450,8 +463,8 @@ npx tsc --noEmit       # type check
 - [x] Web UI (alongside TUI) — done in v0.2.2
 - [ ] Provider failover in the loop (config is there, runner is not)
 - [ ] Compaction UI: show diff of what was summarized
-- [ ] Wire the TUI approval modal into the bash tool flow (modal exists,
-      not yet connected)
+- [x] Wire the TUI approval modal into the bash tool flow — done in v0.2.2
+- [x] Trajectory export for training (Hermes-style) — done in v0.2.2
 
 ## License
 

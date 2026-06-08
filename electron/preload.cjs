@@ -6,8 +6,8 @@
 
 const { contextBridge, ipcRenderer } = require("electron");
 
-// Web UI listens on `ch:event:menu` and `ch:event:deep-link` for
-// native menu commands and ch:// deep links.
+// Web UI listens on `menu:command` and `deep-link` for native menu
+// commands and ch:// deep links.
 function on(channel, cb) {
   const handler = (_event, payload) => cb(payload);
   ipcRenderer.on(channel, handler);
@@ -26,8 +26,8 @@ contextBridge.exposeInMainWorld("ch", {
   info: () => ipcRenderer.invoke("ch:info"),
   showLogs: () => ipcRenderer.send("ch:show-logs"),
   revealAppData: () => ipcRenderer.send("ch:reveal-appdata"),
-  // Listen for native menu commands (File > New Session, etc.).
-  onMenuCommand: (cb) => on("menu:new-session", cb),
+  // Listen for native menu commands (new session, goal, command palette).
+  onMenuCommand: (cb) => on("menu:command", cb),
   // Listen for ch:// deep links.
   onDeepLink: (cb) => on("deep-link", cb),
 });

@@ -7,6 +7,10 @@
 // accepted for backward compatibility.
 
 import { parseArgs } from "node:util";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { join, dirname } from "node:path";
+import * as fs from "node:fs";
 import { ensurePaths } from "./config/paths.js";
 import { loadSettings } from "./config/settings.js";
 import { HarnessRuntime } from "./runtime.js";
@@ -118,6 +122,10 @@ registerSubcommand("update", "Update CodingHarness to the latest version and reb
   "ch update [--check] [--channel stable|beta|dev]",
   async (ctx) => { return runUpdateCmd(ctx); });
 
+registerSubcommand("desktop", "Launch the native desktop app (Electron).",
+  "ch desktop [args...]",
+  async (ctx) => { return runDesktopCmd(ctx); });
+
 registerSubcommand("export", "Export a session as a training-friendly JSONL trajectory.",
   "ch export [session-id|--latest] [--format hermes|openai|share] [--out <dir>]",
   async (ctx) => { return runExportCmd(ctx); });
@@ -139,7 +147,7 @@ function showHelp(cmd?: string): number {
     "",
     "Subcommands:",
   ];
-    const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "update", "export"];
+    const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "desktop", "update", "export"];
   for (const name of order) {
     const s = SUBCOMMANDS.get(name);
     if (!s) continue;
@@ -551,6 +559,93 @@ async function runUpdateCmd(ctx: SubcommandContext): Promise<number> {
   const checkOnly = !!(ctx as { check?: boolean }).check;
   const { runUpdate } = await import("./updater.js");
   return runUpdate({ cwd: ctx.cwd, channel, checkOnly });
+}
+
+/**
+ * `ch desktop` — launch the native Electron desktop app.
+ *
+ * The `ch` binary is globally linked, but Electron is per-project
+ * (lives in <project>/node_modules/.bin/electron). We find the
+ * project root by:
+ *
+ *   1. Walking up from CWD looking for a package.json with
+ *      "name": "codingharness".
+ *   2. Falling back to the script's resolved location (for the
+ *      case where `ch desktop` is run via `npm run desktop` from
+ *      inside the project).
+ *   3. If neither finds it, error with a hint to run from inside
+ *      a CodingHarness checkout (or use `npm run electron`).
+ */
+async function runDesktopCmd(ctx: SubcommandContext): Promise<number> {
+  const projectRoot = findProjectRoot();
+  if (!projectRoot) {
+    process.stderr.write(c.red("error: ") + "could not locate a CodingHarness project root.\n");
+    process.stderr.write("  Run `ch desktop` from inside a CodingHarness checkout, or use\n");
+    process.stderr.write("  `npm run electron` from the project root.\n");
+    return 1;
+  }
+  // Prefer the node_modules binary; fall back to the globally-installed one.
+  const localBin = join(projectRoot, "node_modules", ".bin", "electron");
+  const electronCmd = fs.existsSync(localBin) ? localBin : "electron";
+  const args = ctx.args ?? [];
+  process.stdout.write(c.dim("launching desktop from " + projectRoot) + "\n");
+  const child = spawn(electronCmd, [projectRoot, ...args], {
+    cwd: projectRoot,
+    stdio: "inherit",
+    env: process.env,
+  });
+  // Forward exit code. Forward Ctrl+C / SIGTERM.
+  const onSig = (sig: NodeJS.Signals) => { try { child.kill(sig); } catch {} };
+  process.once("SIGINT", onSig);
+  process.once("SIGTERM", onSig);
+  return new Promise<number>((resolve) => {
+    child.on("exit", (code, signal) => {
+      process.removeListener("SIGINT", onSig);
+      process.removeListener("SIGTERM", onSig);
+      resolve(typeof code === "number" ? code : signal ? 1 : 0);
+    });
+    child.on("error", (err) => {
+      process.stderr.write(c.red("error: ") + "failed to spawn electron: " + err.message + "\n");
+      resolve(1);
+    });
+  });
+}
+
+function findProjectRoot(): string | null {
+  const { existsSync, readFileSync } = fs;
+  // 1. Walk up from CWD.
+  let dir = process.cwd();
+  for (let i = 0; i < 8; i++) {
+    const pkg = join(dir, "package.json");
+    if (existsSync(pkg)) {
+      try {
+        const meta = JSON.parse(readFileSync(pkg, "utf-8"));
+        if (meta.name === "codingharness") return dir;
+      } catch { /* ignore */ }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // 2. Walk up from the script's resolved location (handles
+  //    `npm run desktop` from inside the project).
+  try {
+    const here = fileURLToPath(import.meta.url);
+    dir = dirname(here);
+    for (let i = 0; i < 8; i++) {
+      const pkg = join(dir, "package.json");
+      if (existsSync(pkg)) {
+        try {
+          const meta = JSON.parse(readFileSync(pkg, "utf-8"));
+          if (meta.name === "codingharness") return dir;
+        } catch { /* ignore */ }
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 async function runExportCmd(ctx: SubcommandContext): Promise<number> {

@@ -54,6 +54,19 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
       const cmd = BUILTIN_REGISTRY.get(parsed.name);
       if (cmd) {
         tui.addMessage({ kind: "system", text: "/ " + parsed.name + " " + parsed.args });
+        tui.setRunState({
+          phase: "running",
+          title: "/" + parsed.name,
+          detail: parsed.args.length > 0 ? summarizeText(parsed.args, 32) : "running without arguments",
+        });
+        const clearOutput = runtime.setOutputHandler({
+          onTextDelta: (t) => tui.appendText(t),
+          onToolCallStart: (tc) => tui.addToolCall(tc.name, tc.argsJson, "run"),
+          onToolCallEnd: (tc, r) => tui.addToolCall(tc.name, tc.argsJson, r.isError ? "err" : "ok", r.display),
+          onInfo: (text) => tui.addMessage({ kind: "info", text }),
+          onError: (error) => tui.addMessage({ kind: "error", text: error.message }),
+          onTurnEnd: () => tui.endStream(),
+        });
         try {
           const out = await cmd.run(parsed.args, { cwd: ctx.cwd, runtime: () => runtime });
           if (typeof out === "string" && out.length > 0) {
@@ -62,8 +75,20 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
             tui.stop();
             process.exit(0);
           }
+          tui.setRunState({
+            phase: "complete",
+            title: "/" + parsed.name,
+            detail: parsed.args.length > 0 ? summarizeText(parsed.args, 32) : "completed",
+          });
         } catch (e) {
           tui.addMessage({ kind: "error", text: (e as Error).message });
+          tui.setRunState({
+            phase: "error",
+            title: "/" + parsed.name,
+            detail: summarizeText((e as Error).message, 32),
+          });
+        } finally {
+          clearOutput();
         }
         return;
       }
@@ -126,9 +151,22 @@ async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd:
 
   tui.setInfo("thinking...");
   tui.setStatus({ session: runtime.sessionId() ?? "—" });
+  tui.setRunState({
+    phase: "running",
+    title: "agent turn",
+    detail: summarizeText(prompt, 36),
+  });
 
   const ac = new AbortController();
-  const onSig = () => { try { ac.abort(); } catch {} tui.setInfo("aborted"); };
+  const onSig = () => {
+    try { ac.abort(); } catch {}
+    tui.setInfo("aborted");
+    tui.setRunState({
+      phase: "error",
+      title: "agent turn",
+      detail: "aborted: " + summarizeText(prompt, 36),
+    });
+  };
   process.once("SIGINT", onSig);
 
   try {
@@ -164,10 +202,26 @@ async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd:
     tui.endStream();
     tui.setInfo("");
     tui.setStatus({ steps: result.steps });
+    tui.setRunState({
+      phase: "complete",
+      title: "agent turn",
+      detail: "steps " + result.steps + " · " + summarizeText(prompt, 36),
+    });
   } catch (e) {
     tui.endStream();
     tui.addMessage({ kind: "error", text: "agent crashed: " + (e as Error).message });
+    tui.setRunState({
+      phase: "error",
+      title: "agent turn",
+      detail: summarizeText((e as Error).message, 36),
+    });
   } finally {
     process.removeListener("SIGINT", onSig);
   }
+}
+
+function summarizeText(text: string, max = 36): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (cleaned.length === 0) return "—";
+  return cleaned.length > max ? cleaned.slice(0, max - 1) + "…" : cleaned;
 }

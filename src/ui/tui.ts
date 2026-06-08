@@ -655,16 +655,16 @@ function buildCommandPreview(text: string, slashNames: string[]): string {
   }
 
   if (!trimmed.includes(" ")) {
-    const matches = slashNames.filter((n) => n.startsWith(bare)).slice(0, 3);
-    if (matches.length > 0) {
-      const names = matches.map((name) => "/" + name).join("   ");
-      if (matches.length === 1) {
-        const cmd = BUILTIN_REGISTRY.get(matches[0]!);
-        return names + "\n" + (cmd?.usage ?? "/" + matches[0]!) + (cmd?.description ? " · " + cmd.description : "");
+      const matches = slashNames.filter((n) => n.startsWith(bare)).slice(0, 3);
+      if (matches.length > 0) {
+        const names = matches.map((name) => "/" + name).join("   ");
+        if (matches.length === 1) {
+          const cmd = BUILTIN_REGISTRY.get(matches[0]!);
+          return names + "\n" + compactLine((cmd?.usage ?? "/" + matches[0]!) + (cmd?.description ? " · " + cmd.description : ""), 92);
+        }
+        return names + "\nTab completes the highlighted command.";
       }
-      return names + "\nTab completes the highlighted command.";
-    }
-    return "No slash command matches /" + bare + ".\nTry /help to list available commands.";
+      return "No slash command matches /" + bare + ".\nTry /help to list available commands.";
   }
 
   const cmd = BUILTIN_REGISTRY.get(bare);
@@ -672,7 +672,7 @@ function buildCommandPreview(text: string, slashNames: string[]): string {
     return "/" + bare + "\nTry /help to list available commands.";
   }
 
-  return (cmd.usage ?? "/" + cmd.name) + "\n" + (cmd.description || "Enter to run.");
+  return (cmd.usage ?? "/" + cmd.name) + "\n" + compactLine(cmd.description || "Enter to run.", 92);
 }
 
 function goalIcon(phase: string): string {

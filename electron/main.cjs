@@ -27,13 +27,39 @@
 // Distribute via electron-builder using electron/electron-builder.config.cjs.
 
 const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, dialog, protocol } = require("electron");
-const contextMenu = require("electron-context-menu");
 const log = require("electron-log/main");
 const path = require("node:path");
 const fs = require("node:fs");
 const net = require("node:net");
 const http = require("node:http");
 const { spawn } = require("node:child_process");
+
+// electron-context-menu@4 is ESM-only and can't be require()'d from a
+// CommonJS main process. Use dynamic import so we can still surface
+// the enriched right-click menu (spellcheck, copy, dev tools).
+// Falls back to Electron's default context menu if the import fails.
+let setupContextMenu = null;
+try {
+  // Top-level await isn't available in CJS; defer to app.whenReady().
+  const importEsm = (m) => import(m);
+  setupContextMenu = async () => {
+    try {
+      const mod = await importEsm("electron-context-menu");
+      const contextMenu = mod.default || mod;
+      contextMenu({
+        showLookUpSelection: true,
+        showCopyImage: true,
+        showSaveImageAs: true,
+        showInspectElement: !app.isPackaged,
+      });
+      log.info("electron-context-menu loaded");
+    } catch (e) {
+      log.warn("electron-context-menu not available, using default:", e.message);
+    }
+  };
+} catch (e) {
+  log.warn("could not set up context-menu loader:", e.message);
+}
 
 const isDev = !app.isPackaged;
 const APP_ROOT = isDev ? path.join(__dirname, "..", "..") : path.join(__dirname, "..");
@@ -61,19 +87,21 @@ let windowState = null; // electron-window-state
 let serverReady = false;
 let serverError = null;
 
+function sendMenuCommand(command) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("menu:command", command);
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
 // --- Logging: write to OS-native log file (~/Library/Logs on macOS,
 // %APPDATA% on Windows, ~/.config on Linux) so users can attach logs
 // to bug reports. ---
 log.initialize({ preload: true });
 log.info("CodingHarness desktop starting, version=" + app.getVersion() + ", platform=" + process.platform);
 
-// --- Right-click context menu: spellcheck, copy/paste, dev tools. ---
-contextMenu({
-  showLookUpSelection: true,
-  showCopyImage: true,
-  showSaveImageAs: true,
-  showInspectElement: isDev,
-});
+// Context menu is set up in app.whenReady() because electron-context-menu
+// v4 is ESM-only and requires dynamic import.
 
 // ---------- Helpers ----------
 
@@ -256,7 +284,17 @@ function buildAppMenu() {
         {
           label: "New Session",
           accelerator: "CmdOrCtrl+N",
-          click: () => { mainWindow?.webContents.send("menu:new-session"); },
+          click: () => { sendMenuCommand("new-session"); },
+        },
+        {
+          label: "Goal Mode",
+          accelerator: "CmdOrCtrl+Shift+G",
+          click: () => { sendMenuCommand("goal"); },
+        },
+        {
+          label: "Command Palette",
+          accelerator: "CmdOrCtrl+K",
+          click: () => { sendMenuCommand("command-palette"); },
         },
         { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },
@@ -279,7 +317,11 @@ function buildAppMenu() {
         { type: "separator" },
         {
           label: "Show Logs",
-          click: () => { shell.openPath(log.transports.file.getFile().path); },
+          click: () => { sendMenuCommand("show-logs"); },
+        },
+        {
+          label: "Reveal App Data",
+          click: () => { sendMenuCommand("reveal-appdata"); },
         },
         {
           label: "Export Debug Logs…",
@@ -349,6 +391,8 @@ function refreshTray() {
     { label: status, enabled: false },
     { type: "separator" },
     { label: "Show CodingHarness", click: () => mainWindow?.show() },
+    { label: "Goal Mode", click: () => sendMenuCommand("goal") },
+    { label: "Command Palette", click: () => sendMenuCommand("command-palette") },
     { label: "Hide", click: () => mainWindow?.hide() },
     { type: "separator" },
     { label: "Open in Browser", click: () => shell.openExternal(chUrl + "/") },
@@ -455,6 +499,7 @@ function registerProtocolHandler() {
     if (mainWindow) {
       mainWindow.webContents.send("deep-link", url);
       if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
     }
   });
   // Windows / Linux: deep link is in argv.
@@ -501,6 +546,7 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(async () => {
+  if (setupContextMenu) await setupContextMenu();
   registerProtocolHandler();
   buildAppMenu();
   try {

@@ -47,6 +47,10 @@ export interface SessionMeta {
   head: string | null;
 }
 
+export interface SessionSearchResult extends SessionMeta {
+  preview?: string;
+}
+
 export class Session {
   readonly id: string;
   readonly filePath: string;
@@ -70,6 +74,7 @@ export class Session {
     const id = Session.newId();
     const file = join(paths.sessions, `${id}.jsonl`);
     const now = Date.now();
+    await mkdir(paths.sessions, { recursive: true });
     const meta: SessionMeta = {
       id,
       name: opts.name,
@@ -110,6 +115,27 @@ export class Session {
     }
     out.sort((a, b) => b.updatedAt - a.updatedAt);
     return out.slice(0, limit);
+  }
+
+  /** Search sessions by metadata and transcript content. */
+  static async search(query: string, limit = 20): Promise<SessionSearchResult[]> {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return this.list(limit);
+    const { readdir } = await import("node:fs/promises");
+    let files: string[];
+    try { files = (await readdir(paths.sessions)).filter((f) => f.endsWith(".jsonl")); } catch { return []; }
+    const matches: Array<SessionSearchResult & { score: number }> = [];
+    for (const f of files) {
+      const file = join(paths.sessions, f);
+      try {
+        const meta = await readMetaFromFile(file);
+        const transcript = await readEntriesFromFile(file);
+        const { score, preview } = scoreSessionMatch(meta, transcript, trimmed);
+        if (score > 0) matches.push({ ...meta, preview, score });
+      } catch { /* skip corrupt */ }
+    }
+    matches.sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt);
+    return matches.slice(0, limit).map(({ score: _score, ...rest }) => rest);
   }
 
   // ---------- Mutations ----------
@@ -305,4 +331,55 @@ export function sessionToMessages(s: Session): ChatMessage[] {
     // messages and tool results.
   }
   return out;
+}
+
+function scoreSessionMatch(meta: SessionMeta, entries: readonly SessionEntry[], query: string): { score: number; preview?: string } {
+  let score = 0;
+  const fields = [
+    meta.id,
+    meta.name ?? "",
+    meta.model ?? "",
+    meta.provider ?? "",
+    meta.cwd ?? "",
+  ];
+  for (const field of fields) {
+    const lower = field.toLowerCase();
+    if (lower.includes(query)) score += lower === query ? 8 : 4;
+  }
+
+  let preview = "";
+  const messages = entries
+    .map((entry) => {
+      if (entry.payload.kind === "message") return entry.payload.message.content;
+      if (entry.payload.kind === "system") return entry.payload.text;
+      if (entry.payload.kind === "compaction") return entry.payload.summary;
+      return "";
+    })
+    .filter(Boolean);
+
+  for (const text of messages) {
+    const lower = text.toLowerCase();
+    if (lower.includes(query)) {
+      score += 6;
+      if (!preview) preview = buildPreview(text, query);
+    }
+  }
+
+  if (!preview && messages.length > 0) {
+    preview = messages[messages.length - 1]!.replace(/\s+/g, " ").trim().slice(0, 120);
+  }
+
+  return { score, preview: preview || undefined };
+}
+
+function buildPreview(text: string, query: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  const lower = compact.toLowerCase();
+  const index = lower.indexOf(query);
+  if (index === -1) return compact.slice(0, 120);
+  const start = Math.max(0, index - 36);
+  const end = Math.min(compact.length, index + query.length + 52);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < compact.length ? "…" : "";
+  return prefix + compact.slice(start, end) + suffix;
 }

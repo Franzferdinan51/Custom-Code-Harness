@@ -358,6 +358,7 @@ async function streamChat(runtime: HarnessRuntime, prompt: string, res: ServerRe
       messages, tools: runtime.tools, cwd: process.cwd(),
       signal: new AbortController().signal,
       limits: { ...DEFAULT_LIMITS },
+      failoverChain: runtime.buildFailoverChain(),
       hooks: {
         onTextDelta: (t: string) => { lastText += t; res.write(sse("text", { text: t })); },
         onToolCallStart: (tc: { name: string; argsJson: string }) => { res.write(sse("tool_start", { name: tc.name, args: tc.argsJson })); },

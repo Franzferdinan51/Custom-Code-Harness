@@ -39,6 +39,12 @@ export interface AgentRunInput {
   hooks?: AgentRunHooks;
   /** When the loop finishes (success or abort), this receives the final assistant message. */
   onComplete?: (final: ChatMessage) => void;
+  /**
+   * Optional failover chain. If the primary provider throws, the loop
+   * tries the next entry. Each entry is `{ provider, model }` — the
+   * same provider instance can appear with a different model.
+   */
+  failoverChain?: Array<{ provider: Provider; model: string }>;
 }
 
 export interface AgentRunResult {
@@ -71,54 +77,80 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
       }
       steps += 1;
 
-      // ---- Call provider ----
+      // ---- Call provider (with optional failover chain) ----
       let assistantMsg: ChatMessage = { role: "assistant", content: "" };
       let usage = { inputTokens: 0, outputTokens: 0 };
       const toolCalls: ToolCall[] = [];
+      // Build the attempt chain. The primary is always first; the
+      // chain may add fallbacks. Empty array = just the primary.
+      const chain: Array<{ provider: Provider; model: string }> = [
+        { provider: input.provider, model: input.model },
+        ...(input.failoverChain ?? []),
+      ];
+      let streamedSuccessfully = false;
       try {
-        // Build a derived signal that also aborts after a hard timeout.
-        const turnSignal = timedSignal(input.signal, input.limits.requestTimeoutMs);
-        const req: ProviderRequest = {
-          model: input.model,
-          system: input.system,
-          messages: currentMessages,
-          tools: input.tools.specs(),
-          maxTokens: 8_192,
-          temperature: 0.2,
-          signal: turnSignal.signal,
-        };
-        try {
-          for await (const ev of input.provider.stream(req)) {
-            switch (ev.type) {
-              case "text":
-                if (ev.text) {
-                  assistantMsg.content += ev.text;
-                  hooks.onTextDelta?.(ev.text);
-                }
-                break;
-              case "reasoning":
-                if (ev.reasoning) {
-                  assistantMsg.reasoning = (assistantMsg.reasoning ?? "") + ev.reasoning;
-                  hooks.onReasoningDelta?.(ev.reasoning);
-                }
-                break;
-              case "tool_call":
-                if (ev.toolCall) {
-                  toolCalls.push(ev.toolCall);
-                  hooks.onToolCallStart?.(ev.toolCall);
-                }
-                break;
-              case "usage":
-                if (ev.usage) usage = ev.usage;
-                break;
-              case "error":
-                throw new Error(ev.error?.message ?? "provider error");
-              case "done":
-                break;
-            }
+        outer: for (let attempt = 0; attempt < chain.length; attempt++) {
+          const { provider, model } = chain[attempt]!;
+          if (attempt > 0) {
+            onInfo(`failing over to ${provider.id}/${model} (attempt ${attempt + 1}/${chain.length})`);
           }
-        } finally {
-          turnSignal.dispose();
+          // Build a derived signal that also aborts after a hard timeout.
+          const turnSignal = timedSignal(input.signal, input.limits.requestTimeoutMs);
+          const req: ProviderRequest = {
+            model,
+            system: input.system,
+            messages: currentMessages,
+            tools: input.tools.specs(),
+            maxTokens: 8_192,
+            temperature: 0.2,
+            signal: turnSignal.signal,
+          };
+          try {
+            for await (const ev of provider.stream(req)) {
+              switch (ev.type) {
+                case "text":
+                  if (ev.text) {
+                    assistantMsg.content += ev.text;
+                    hooks.onTextDelta?.(ev.text);
+                  }
+                  break;
+                case "reasoning":
+                  if (ev.reasoning) {
+                    assistantMsg.reasoning = (assistantMsg.reasoning ?? "") + ev.reasoning;
+                    hooks.onReasoningDelta?.(ev.reasoning);
+                  }
+                  break;
+                case "tool_call":
+                  if (ev.toolCall) {
+                    toolCalls.push(ev.toolCall);
+                    hooks.onToolCallStart?.(ev.toolCall);
+                  }
+                  break;
+                case "usage":
+                  if (ev.usage) usage = ev.usage;
+                  break;
+                case "error":
+                  throw new Error(ev.error?.message ?? "provider error");
+                case "done":
+                  break;
+              }
+            }
+            streamedSuccessfully = true;
+            break outer;
+          } catch (streamErr) {
+            const e = streamErr as Error;
+            // User-initiated abort: do not failover, exit immediately.
+            if (e.name === "AbortError" || input.signal.aborted) {
+              onInfo("aborted during model turn");
+              turnSignal.dispose();
+              break outer;
+            }
+            // Otherwise, on the last attempt we re-throw; on earlier
+            // attempts we let the outer loop try the next provider.
+            turnSignal.dispose();
+            if (attempt === chain.length - 1) throw e;
+            hooks.onInfo?.(`primary ${provider.id}/${model} failed: ${e.message} — trying next in chain`);
+          }
         }
       } catch (err) {
         const e = err as Error;

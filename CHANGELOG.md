@@ -82,6 +82,14 @@ All notable changes to CodingHarness are documented here. Format follows
     truncated.
   Default: latest session, format=openai, output to
   `~/.codingharness/exports/`. 9 new tests.
+- **Provider failover**: `settings.failover` is now actually wired into
+  the agent loop. If the primary provider throws (network error, 5xx,
+  rate limit), the loop tries the next entry in the chain. Each entry
+  is `{ provider, model }`. The failover chain is built by
+  `HarnessRuntime.buildFailoverChain()` (public so the TUI / server
+  can pass it to `runAgent` directly). Unconfigured providers are
+  silently skipped (with a `log.warn`). User-initiated aborts (Ctrl+C)
+  do not trigger failover. 4 new tests.
 
 ## [0.2.1] - 2026-06-07
 

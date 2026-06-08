@@ -140,6 +140,7 @@ async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd:
       cwd,
       signal: ac.signal,
       limits: { ...DEFAULT_LIMITS, bashTimeoutMs: runtime.settings.tools?.bashTimeoutMs ?? DEFAULT_LIMITS.bashTimeoutMs, readMaxBytes: runtime.settings.tools?.readMaxBytes ?? DEFAULT_LIMITS.readMaxBytes },
+      failoverChain: runtime.buildFailoverChain(),
       hooks: {
         onTextDelta: (t) => tui.appendText(t),
         onToolCallStart: (tc) => tui.addToolCall(tc.name, tc.argsJson, "run"),

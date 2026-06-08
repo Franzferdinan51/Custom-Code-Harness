@@ -461,7 +461,7 @@ npx tsc --noEmit       # type check
 - [ ] Session branching UI (`/tree`)
 - [ ] Trajectory export for training (Hermes-style)
 - [x] Web UI (alongside TUI) — done in v0.2.2
-- [ ] Provider failover in the loop (config is there, runner is not)
+- [x] Provider failover in the loop (config is there, runner is not) — done in v0.2.2
 - [ ] Compaction UI: show diff of what was summarized
 - [x] Wire the TUI approval modal into the bash tool flow — done in v0.2.2
 - [x] Trajectory export for training (Hermes-style) — done in v0.2.2

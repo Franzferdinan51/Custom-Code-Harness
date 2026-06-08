@@ -179,6 +179,7 @@ export class HarnessRuntime implements SlashRuntime {
         cwd: this.cwd,
         signal: ac.signal,
         limits: { ...DEFAULT_LIMITS, bashTimeoutMs: this.settings.tools?.bashTimeoutMs ?? DEFAULT_LIMITS.bashTimeoutMs, readMaxBytes: this.settings.tools?.readMaxBytes ?? DEFAULT_LIMITS.readMaxBytes },
+        failoverChain: this.buildFailoverChain(),
         hooks: {
           onTextDelta: (t) => {
             if (opts.captureText) opts.captureText(t);
@@ -304,6 +305,27 @@ export class HarnessRuntime implements SlashRuntime {
     };
   }
   private todoItems: string[] = [];
+
+  /**
+   * Build the failover chain from `settings.failover`. Each entry is
+   * `{ provider, model }`. Providers not configured in settings are
+   * silently skipped. Returns an empty array when no failover is set.
+   * Public so the TUI / server can pass it to `runAgent` directly.
+   */
+  buildFailoverChain(): Array<{ provider: import("./types.js").Provider; model: string }> {
+    const chain: Array<{ provider: import("./types.js").Provider; model: string }> = [];
+    const failover = this.settings.failover;
+    if (!Array.isArray(failover)) return chain;
+    for (const f of failover) {
+      const p = this.providerRegistry.get(f.provider);
+      if (!p) {
+        log.warn(`failover: provider "${f.provider}" not configured — skipping`);
+        continue;
+      }
+      chain.push({ provider: p, model: f.model });
+    }
+    return chain;
+  }
 
   private async buildSystemPrompt(): Promise<string> {
     const parts: string[] = [];

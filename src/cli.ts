@@ -39,6 +39,10 @@ interface SubcommandContext {
   host?: string;
   noTui?: boolean;
   noOpen?: boolean;
+  // Per-subcommand flag (used by `ch mcp`):
+  stdio?: boolean;
+  approveBash?: boolean;
+  allowRemote?: boolean;
 }
 
 const SUBCOMMANDS = new Map<string, { description: string; usage: string; run: SubcommandHandler }>();
@@ -127,7 +131,7 @@ registerSubcommand("desktop", "Launch the native desktop app (Electron).",
   async (ctx) => { return runDesktopCmd(ctx); });
 
 registerSubcommand("mcp", "Run an MCP (Model Context Protocol) server exposing CodingHarness tools.",
-  "ch mcp [--port <n>] [--host <addr>] [--approve-bash]",
+  "ch mcp [--port <n>] [--host <addr>] [--stdio] [--approve-bash] [--allow-remote]",
   async (ctx) => { return runMcpCmd(ctx); });
 
 registerSubcommand("export", "Export a session as a training-friendly JSONL trajectory.",
@@ -248,6 +252,9 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
         "no-open": { type: "boolean" },
         check: { type: "boolean" },
         channel: { type: "string" },
+        stdio: { type: "boolean" },
+        "approve-bash": { type: "boolean" },
+        "allow-remote": { type: "boolean" },
       },
       allowPositionals: true,
       strict: false,
@@ -272,6 +279,9 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
     host: parsed.values.host ? String(parsed.values.host) : undefined,
     noTui: !!parsed.values["no-tui"],
     noOpen: !!parsed.values["no-open"],
+    stdio: !!parsed.values.stdio,
+    approveBash: !!parsed.values["approve-bash"],
+    allowRemote: !!parsed.values["allow-remote"],
   };
 }
 
@@ -537,15 +547,33 @@ async function runServeCmd(ctx: SubcommandContext): Promise<number> {
  * `ch mcp` — run the MCP (Model Context Protocol) server.
  *
  * Exposes our tool registry to MCP-aware clients (Claude Code, Cursor,
- * mcporter, etc.) over JSON-RPC 2.0 (HTTP POST at /mcp) and SSE
- * (GET /sse). The Electron desktop shell also spawns this when the
- * user runs `ch desktop` so external MCP clients can drive the same
- * tools.
+ * mcporter, etc.) over JSON-RPC 2.0. Three transports are supported:
+ *
+ *   - HTTP+SSE (default):  POST /mcp for JSON-RPC, GET /sse for
+ *                           Server-Sent Events. Binds to 127.0.0.1
+ *                           by default; use --allow-remote to opt in
+ *                           to 0.0.0.0 (NOT recommended — the MCP
+ *                           server exposes code-execution tools).
+ *   - stdio (`--stdio`):    newline-delimited JSON-RPC over
+ *                           stdin/stdout. The canonical MCP IPC
+ *                           transport; every MCP client can be
+ *                           configured to talk to a stdio MCP server
+ *                           by pointing it at the binary. The
+ *                           Electron desktop uses this when it wants
+ *                           in-process IPC without a port.
+ *
+ * The Electron desktop shell also spawns the HTTP version of this
+ * server when the user runs `ch desktop` so external MCP clients can
+ * drive the same tools.
  */
 async function runMcpCmd(ctx: SubcommandContext): Promise<number> {
+  const stdio = !!(ctx as { stdio?: boolean }).stdio;
+  const approveBash = !!(ctx as { approveBash?: boolean }).approveBash;
+  if (stdio) {
+    return runMcpStdio(ctx, approveBash);
+  }
   const port = parseInt(ctx.port ?? "3456", 10);
   const host = ctx.host ?? "127.0.0.1";
-  const approveBash = !!(ctx as { approveBash?: boolean }).approveBash;
   const allowRemote = !!(ctx as { allowRemote?: boolean }).allowRemote;
   if (!Number.isFinite(port) || port < 1 || port > 65535) {
     process.stderr.write("error: --port must be 1..65535\n");
@@ -556,12 +584,14 @@ async function runMcpCmd(ctx: SubcommandContext): Promise<number> {
   const r = await startMcpServer({
     port, host, cwd: ctx.cwd, approveBash, allowRemote,
   });
-  process.stdout.write(c.cyan("CodingHarness MCP server listening on ") + r.url + "\n");
-  process.stdout.write(c.dim(`  JSON-RPC:  POST ${r.url}/mcp\n`));
-  process.stdout.write(c.dim(`  SSE:       GET  ${r.url}/sse\n`));
-  process.stdout.write(c.dim(`  Health:    GET  ${r.url}/health\n`));
-  process.stdout.write(c.dim(`  Tools:     ${r.tools.length} (${r.tools.filter(t => t.annotations?.destructiveHint).length} destructive)\n`));
-  if (r.requiresApiKey) process.stdout.write(c.yellow("  Auth:      Bearer token required (MCP_API_KEY)\n"));
+  // Stderr banner so the line is visible even when stdout is
+  // redirected (some MCP clients capture stdout).
+  process.stderr.write(c.cyan("CodingHarness MCP server listening on ") + r.url + "\n");
+  process.stderr.write(c.dim(`  JSON-RPC:  POST ${r.url}/mcp\n`));
+  process.stderr.write(c.dim(`  SSE:       GET  ${r.url}/sse\n`));
+  process.stderr.write(c.dim(`  Health:    GET  ${r.url}/health\n`));
+  process.stderr.write(c.dim(`  Tools:     ${r.tools.length} (${r.tools.filter(t => t.annotations?.destructiveHint).length} destructive)\n`));
+  if (r.requiresApiKey) process.stderr.write(c.yellow("  Auth:      Bearer token required (MCP_API_KEY)\n"));
   // SIGINT / SIGTERM: stop the server cleanly.
   const onSig = () => { void r.stop().then(() => process.exit(0)); };
   process.once("SIGINT", onSig);
@@ -569,6 +599,26 @@ async function runMcpCmd(ctx: SubcommandContext): Promise<number> {
   return new Promise<number>((resolve) => {
     r.server.on("close", () => { process.removeListener("SIGINT", onSig); process.removeListener("SIGTERM", onSig); resolve(0); });
   });
+}
+
+async function runMcpStdio(ctx: SubcommandContext, approveBash: boolean): Promise<number> {
+  ensurePaths();
+  const { startMcpStdioServer } = await import("./mcp-server.js");
+  const r = await startMcpStdioServer({
+    cwd: ctx.cwd,
+    approveBash,
+  });
+  // Banner to stderr (stdout is reserved for the JSON-RPC wire).
+  process.stderr.write(c.cyan("CodingHarness MCP stdio server ready") + "\n");
+  process.stderr.write(c.dim(`  Protocol:  ${"2025-06-18"}\n`));
+  process.stderr.write(c.dim(`  Tools:     ${r.tools.length}\n`));
+  const onSig = () => { void r.stop().then(() => process.exit(0)); };
+  process.once("SIGINT", onSig);
+  process.once("SIGTERM", onSig);
+  await r.done;
+  process.removeListener("SIGINT", onSig);
+  process.removeListener("SIGTERM", onSig);
+  return 0;
 }
 
 async function runWebCmd(ctx: SubcommandContext): Promise<number> {

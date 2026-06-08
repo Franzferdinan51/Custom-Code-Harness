@@ -7,6 +7,71 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **Electron desktop features** (`electron/desktop-features.cjs`,
+  `electron/main.cjs`, `electron/preload.cjs`, `src/web/{index.html,
+  app.js, styles.css}`): five new OS-level capabilities modeled on
+  the patterns openai/codex and Gitlawb/openclaude use for their
+  desktop apps. All additive, all degrade gracefully when the
+  underlying OS feature is missing.
+  - **`safeStorage` keychain** for API keys. The web server
+    currently stores API keys in plain `settings.json`; on the
+    desktop, `ch.keychainSet(name, value)` encrypts the value with
+    the OS keychain (Keychain on macOS, Credential Vault on
+    Windows, libsecret on Linux) via `electron.safeStorage` and
+    stores the encrypted blob in the user data dir. `ch.keychainGet`
+    decrypts on read. The Settings panel shows a "Save API key to
+    Keychain" button and the current keychain status (backend,
+    entry count). Falls back to plain settings.json when the
+    platform's safeStorage isn't available.
+  - **Auto-launch at login**: `app.setLoginItemSettings({
+    openAtLogin, openAsHidden, args })`. Toggled from Settings;
+    persisted via the same electron-store-on-disk pattern. On
+    Windows, `--hidden` is appended so the app boots into the
+    tray. Gracefully no-ops on platforms where the call fails.
+  - **Native desktop notifications**: `new Notification({ title,
+    body, silent, tag }).show()` for "agent done", "approval
+    needed", and "MCP server up" events. Routed through a single
+    `features.pushNotification()` queue with a per-session
+    `notificationsEnabled` toggle. The web server's `server:notify`
+    IPC event is now also bridged to the OS notification center
+    so the user sees it even when the window is hidden.
+  - **Recent projects menu**: tracks the last 8 project roots
+    the desktop opened in `<userData>/recent-projects.json` and
+    surfaces them in `File > Open Recent > [project1, ...]`.
+    `File > Clear Recent` wipes the list. The Settings panel
+    shows the list with per-entry "×" buttons.
+  - **Tray badge count**: `app.setBadgeCount(n)` on macOS / Linux
+    Unity surfaces the active-session count on the dock / launcher.
+    A new IPC `ch:badge-set <n>` lets the renderer push the
+    current count, and `ch:badge` notifications let the renderer
+    react to changes.
+  - **Update channel UI**: `stable` / `beta` toggle in Settings,
+    persisted at `<userData>/update-channel.json`. Changing the
+    channel re-arms `setupAutoUpdater()` so the new channel is
+    honored on the next check.
+- **MCP stdio transport** (`ch mcp --stdio`, new
+  `startMcpStdioServer` in `src/mcp-server.ts`): the canonical MCP
+  IPC — newline-delimited JSON-RPC 2.0 over stdin/stdout. Every
+  MCP client can be configured to talk to a stdio MCP server by
+  pointing it at the binary. The Electron desktop uses it for
+  in-process IPC (no port binding, no localhost assumption, no
+  firewall prompts).
+  - Banner to stderr (stdout is reserved for the JSON-RPC wire).
+  - Hard cap of 1 MB per line (mirrors the HTTP body cap).
+  - `computeRpcResponse()` factored out of the HTTP path so both
+    transports share the exact same dispatch logic.
+  - 9 new tests covering: ready banner, initialize, tools/list,
+    ping, notification (no reply), `id: null` → -32600, parse
+    error, unknown method, and a live `tools/call` round-trip.
+- **`ch mcp` now accepts `--stdio`**: the same subcommand can
+  bind to HTTP+SSE (default) or speak JSON-RPC over stdio
+  (`--stdio`). `--approve-bash`, `--allow-remote`, and the
+  existing auth / loopback guards all work in both modes.
+
+## [0.2.2] - 2026-06-07
+
+### Added
+
 - **MCP server** (`ch mcp`): Model Context Protocol server exposing
   CodingHarness's 13 agent tools to external clients (Claude Code,
   Cursor, Zed, etc.). Spec-compliant JSON-RPC 2.0 with SSE transport.

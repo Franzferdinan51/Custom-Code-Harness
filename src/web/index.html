@@ -185,6 +185,43 @@
           <option value="xhigh">xhigh</option>
         </select>
       </div>
+
+      <!-- Desktop-only rows: keychain, auto-launch, notifications, recent projects, update channel -->
+      <div class="settings-section desktop-only" hidden>
+        <div class="settings-section-title">🖥 Desktop</div>
+        <div class="settings-row">
+          <label>API key in Keychain</label>
+          <span class="settings-readonly" id="setting-keychain">—</span>
+        </div>
+        <div class="settings-row desktop-only" hidden>
+          <label>Save API key to Keychain</label>
+          <button class="settings-btn" id="setting-keychain-save">Encrypt &amp; Save</button>
+        </div>
+        <div class="settings-row">
+          <label>Auto-launch at login</label>
+          <input type="checkbox" id="setting-autolaunch" />
+        </div>
+        <div class="settings-row">
+          <label>Start hidden</label>
+          <input type="checkbox" id="setting-autolaunch-hidden" />
+        </div>
+        <div class="settings-row">
+          <label>Notifications</label>
+          <input type="checkbox" id="setting-notifications" checked />
+        </div>
+        <div class="settings-row">
+          <label>Update channel</label>
+          <select id="setting-update-channel">
+            <option value="stable">stable</option>
+            <option value="beta">beta</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label>Recent projects</label>
+          <div class="settings-list" id="setting-recent-list"></div>
+        </div>
+      </div>
+
       <div class="settings-actions">
         <button class="settings-save" id="settings-save">save</button>
         <button class="settings-cancel" id="settings-cancel">cancel</button>

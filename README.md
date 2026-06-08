@@ -121,10 +121,86 @@ curl -s -X POST http://127.0.0.1:$PORT/mcp \
 # "spawn_subagent" "skill" "memory" "todo"
 ```
 
-The Electron desktop shell spawns `ch mcp` automatically when you
-launch `ch desktop` — the tray menu shows both server URLs and the
-"Copy MCP URL" menu item is enabled as soon as the server is ready.
-Set `CH_DESKTOP_AUTOSTART_MCP=0` to disable the autostart.
+#### Stdio transport (`ch mcp --stdio`)
+
+The canonical MCP IPC is JSON-RPC 2.0 over stdin/stdout, one JSON
+object per line. Most MCP clients (Claude Code, Cursor, Zed,
+mcporter) can be configured to talk to a stdio MCP server by
+pointing them at the binary:
+
+```bash
+# ad-hoc
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  | ch mcp --stdio
+# {"jsonrpc":"2.0","id":1,"result":{"tools":[...]}}
+```
+
+```json
+// ~/.claude/mcp_servers.json
+{
+  "mcpServers": {
+    "codingharness": {
+      "command": "ch",
+      "args": ["mcp", "--stdio"],
+      "env": { "CODINGHARNESS_HOME": "~/.codingharness" }
+    }
+  }
+}
+```
+
+The stdio transport is the recommended way to embed the MCP server
+inside another process (the Electron desktop uses it for in-process
+IPC — no port binding, no localhost assumption, no firewall prompts).
+
+The Electron desktop shell spawns the HTTP version of `ch mcp`
+automatically when you launch `ch desktop` — the tray menu shows
+both server URLs and the "Copy MCP URL" menu item is enabled as
+soon as the server is ready. Set `CH_DESKTOP_AUTOSTART_MCP=0` to
+disable the autostart.
+
+## Desktop features
+
+The Electron shell now does the things that desktop apps for
+terminal agents are expected to do. All settings live in the
+in-app Settings panel (`⚙` icon, top-right), and all of them
+degrade gracefully when the underlying OS feature is missing.
+
+- **API keys in the OS keychain**: `ch.keychainSet(provider, key)`
+  encrypts the key with `safeStorage` (Keychain / Credential Vault
+  / libsecret) and stores the encrypted blob under the user data
+  dir. Plain `settings.json` still works for non-desktop usage.
+- **Auto-launch at login**: `ch.autoLaunchSet({ openAtLogin,
+  openAsHidden })` toggles the OS-level "open at login" item.
+  Pass `--hidden` to start the app minimized to the tray on
+  Windows.
+- **Native desktop notifications**: the OS notification center
+  surfaces "agent finished", "approval needed", and "MCP server
+  up" events. Toggle from Settings.
+- **Recent projects menu**: the last 8 project roots the desktop
+  opened show up under `File > Open Recent >`. `File > Clear
+  Recent` wipes the list. The Settings panel shows the list with
+  per-entry "×" buttons.
+- **Tray badge count**: the macOS / Linux Unity badge shows the
+  active-session count. Updated via `ch.setBadge(n)`.
+- **Update channel UI**: a `stable` / `beta` radio in Settings;
+  switching channels re-arms the auto-updater.
+
+```javascript
+// from the renderer
+const info = await window.ch.info();
+console.log(info.keychain);          // { available, backend, entries, path }
+console.log(info.autoLaunch);        // { openAtLogin, openAsHidden }
+console.log(info.updateChannel);     // "stable" | "beta"
+console.log(info.recentProjects);    // ["/path/a", "/path/b", ...]
+
+await window.ch.keychainSet("openai.apiKey", "sk-...");
+const key = await window.ch.keychainGet("openai.apiKey");
+await window.ch.autoLaunchSet({ openAtLogin: true, openAsHidden: true });
+await window.ch.notificationPush({ title: "Agent done", body: "..." });
+await window.ch.recentPin("/Users/me/projects/cool-thing");
+await window.ch.updateChannelSet("beta");
+window.ch.setBadge(3);
+```
 
 ## Trajectory export
 

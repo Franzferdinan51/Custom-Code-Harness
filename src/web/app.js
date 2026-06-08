@@ -1056,8 +1056,112 @@ $("settings").addEventListener("click", async () => {
     provSel.value = s.provider || state.providerPresets[0]?.id || "";
     syncProviderSettingsForm();
   } catch (e) { /* ignore */ }
+  // Desktop-only controls (no-op in browser).
+  if (window.ch) {
+    try {
+      const info = await window.ch.info();
+      // Keychain status
+      const kc = info.keychain || {};
+      $("setting-keychain").textContent = kc.available
+        ? `${kc.backend} · ${kc.entries.length} key${kc.entries.length === 1 ? "" : "s"}`
+        : "unavailable on this platform";
+      // Auto-launch
+      const al = info.autoLaunch || {};
+      $("setting-autolaunch").checked = !!al.openAtLogin;
+      $("setting-autolaunch-hidden").checked = !!al.openAsHidden;
+      // Notifications
+      $("setting-notifications").checked = info.notifications && info.notifications.enabled !== false;
+      // Update channel
+      const ch = info.updateChannel || "stable";
+      $("setting-update-channel").value = ch;
+      // Recent projects
+      const recentList = info.recentProjects || [];
+      const recentContainer = $("setting-recent-list");
+      recentContainer.innerHTML = "";
+      if (recentList.length === 0) {
+        recentContainer.appendChild(el("div", { class: "settings-list-empty" }, "(none yet)"));
+      } else {
+        for (const p of recentList) {
+          const row = el("div", { class: "settings-list-row" }, [
+            el("span", { class: "settings-list-path", title: p }, p),
+            el("button", {
+              class: "settings-list-x",
+              title: "Remove from list",
+              onclick: async () => {
+                await window.ch.recentForget(p);
+                const refreshed = await window.ch.recentList();
+                renderRecentList(refreshed);
+              },
+            }, "×"),
+          ]);
+          recentContainer.appendChild(row);
+        }
+      }
+    } catch { /* ignore */ }
+  }
   settingsModal.hidden = false;
 });
+
+function renderRecentList(list) {
+  const recentContainer = $("setting-recent-list");
+  recentContainer.innerHTML = "";
+  if (!list || list.length === 0) {
+    recentContainer.appendChild(el("div", { class: "settings-list-empty" }, "(none yet)"));
+    return;
+  }
+  for (const p of list) {
+    const row = el("div", { class: "settings-list-row" }, [
+      el("span", { class: "settings-list-path", title: p }, p),
+      el("button", {
+        class: "settings-list-x",
+        title: "Remove from list",
+        onclick: async () => {
+          await window.ch.recentForget(p);
+          const refreshed = await window.ch.recentList();
+          renderRecentList(refreshed);
+        },
+      }, "×"),
+    ]);
+    recentContainer.appendChild(row);
+  }
+}
+
+// Desktop-only settings handlers
+if (window.ch) {
+  // Auto-launch
+  $("setting-autolaunch").addEventListener("change", async (e) => {
+    const al = await window.ch.autoLaunchGet();
+    await window.ch.autoLaunchSet({ openAtLogin: e.target.checked, openAsHidden: al.openAsHidden });
+  });
+  $("setting-autolaunch-hidden").addEventListener("change", async (e) => {
+    const al = await window.ch.autoLaunchGet();
+    await window.ch.autoLaunchSet({ openAtLogin: al.openAtLogin, openAsHidden: e.target.checked });
+  });
+  // Notifications
+  $("setting-notifications").addEventListener("change", (e) => {
+    window.ch.setNotificationsEnabled(e.target.checked);
+  });
+  // Update channel
+  $("setting-update-channel").addEventListener("change", async (e) => {
+    await window.ch.updateChannelSet(e.target.value);
+    showInfo("Update channel set to " + e.target.value + ". Re-check on next launch.");
+  });
+  // Keychain save (uses the API key field in the same form)
+  $("setting-keychain-save").addEventListener("click", async () => {
+    const providerId = $("setting-provider").value;
+    const key = $("setting-apikey").value.trim();
+    if (!providerId || !key) {
+      showInfo("Pick a provider and enter an API key first.");
+      return;
+    }
+    const ok = await window.ch.keychainSet(providerId + ".apiKey", key);
+    showInfo(ok ? "Saved to Keychain." : "Keychain unavailable on this platform.");
+    const info = await window.ch.info();
+    $("setting-keychain").textContent = info.keychain.available
+      ? `${info.keychain.backend} · ${info.keychain.entries.length} key${info.keychain.entries.length === 1 ? "" : "s"}`
+      : "unavailable on this platform";
+  });
+}
 $("setting-provider").addEventListener("change", () => syncProviderSettingsForm());
 $("settings-cancel").addEventListener("click", () => { settingsModal.hidden = true; });
 $("settings-save").addEventListener("click", async () => {

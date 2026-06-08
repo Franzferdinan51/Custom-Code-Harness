@@ -34,6 +34,11 @@ const net = require("node:net");
 const http = require("node:http");
 const { spawn } = require("node:child_process");
 
+// Desktop features (safeStorage, auto-launch, notifications, recent
+// projects, badge count, update channel). Required early so the
+// ch:info IPC handler can read the initial state.
+const features = require("./desktop-features.cjs");
+
 // electron-context-menu@4 is ESM-only and can't be require()'d from a
 // CommonJS main process. Use dynamic import so we can still surface
 // the enriched right-click menu (spellcheck, copy, dev tools).
@@ -365,6 +370,19 @@ function buildAppMenu() {
           click: () => { sendMenuCommand("command-palette"); },
         },
         { type: "separator" },
+        {
+          label: "Open Recent",
+          submenu: buildRecentProjectsSubmenu(),
+        },
+        {
+          label: "Clear Recent",
+          click: () => {
+            const cur = features.listRecentProjects();
+            for (const p of cur) features.forgetRecentProject(p);
+            buildAppMenu();
+          },
+        },
+        { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },
       ],
     },
@@ -418,6 +436,20 @@ function buildAppMenu() {
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+// Build a submenu of recent project roots. Clicking an entry emits
+// the "open-recent" menu command, which the renderer turns into a
+// `ch serve` restart on that cwd.
+function buildRecentProjectsSubmenu() {
+  const projects = features.listRecentProjects();
+  if (projects.length === 0) {
+    return [{ label: "(no recent projects)", enabled: false }];
+  }
+  return projects.map((p) => ({
+    label: p,
+    click: () => { sendMenuCommand({ type: "open-recent", project: p }); },
+  }));
 }
 
 // ---------- Tray ----------
@@ -598,6 +630,12 @@ ipcMain.handle("ch:info", () => ({
   isPackaged: app.isPackaged,
   userData: app.getPath("userData"),
   logsPath: log.transports.file.getFile().path,
+  keychain: features.keychainSummary(),
+  autoLaunch: features.getAutoLaunch(),
+  updateChannel: features.getUpdateChannel(),
+  recentProjects: features.listRecentProjects(),
+  notifications: { supported: true, enabled: true },
+  badgeCount: features.getBadgeCount(),
 }));
 
 ipcMain.on("ch:show-logs", () => {
@@ -606,6 +644,122 @@ ipcMain.on("ch:show-logs", () => {
 
 ipcMain.on("ch:reveal-appdata", () => {
   shell.openPath(app.getPath("userData"));
+});
+
+// --- safeStorage / keychain IPC ---
+
+ipcMain.handle("ch:keychain-summary", () => features.keychainSummary());
+
+ipcMain.handle("ch:keychain-get", (_e, name) => {
+  if (typeof name !== "string") return null;
+  return features.getKeychainEntry(name);
+});
+
+ipcMain.handle("ch:keychain-set", (_e, name, value) => {
+  if (typeof name !== "string") return false;
+  return features.setKeychainEntry(name, typeof value === "string" ? value : null);
+});
+
+ipcMain.handle("ch:keychain-clear", () => {
+  features.clearKeychain();
+  return true;
+});
+
+// --- Auto-launch IPC ---
+
+ipcMain.handle("ch:auto-launch-get", () => features.getAutoLaunch());
+ipcMain.handle("ch:auto-launch-set", (_e, opts) => {
+  const ok = features.setAutoLaunch(opts || {});
+  buildAppMenu();
+  return ok;
+});
+
+// --- Notifications IPC ---
+
+ipcMain.handle("ch:notification-push", (_e, payload) => {
+  if (!payload || typeof payload !== "object") return false;
+  return features.pushNotification(payload);
+});
+
+ipcMain.on("ch:notifications-set", (_e, enabled) => {
+  features.setNotificationsEnabled(enabled);
+});
+
+// --- Recent projects IPC ---
+
+ipcMain.handle("ch:recent-list", () => features.listRecentProjects());
+ipcMain.handle("ch:recent-pin", (_e, root) => {
+  if (typeof root !== "string") return features.listRecentProjects();
+  features.pinRecentProject(root);
+  buildAppMenu();
+  return features.listRecentProjects();
+});
+ipcMain.handle("ch:recent-forget", (_e, root) => {
+  if (typeof root !== "string") return features.listRecentProjects();
+  features.forgetRecentProject(root);
+  buildAppMenu();
+  return features.listRecentProjects();
+});
+
+// --- Update channel IPC ---
+
+ipcMain.handle("ch:update-channel-get", () => features.getUpdateChannel());
+ipcMain.handle("ch:update-channel-set", (_e, channel) => {
+  const ok = features.setUpdateChannel(channel);
+  if (ok) {
+    // Re-arm the auto-updater with the new channel.
+    if (typeof setupAutoUpdater === "function") {
+      try { setupAutoUpdater(); } catch (e) { log.warn("setupAutoUpdater failed:", e.message); }
+    }
+  }
+  return ok;
+});
+
+// --- Badge count IPC ---
+
+ipcMain.on("ch:badge-set", (_e, n) => {
+  features.setBadgeCount(typeof n === "number" ? n : 0);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // Triggers a refresh of the renderer badge pill too.
+    mainWindow.webContents.send("ch:badge", { count: features.getBadgeCount() });
+  }
+});
+
+// --- Server events that drive native notifications ---
+// The web server pushes an event when an agent turn finishes or
+// when approval is needed. We forward it to the OS notification
+// center so the user sees it even if the window is hidden.
+
+function emitNativeNotification(event) {
+  // The web server already notifies the renderer; we additionally
+  // surface a native notification so the user sees it when the
+  // window is hidden.
+  if (!event || !event.type) return;
+  if (event.type === "agent.done") {
+    features.pushNotification({
+      title: "Agent finished",
+      body: event.summary || "Run complete",
+      tag: "agent-done",
+    });
+  } else if (event.type === "approval.required") {
+    features.pushNotification({
+      title: "Approval needed",
+      body: event.reason || "An action requires your approval",
+      tag: "approval",
+    });
+  } else if (event.type === "mcp.up") {
+    features.pushNotification({
+      title: "MCP server up",
+      body: event.url || "MCP server is now reachable",
+      tag: "mcp-up",
+    });
+  }
+}
+
+// The server sends `server:notify` events; route them through the
+// native notification center.
+ipcMain.on("server:notify", (_e, event) => {
+  emitNativeNotification(event);
 });
 
 // ---------- App lifecycle ----------

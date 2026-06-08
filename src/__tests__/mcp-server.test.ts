@@ -238,6 +238,156 @@ test("startMcpServer: refuses to bind non-loopback without --allow-remote", asyn
   assert.match((err.message), /non-loopback/);
 });
 
+// ---------- Stdio transport ----------
+//
+// We exercise the stdio transport by piping JSON-RPC requests into
+// a child process running `ch mcp --stdio`. This is the canonical
+// MCP IPC and is what the desktop shell will use in-process.
+
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const CLI_PATH = join(__dirname, "..", "..", "dist", "cli.js");
+
+function spawnStdio(extraEnv: Record<string, string> = {}) {
+  // Pipe stdin/stdout; capture stderr for diagnostics.
+  const child = spawn(process.execPath, [CLI_PATH, "mcp", "--stdio"], {
+    env: { ...process.env, ...extraEnv, NO_COLOR: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdoutBuf = "";
+  let stderrBuf = "";
+  let lineResolver: ((line: string) => void) | null = null;
+  const nextLine = () => new Promise<string>((res) => { lineResolver = res; });
+  child.stdout.on("data", (b: Buffer) => {
+    stdoutBuf += b.toString("utf-8");
+    let nl: number;
+    while ((nl = stdoutBuf.indexOf("\n")) >= 0) {
+      const line = stdoutBuf.slice(0, nl);
+      stdoutBuf = stdoutBuf.slice(nl + 1);
+      if (lineResolver) { const r = lineResolver; lineResolver = null; r(line); }
+    }
+  });
+  child.stderr.on("data", (b: Buffer) => { stderrBuf += b.toString("utf-8"); });
+  const send = (obj: unknown) => {
+    child.stdin.write(JSON.stringify(obj) + "\n");
+  };
+  const stop = () => {
+    try { child.stdin.end(); } catch { /* ignore */ }
+    try { child.kill("SIGTERM"); } catch { /* ignore */ }
+  };
+  return { child, send, nextLine, stop, getStderr: () => stderrBuf };
+}
+
+test("stdio: ready banner appears on stderr before any request", async () => {
+  const h = spawnStdio();
+  // Give the child ~200ms to print the banner.
+  await new Promise((r) => setTimeout(r, 200));
+  h.stop();
+  await new Promise((r) => setTimeout(r, 100));
+  assert.match(h.getStderr(), /MCP stdio server ready/);
+});
+
+test("stdio: responds to initialize with serverInfo + protocolVersion", async () => {
+  const h = spawnStdio();
+  h.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } } });
+  const line = await h.nextLine();
+  h.stop();
+  const msg = JSON.parse(line);
+  assert.equal(msg.jsonrpc, "2.0");
+  assert.equal(msg.id, 1);
+  assert.equal(msg.result.protocolVersion, "2025-06-18");
+  assert.equal(msg.result.serverInfo.name, "codingharness");
+});
+
+test("stdio: responds to tools/list with the same tools as HTTP", async () => {
+  const h = spawnStdio();
+  h.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+  const line = await h.nextLine();
+  h.stop();
+  const msg = JSON.parse(line);
+  assert.equal(msg.id, 2);
+  assert.ok(Array.isArray(msg.result.tools));
+  assert.ok(msg.result.tools.length >= 10, "expected at least 10 tools, got " + msg.result.tools.length);
+  const names = msg.result.tools.map((t: McpToolDefinition) => t.name);
+  for (const expected of ["read", "write", "edit", "bash", "grep", "find", "ls"]) {
+    assert.ok(names.includes(expected), "expected " + expected + " in tools/list");
+  }
+});
+
+test("stdio: ping returns empty object", async () => {
+  const h = spawnStdio();
+  h.send({ jsonrpc: "2.0", id: 3, method: "ping" });
+  const line = await h.nextLine();
+  h.stop();
+  const msg = JSON.parse(line);
+  assert.deepEqual(msg.result, {});
+});
+
+test("stdio: notifications get no response", async () => {
+  const h = spawnStdio();
+  h.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  // No line should arrive within 250ms.
+  const got = await Promise.race([
+    h.nextLine().then(() => "line"),
+    new Promise((r) => setTimeout(() => r("timeout"), 250)),
+  ]);
+  h.stop();
+  assert.equal(got, "timeout");
+});
+
+test("stdio: explicit id: null is rejected with -32600", async () => {
+  const h = spawnStdio();
+  h.send({ jsonrpc: "2.0", id: null, method: "ping" });
+  const line = await h.nextLine();
+  h.stop();
+  const msg = JSON.parse(line);
+  assert.equal(msg.id, null);
+  assert.equal(msg.error.code, -32600);
+});
+
+test("stdio: parse error on garbage line is reported with -32700", async () => {
+  const h = spawnStdio();
+  // Bypass send() so we can write a malformed line.
+  h.child.stdin.write("this is not json\n");
+  const line = await h.nextLine();
+  h.stop();
+  const msg = JSON.parse(line);
+  assert.equal(msg.error.code, -32700);
+});
+
+test("stdio: unknown method returns -32601", async () => {
+  const h = spawnStdio();
+  h.send({ jsonrpc: "2.0", id: 4, method: "tools/nonexistent" });
+  const line = await h.nextLine();
+  h.stop();
+  const msg = JSON.parse(line);
+  assert.equal(msg.error.code, -32601);
+});
+
+test("stdio: tools/call dispatches read", async () => {
+  const h = spawnStdio();
+  // Create a file to read first, in the child's cwd.
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const target = path.join(tmp, "stdio-read.txt");
+  fs.writeFileSync(target, "hello stdio\n");
+  // ch resolves paths relative to cwd; we passed cwd=tmp to startMcpServer
+  // but the child process has its own cwd. Use absolute path.
+  h.send({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "read", arguments: { path: target } } });
+  const line = await h.nextLine();
+  h.stop();
+  const msg = JSON.parse(line);
+  assert.equal(msg.id, 5);
+  assert.ok(msg.result);
+  assert.ok(!msg.error, "expected success");
+  const text = (msg.result.content?.[0]?.text || "") as string;
+  assert.match(text, /hello stdio/);
+});
+
 test("ALL OK", () => {
   // Cleanup the temp dir.
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }

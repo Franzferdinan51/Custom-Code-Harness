@@ -235,6 +235,151 @@ export async function startMcpServer(opts: McpStartOpts): Promise<McpStartResult
   } as McpStartResult & { requiresApiKey: boolean };
 }
 
+// ---------- Stdio transport ----------
+//
+// JSON-RPC 2.0 over stdio, newline-delimited (JSONL). This is the
+// canonical MCP transport for IPC — every MCP client (Claude Code,
+// Cursor, etc.) can be configured to talk to a stdio MCP server by
+// pointing it at the binary. The desktop shell uses it for
+// in-process IPC (no port binding, no localhost assumption, no
+// firewall prompts).
+//
+// Wire format:
+//   - Each request is exactly one JSON object terminated by a
+//     newline (\n). Empty lines are ignored.
+//   - Notifications (no `id`) get no response.
+//   - Each non-notification request gets exactly one response on
+//     stdout, terminated by a newline.
+//   - Errors during read/write are logged to stderr; the server
+//     keeps running until the parent closes stdin (EOF).
+//
+// Auth: the API-key check is skipped on stdio because the parent
+// process IS the trusted client. CORS / slowloris / body cap don't
+// apply (no HTTP).
+
+export interface McpStdioStartResult {
+  /** All tools exposed by this server (for tests). */
+  tools: McpToolDefinition[];
+  /** Resolves when the server exits (stdin EOF or fatal error). */
+  done: Promise<void>;
+  /** Force-stop the server (closes the readline interface). */
+  stop: () => Promise<void>;
+}
+
+export async function startMcpStdioServer(
+  opts: Omit<McpStartOpts, "port" | "host" | "allowRemote" | "apiKey"> = {},
+): Promise<McpStdioStartResult> {
+  ensurePaths();
+  const settings = loadSettings();
+  const cwd = opts.cwd ?? process.cwd();
+
+  const providers = new ProviderRegistry(settings);
+  const runtime = new HarnessRuntime({ cwd, ephemeral: true });
+  void providers.list().length;
+
+  const tools = runtime.tools.list().map(toolToMcpDefinition);
+
+  // Use readline for line-delimited input. Falls back to a manual
+  // buffer-based reader if readline is unavailable (it should
+  // always be in Node, but the fallback makes the server robust).
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({ input: process.stdin, terminal: false, crlfDelay: Infinity });
+
+  let stopped = false;
+  let stopResolve: () => void = () => {};
+  const done = new Promise<void>((res) => { stopResolve = res; });
+
+  const writeLine = (line: string) => {
+    if (stopped) return;
+    try {
+      process.stdout.write(line + "\n");
+    } catch (e) {
+      logStdio("stdout write failed:", (e as Error).message);
+    }
+  };
+
+  rl.on("line", (raw) => {
+    const line = raw.trim();
+    if (!line) return;
+    // Hard cap on a single line — same as the HTTP body cap.
+    if (line.length > MAX_BODY_BYTES) {
+      logStdio("dropping oversized line (" + line.length + " bytes)");
+      return;
+    }
+    const request = parseJsonRpc(line);
+    if (!request) {
+      // Reply to the closest valid id we can find; if there isn't one,
+      // we can't reply at all (JSON-RPC says "no response" for parse
+      // errors of notifications).
+      const inferred = tryInferId(line);
+      writeLine(JSON.stringify({
+        jsonrpc: "2.0",
+        id: inferred,
+        error: { code: ERR_PARSE, message: "parse error" },
+      }));
+      return;
+    }
+    void computeRpcResponse(request, runtime, tools, opts).then((res) => {
+      if (res.response === null) return; // notification — no reply
+      writeLine(JSON.stringify(res.response));
+    }).catch((e) => {
+      // Should not happen — computeRpcResponse handles its own errors.
+      logStdio("dispatch failed:", (e as Error).message);
+    });
+  });
+
+  rl.on("close", () => {
+    stopped = true;
+    stopResolve();
+  });
+
+  // If the parent process goes away, exit.
+  if (typeof process.stdin.on === "function") {
+    process.stdin.on("end", () => {
+      if (!stopped) {
+        stopped = true;
+        try { rl.close(); } catch { /* ignore */ }
+        stopResolve();
+      }
+    });
+  }
+
+  // Stderr header so humans running `ch mcp --stdio` know the
+  // server is ready (stdout is reserved for the JSON-RPC wire).
+  logStdio("MCP stdio server ready (protocol " + PROTOCOL_VERSION + ", " + tools.length + " tools)");
+
+  return {
+    tools,
+    done,
+    stop: async () => {
+      stopped = true;
+      try { rl.close(); } catch { /* ignore */ }
+      await done;
+    },
+  };
+}
+
+// Best-effort id inference so a malformed line with an explicit
+// `id` still gets a parse error back. Returns null when we can't
+// safely extract one.
+function tryInferId(line: string): string | number | null {
+  try {
+    const o = JSON.parse(line) as Record<string, unknown>;
+    if (typeof o.id === "string" || typeof o.id === "number") return o.id;
+    if (o.id === null) return null;
+  } catch { /* ignore */ }
+  return null;
+}
+
+function logStdio(...parts: unknown[]): void {
+  // Write a single line to stderr with the prefix. Avoid log.info
+  // (which goes through the server's logger and might be re-routed
+  // to stdout in some environments).
+  try {
+    process.stderr.write("[ch-mcp] " + parts.map((p) => typeof p === "string" ? p : JSON.stringify(p)).join(" ") + "\n");
+  } catch { /* ignore */ }
+}
+
 // ---------- HTTP / SSE handler ----------
 
 async function handleHttp(
@@ -404,49 +549,59 @@ function respond(
 }
 
 // ---------- RPC dispatch ----------
-
-async function handleRpc(
-  res: ServerResponse,
+//
+// Compute the JSON-RPC response for a parsed request. Shared between
+// the HTTP transport and the stdio transport. Returns either a
+// response object (with id echo) or `null` for notifications (which
+// have no body). The `statusCode` is used by the HTTP transport.
+async function computeRpcResponse(
   request: McpParsedRpc,
   runtime: HarnessRuntime,
   tools: McpToolDefinition[],
-  opts: McpStartOpts,
-): Promise<void> {
+  opts: Pick<McpStartOpts, "approveBash" | "cwd">,
+): Promise<{ response: McpJsonRpcResponse | null; statusCode: number }> {
   // Distinguish three cases:
   //   1. id === "__invalid__" → explicit `id: null` in the request;
   //      JSON-RPC 2.0 says reply with -32600 Invalid Request, id: null.
   //   2. id === undefined → notification (no id at all); 204 with no body.
   //   3. id is a string|number → normal request; echo the id back.
   if (request.id === "__invalid__") {
-    respond(res, null, undefined, { code: ERR_INVALID_REQUEST, message: "Invalid Request: id MUST NOT be null" });
-    return;
+    return {
+      statusCode: 200,
+      response: {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: ERR_INVALID_REQUEST, message: "Invalid Request: id MUST NOT be null" },
+      },
+    };
   }
   const id = request.id;
   if (id === undefined) {
-    if (request.method === "notifications/initialized" || request.method === "notifications/cancelled") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-    res.writeHead(204);
-    res.end();
-    return;
+    // Notifications are no-ops on the server side.
+    return { statusCode: 204, response: null };
   }
 
   try {
     switch (request.method) {
       case "initialize": {
-        return respond(res, id, {
-          protocolVersion: PROTOCOL_VERSION,
-          capabilities: { tools: { listChanged: false } },
-          serverInfo: SERVER_INFO,
-        });
+        return {
+          statusCode: 200,
+          response: {
+            jsonrpc: "2.0",
+            id,
+            result: {
+              protocolVersion: PROTOCOL_VERSION,
+              capabilities: { tools: { listChanged: false } },
+              serverInfo: SERVER_INFO,
+            },
+          },
+        };
       }
       case "ping": {
-        return respond(res, id, {});
+        return { statusCode: 200, response: { jsonrpc: "2.0", id, result: {} } };
       }
       case "tools/list": {
-        return respond(res, id, { tools });
+        return { statusCode: 200, response: { jsonrpc: "2.0", id, result: { tools } } };
       }
       case "tools/call": {
         const params = request.params ?? {};
@@ -455,27 +610,63 @@ async function handleRpc(
           ? params["arguments"] as Record<string, unknown>
           : {};
         if (!name) {
-          return respond(res, id, undefined, { code: ERR_INVALID_PARAMS, message: "missing tool name" });
+          return {
+            statusCode: 200,
+            response: {
+              jsonrpc: "2.0",
+              id,
+              error: { code: ERR_INVALID_PARAMS, message: "missing tool name" },
+            },
+          };
         }
         const result = await dispatchTool(runtime, name, args, opts);
-        return respond(res, id, result);
+        return { statusCode: 200, response: { jsonrpc: "2.0", id, result } };
       }
       default:
-        return respond(res, id, undefined, { code: ERR_METHOD_NOT_FOUND, message: `unknown method: ${request.method}` });
+        return {
+          statusCode: 200,
+          response: {
+            jsonrpc: "2.0",
+            id,
+            error: { code: ERR_METHOD_NOT_FOUND, message: `unknown method: ${request.method}` },
+          },
+        };
     }
   } catch (e) {
-    respond(res, id, undefined, {
-      code: ERR_INTERNAL,
-      message: (e as Error).message ?? "internal error",
-    });
+    return {
+      statusCode: 200,
+      response: {
+        jsonrpc: "2.0",
+        id,
+        error: { code: ERR_INTERNAL, message: (e as Error).message ?? "internal error" },
+      },
+    };
   }
+}
+
+// HTTP transport: thin wrapper around computeRpcResponse.
+async function handleRpc(
+  res: ServerResponse,
+  request: McpParsedRpc,
+  runtime: HarnessRuntime,
+  tools: McpToolDefinition[],
+  opts: McpStartOpts,
+): Promise<void> {
+  const { response, statusCode } = await computeRpcResponse(request, runtime, tools, opts);
+  if (response === null) {
+    res.writeHead(statusCode);
+    res.end();
+    return;
+  }
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(response));
 }
 
 async function dispatchTool(
   runtime: HarnessRuntime,
   name: string,
   args: Record<string, unknown>,
-  opts: McpStartOpts,
+  opts: Pick<McpStartOpts, "approveBash" | "cwd">,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const tool = runtime.tools.get(name);
   if (!tool) {

@@ -162,8 +162,18 @@ const sessionsCommand: SlashCommand = {
     }
     if (sub === "show" && parts[1]) {
       const s = await Session.open(parts[1]);
+      const entries = s.allEntries();
       const msgs = sessionToMessages(s);
-      const lines: string[] = ["Session " + s.id, "  entries: " + s.allEntries().length, "  messages: " + msgs.length, "  model: " + (s.meta.model ?? "(unknown)"), "  provider: " + (s.meta.provider ?? "(unknown)")];
+      const head = s.meta.head ?? "";
+      const tree = renderSessionTree(entries, head);
+      const lines: string[] = [
+        "Session " + s.id,
+        "  entries: " + entries.length + "  messages: " + msgs.length,
+        "  model: " + (s.meta.model ?? "(unknown)") + "  provider: " + (s.meta.provider ?? "(unknown)"),
+        "  head: " + head,
+        "",
+        tree,
+      ];
       return lines.join("\n");
     }
     if (sub === "fork" && parts[1]) {
@@ -573,16 +583,18 @@ const initCommand: SlashCommand = {
 
 // ---------- /tree / /fork / /clone / /export (stubs) ----------
 
+import { renderSessionTree } from "./tree-render.js";
+
 const treeCommand: SlashCommand = {
   name: "tree",
-  description: "Show the session tree (recent entries).",
+  description: "Show the session tree (with branching).",
   async run(_a, ctx) {
     const id = ctx.runtime?.().sessionId();
     if (!id) return "no active session";
     const s = await Session.open(id);
     const entries = s.allEntries();
     if (entries.length === 0) return "(empty session)";
-    return entries.slice(-20).map((e) => "  " + e.id + "  " + e.type + "  " + new Date(e.ts).toISOString().slice(11, 19)).join("\n");
+    return renderSessionTree(entries, s.meta.head ?? "");
   },
 };
 

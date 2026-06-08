@@ -90,6 +90,12 @@ All notable changes to CodingHarness are documented here. Format follows
   can pass it to `runAgent` directly). Unconfigured providers are
   silently skipped (with a `log.warn`). User-initiated aborts (Ctrl+C)
   do not trigger failover. 4 new tests.
+- **Session tree visualization**: `/tree` and `/sessions show <id>` now
+  render an actual ASCII tree with branching. The current head is
+  marked `●`, ancestors on the active path with `→`, and inactive
+  branches with whitespace. Tool results show as `✓/✗ display`,
+  compactions as `[compaction]`, and forks as `[fork ← fromEntryId]`.
+  Renderer lives in `src/slash/tree-render.ts`. 4 new tests.
 
 ## [0.2.1] - 2026-06-07
 

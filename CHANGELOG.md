@@ -7,6 +7,16 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **`/skill show <name>` + `ch skills show <name>` focused
+  skill view** (`src/slash/builtin.ts`, `src/cli.ts`,
+  `src/__tests__/slash.test.ts`): same pattern as the new
+  `/agents show <name>`. The skill list used to be just names +
+  one-line descriptions; now both surfaces render a focused
+  one-skill view with description and the full SKILL.md body.
+  `/skill <name>` still works as a backward-compatible shorthand
+  for `load`. 3 new tests pin the focused view, the shorthand,
+  and the unknown-skill error.
+
 - **`/agents <name>` + `ch agents show <name>` focused sub-agent
   view** (`src/slash/builtin.ts`, `src/cli.ts`, `src/runtime.ts`,
   `src/slash/registry.ts`, `src/__tests__/slash.test.ts`):

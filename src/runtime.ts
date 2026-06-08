@@ -16,7 +16,7 @@ import { SkillRegistry } from "./agent/skills.js";
 import { MemoryStore } from "./agent/memory.js";
 import { loadContextFiles, formatContextForPrompt } from "./agent/context.js";
 import { loadExtensions } from "./agent/extensions.js";
-import { compact as runCompaction, roughTokenCount } from "./agent/compaction.js";
+import { compact as runCompaction, roughTokenCount, previewCompaction, formatCompactionPreview } from "./agent/compaction.js";
 import { paths } from "./config/paths.js";
 import type { ChatMessage, ToolCall, ToolResult, Provider } from "./types.js";
 import { CostTracker, formatUSD, callCost } from "./agent/cost.js";
@@ -102,12 +102,41 @@ export class HarnessRuntime implements SlashRuntime {
   // ---- SlashRuntime ----
   providerId(): string | undefined { return this.settings.defaultProvider; }
   model(): string | undefined { return this.settings.defaultModel; }
-  async setProviderAndModel(providerId: string, model?: string): Promise<void> {
+  async   setProviderAndModel(providerId: string, model?: string): Promise<void> {
     this.settings.defaultProvider = providerId;
     if (model) this.settings.defaultModel = model;
     else {
       const p = this.settings.providers[providerId];
       if (p?.model) this.settings.defaultModel = p.model;
+    }
+  }
+
+  /**
+   * Run a manual compaction. Returns the formatted result (preview +
+   * outcome) as a string. If `dryRun` is true, returns only the
+   * preview without actually summarizing. The /compact slash command
+   * uses this so it can stay decoupled from the runtime's internal
+   * provider/session details.
+   */
+  async compactNow(opts: { dryRun?: boolean; instructions?: string } = {}): Promise<string> {
+    if (!this.session) return "no active session";
+    const provider = this.providerRegistry.default();
+    if (!provider) return "no provider configured — set OPENAI_API_KEY or run /provider";
+    const model = this.settings.defaultModel;
+    if (!model) return "no model configured — run /model <name>";
+    const msgs = sessionToMessages(this.session);
+    if (msgs.length < 4) return "session is too short to compact (" + msgs.length + " messages)";
+    const preview = previewCompaction(msgs);
+    const previewStr = formatCompactionPreview(preview, { colorize: true });
+    if (opts.dryRun) return previewStr;
+    try {
+      const r = await runCompaction(provider, model, msgs, { signal: new AbortController().signal });
+      await this.session.compact(r.summary, opts.instructions ?? "");
+      return previewStr + "\n\n" +
+        "  ✓ compacted: " + r.inputTokens + " in / " + r.outputTokens + " out\n" +
+        "  summary preview: " + r.summary.split("\n").slice(0, 3).join(" | ").slice(0, 160) + (r.summary.length > 160 ? "…" : "");
+    } catch (e) {
+      return previewStr + "\n\n  ✗ compaction failed: " + (e as Error).message;
     }
   }
   async setSession(id: string): Promise<void> { this.session = await Session.open(id); this.lastUserPrompt = null; }
@@ -154,6 +183,8 @@ export class HarnessRuntime implements SlashRuntime {
     // 2) Auto-compaction check
     if (this.shouldCompact(messages)) {
       this.print(c.dim("  (compacting — session is getting long)"));
+      const preview = previewCompaction(messages);
+      this.print(formatCompactionPreview(preview, { colorize: true }));
       await this.compact(provider, model, messages, session, "");
     }
 

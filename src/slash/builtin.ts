@@ -9,7 +9,7 @@ import { SlashRegistry, tryParseSlash } from "./registry.js";
 import { c } from "../ui/colors.js";
 import { formatUSD } from "../agent/cost.js";
 import { Session, sessionToMessages } from "../agent/session.js";
-import { compact as runCompaction, roughTokenCount, defaultCutoff } from "../agent/compaction.js";
+import { compact as runCompaction, roughTokenCount, defaultCutoff, previewCompaction, formatCompactionPreview } from "../agent/compaction.js";
 import { CronStore, formatSchedule, parseHumanSchedule, nextRun } from "../agent/cron.js";
 import { expandTemplate, loadPromptTemplates } from "../agent/prompts.js";
 import { runDiagnostics, renderDiagnostics } from "../doctor.js";
@@ -408,18 +408,19 @@ const undoCommand: SlashCommand = {
 
 const compactCommand: SlashCommand = {
   name: "compact",
-  description: "Manually compact older messages into a summary. Optional custom instructions.",
-  usage: "/compact [instructions]",
+  description: "Compact older messages into a summary. Supports --preview and --dry-run.",
+  usage: "/compact [--preview|--dry-run] [instructions]",
   async run(args, ctx) {
-    const id = ctx.runtime?.().sessionId();
-    if (!id) return "no active session";
-    const s = await Session.open(id);
-    const msgs = sessionToMessages(s);
-    if (msgs.length < 4) return "session is too short to compact (" + msgs.length + " messages)";
-    const provider = ctx.runtime?.().providerId ? undefined : undefined; // we need a provider; the runtime doesn't expose it yet
-    // Use a direct provider call from the runtime
-    return "compaction requires the runtime's provider; use /compact via /goal or via the runtime directly. " +
-      "For now, this command is a stub — it will be wired in the next iteration.";
+    const rt = ctx.runtime?.() as { compactNow?: (opts: { dryRun?: boolean; instructions?: string }) => Promise<string> } | undefined;
+    if (!rt) return "(no runtime)";
+    if (typeof rt.compactNow !== "function") return "(runtime doesn't support /compact)";
+    const flags = new Set<string>();
+    let instructions = "";
+    for (const tok of args.trim().split(/\s+/)) {
+      if (tok.startsWith("--")) flags.add(tok.slice(2));
+      else if (tok) instructions = instructions ? instructions + " " + tok : tok;
+    }
+    return rt.compactNow({ dryRun: flags.has("preview") || flags.has("dry-run"), instructions: instructions || undefined });
   },
 };
 

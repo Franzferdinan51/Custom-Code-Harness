@@ -96,6 +96,25 @@ All notable changes to CodingHarness are documented here. Format follows
   branches with whitespace. Tool results show as `✓/✗ display`,
   compactions as `[compaction]`, and forks as `[fork ← fromEntryId]`.
   Renderer lives in `src/slash/tree-render.ts`. 4 new tests.
+- **Compaction UI**: `/compact` is no longer a stub. It now actually
+  compacts (or previews) the session and shows a colored diff of what
+  would be removed vs kept. New API:
+  - `previewCompaction(messages)` — returns `{cutoff, totalMessages,
+    removed[], kept[], tokensBefore, tokensAfter, tokensSaved}` without
+    calling the provider.
+  - `formatCompactionPreview(p, {colorize})` — renders a multi-line
+    string with green ✓ for kept, red ✗ for removed, and a gray
+    `(N more messages omitted)` marker when the removed list is
+    truncated. Honors `NO_COLOR`.
+  - `/compact --preview` / `--dry-run` — show the diff without
+    actually compacting.
+  - `/compact [instructions]` — actually compact, with the diff shown
+    before the result.
+  - `HarnessRuntime.compactNow({dryRun, instructions})` — exposes the
+    same flow to slash commands and (in v0.2.3) any control surface.
+  - Auto-compaction in `runUserTurn` now prints the diff before
+    summarizing so users see what got thrown away.
+  9 new tests.
 
 ## [0.2.1] - 2026-06-07
 

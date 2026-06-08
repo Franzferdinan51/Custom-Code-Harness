@@ -7,6 +7,49 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **Easy-to-use TUI + CLI first-run experience** (`src/slash/builtin.ts`,
+  `src/ui/tui.ts`, `src/cli.ts`, `src/__tests__/slash.test.ts`):
+  everything a brand-new user needs to know in one place.
+  - **TUI quick-start banner** paints on launch with the 4 commands
+    that matter most (`/help`, `/model`, `/goal`, `/status`) and a
+    pointer to the workflow modes (`/plan`, `/build`). The same card
+    is rendered by the TUI's input-preview area when the prompt is
+    empty, and by the sidebar's idle line — so returning users see
+    the same hint every keystroke, no scrolling required.
+  - **/welcome slash command** prints the quick-start card on
+    demand. Useful from inside an existing session when the user
+    forgets the basics.
+  - **ch welcome CLI subcommand** prints the same card outside the
+    TUI. Lists as the first subcommand under "Get started" in
+    `ch help`.
+  - **Grouped /help output** — the flat 35-line list is now a
+    7-category reference (Workflow / Session / Model / Context /
+    Tools / Settings / Status), each with a one-line blurb. Quick-start
+    lives at the top. /help `<name>` returns a focused one-command
+    view with usage, group, and a pointer back to /help. The trailing
+    keybinding hint makes the always-available shortcuts (Tab, Ctrl+G,
+    Ctrl+C, Ctrl+D) visible without scrolling.
+  - **Grouped `ch help` output** — same approach: 5 categories
+    ("Get started", "Run a prompt", "Inspect & manage", "Health",
+    "Integrate") with a "Quick start" snippet at the top showing
+    the four most common commands.
+  - **Sidebar idle state** now reads `idle — try a prompt` with
+    the same 4 quick-start commands one line below, so the user is
+    always two glances from the help they need.
+  - **Footer** now mentions `Ctrl+L clear` (the existing clear
+    action) and points at `/plan` / `/build` so the workflow modes
+    are visible without a /help detour.
+  - **Shared source of truth**: the new exported
+    `renderQuickStart({ title, showHeader })` and `QUICK_START` array
+    in `src/slash/builtin.ts` are the only place the quick-start text
+    lives. TUI banner, /welcome, ch welcome, TUI input preview, and
+    the sidebar hint all read from it — change it once, every
+    surface updates. `/commands` now delegates to `/help` so the two
+    commands never drift.
+  - 5 new tests in `src/__tests__/slash.test.ts` cover the grouped
+    help, focused one-command help, /welcome, and the "unknown
+    command" hint.
+
 - **`/diag` slash command + `ch diag` CLI subcommand + `GET /v1/diag`
   HTTP endpoint** (`src/runtime.ts`, `src/slash/builtin.ts`,
   `src/cli.ts`, `src/server.ts`, `src/slash/registry.ts`): a single

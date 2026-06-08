@@ -1,0 +1,13 @@
+# Developer rein — model preferences.
+# Loaded by the Mavis runtime when this rein runs. The shape
+# mirrors `~/.mavis/config.yaml`: provider + model + reasoning.
+#
+# Per the user's preference (2026-06-07), this rein defaults to
+# MiniMax M2.7 (configurable via env if needed). Set the
+# MINIMAX_API_KEY env var before launching the team plan.
+
+provider: minimax
+model: MiniMax-M2.7
+thinking:
+  enabled: true
+  level: medium

@@ -71,11 +71,11 @@ const PRESETS: Record<string, ProviderPreset> = {
     label: "MiniMax",
     protocol: "openai",
     defaultBaseUrl: "https://api.minimax.io/v1",
-    defaultModel: "MiniMax-M3",
+    defaultModel: "MiniMax-M2.7",
     apiKeyEnv: ["MINIMAX_API_KEY"],
     baseUrlEnv: ["MINIMAX_BASE_URL"],
     modelEnv: ["MINIMAX_MODEL"],
-    description: "MiniMax OpenAI-compatible API profile.",
+    description: "MiniMax OpenAI-compatible API. Default model M2.7 — override with MINIMAX_MODEL (e.g. MiniMax-M3).",
   },
   lmstudio: {
     id: "lmstudio",

@@ -46,6 +46,7 @@ Following the same pattern as `grok` / `grok agent` / `codex`:
 | `ch export`    | Export a session as a JSONL trajectory (hermes / openai / share) |
 | `ch web`       | Start the server AND open the web UI in your browser            |
 | `ch desktop`   | Launch the native desktop app (Electron)                        |
+| `ch mcp`       | Run the MCP server (JSON-RPC 2.0 over HTTP+SSE, port 3456)       |
 | `ch update`    | Self-update: `git pull && npm install && build && link`          |
 | `ch version`   | Print the version                                                |
 | `ch help`      | Show help (or `ch help <subcommand>` for a specific one)        |
@@ -61,8 +62,11 @@ The same `ch serve` server powers three UIs:
    approval modal, settings modal. Vanilla JS, zero build step.
 3. **Native desktop app** — `npm run electron` from the project root
    opens the web UI in a real `BrowserWindow` with a system-tray icon.
-   Build distributables with `npm run dist:mac` (`.dmg` + `.zip`),
-   `dist:win` (`.exe` + portable), or `dist:linux` (`.AppImage` + `.deb`).
+   The desktop shell spawns `ch serve` (web) AND `ch mcp` (MCP, see
+   below) as sidecars, so any external MCP client on your machine can
+   drive the same tools. Build distributables with `npm run dist:mac`
+   (`.dmg` + `.zip`), `dist:win` (`.exe` + portable), or
+   `dist:linux` (`.AppImage` + `.deb`).
 
 The HTTP+SSE API is stable and can also be driven by anything that
 speaks `fetch` and `EventSource`:
@@ -76,6 +80,51 @@ curl -N -X POST http://127.0.0.1:18800/v1/chat/stream \
   -H 'content-type: application/json' \
   -d '{"prompt":"list the files in src/","sessionId":"default"}'
 ```
+
+## MCP server (Model Context Protocol)
+
+`ch mcp` exposes the same 13 tools the agent loop uses to any
+MCP-compatible client (Claude Code, Cursor, Zed, etc.) over
+JSON-RPC 2.0. The server speaks the `2025-06-18` protocol version
+on its own port; `ch serve` (web) and `ch mcp` are independent.
+
+```bash
+# default: 127.0.0.1:<free-port>
+ch mcp
+
+# explicit port + auto-approve bash (no prompt per call)
+ch mcp --port 3456 --approve-bash
+
+# expose to LAN (only when you know what you're doing)
+ch mcp --host 0.0.0.0 --port 3456 --allow-remote --api-key $MCP_TOKEN
+```
+
+Three endpoints:
+
+- `GET  /health` — JSON status, tool count, protocol version
+- `POST /mcp`    — JSON-RPC 2.0 (`initialize`, `tools/list`,
+                   `tools/call`, `ping`)
+- `GET  /sse`    — Server-Sent Events for streamable clients
+
+Quick check from the wire:
+
+```bash
+PORT=3456
+curl -s http://127.0.0.1:$PORT/health
+# {"status":"ok","server":"codingharness","version":"0.2.2",
+#  "protocol":"2025-06-18","tools":13,"requiresApiKey":false}
+
+curl -s -X POST http://127.0.0.1:$PORT/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'
+# "read" "write" "edit" "bash" "grep" "find" "ls" "http" "web_search"
+# "spawn_subagent" "skill" "memory" "todo"
+```
+
+The Electron desktop shell spawns `ch mcp` automatically when you
+launch `ch desktop` — the tray menu shows both server URLs and the
+"Copy MCP URL" menu item is enabled as soon as the server is ready.
+Set `CH_DESKTOP_AUTOSTART_MCP=0` to disable the autostart.
 
 ## Trajectory export
 

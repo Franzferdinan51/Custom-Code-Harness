@@ -85,6 +85,15 @@ if (!gotLock) {
 let chProcess = null;
 let chPort = 0;
 let chUrl = "";
+// Second sidecar: the MCP (Model Context Protocol) server. Exposes
+// the same tools to external MCP clients (Claude Code, Cursor, etc.)
+// on its own port. Optional — gated by CH_DESKTOP_AUTOSTART_MCP env
+// var (default ON when the user wants the desktop shell to act as a
+// hub for both the web UI and MCP).
+let chMcpProcess = null;
+let chMcpPort = 0;
+let chMcpUrl = "";
+let chMcpEnabled = true;
 let mainWindow = null;
 let tray = null;
 let quitting = false;
@@ -199,6 +208,60 @@ function waitForServer(port, timeoutMs) {
     }
     throw new Error("ch server did not become ready within " + timeoutMs + "ms");
   })();
+}
+
+/**
+ * Spawn the MCP (Model Context Protocol) server as a second sidecar.
+ * Independent port from the web server; if it fails to start the
+ * desktop app still launches (the MCP is a "best-effort" capability
+ * — the web UI is the primary surface).
+ */
+function startChMcpServer() {
+  return new Promise((resolve) => {
+    if (!chMcpEnabled) { resolve(0); return; }
+    if (process.env.CH_DESKTOP_AUTOSTART_MCP === "0") {
+      chMcpEnabled = false;
+      log.info("MCP server autostart disabled (CH_DESKTOP_AUTOSTART_MCP=0)");
+      resolve(0);
+      return;
+    }
+    if (!fs.existsSync(CH_BIN)) { resolve(0); return; }
+    findFreePort().then((port) => {
+      chMcpPort = port;
+      chMcpUrl = "http://127.0.0.1:" + port;
+      const child = spawn(CH_BIN, ["mcp", "--port", String(port), "--host", "127.0.0.1"], {
+        env: Object.assign({}, process.env, { CH_WEB_DIR: WEB_DIR }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      chMcpProcess = child;
+      log.info("[ch-mcp] spawning on " + chMcpUrl);
+      child.stdout.on("data", (b) => {
+        const s = b.toString();
+        if (s.includes("MCP server listening on")) {
+          log.info("[ch-mcp] ready on " + chMcpUrl);
+          refreshTray();
+          resolve(port);
+        }
+      });
+      child.stderr.on("data", (b) => {
+        log.warn("[ch-mcp] " + b.toString().trim());
+      });
+      child.on("exit", (code, signal) => {
+        log.info("[ch-mcp] exited code=" + code + " signal=" + signal);
+        chMcpProcess = null;
+        chMcpPort = 0;
+        chMcpUrl = "";
+        refreshTray();
+        if (!quitting) {
+          setTimeout(() => {
+            if (!quitting) startChMcpServer().catch(() => {});
+          }, 1_500);
+        }
+      });
+      // Don't block forever if the spawn fails to produce a banner.
+      setTimeout(() => resolve(port), 2_000);
+    }).catch(() => resolve(0));
+  });
 }
 
 function createMainWindow() {
@@ -392,16 +455,19 @@ function refreshTray() {
   if (!tray) return;
   const status = serverReady ? "● server running on " + chUrl
     : (serverError ? "✗ " + serverError : "○ starting server…");
+  const mcpStatus = chMcpPort > 0 ? "● MCP on " + chMcpUrl
+    : (chMcpEnabled ? "○ MCP starting…" : "○ MCP disabled");
   const menu = Menu.buildFromTemplate([
     { label: status, enabled: false },
+    { label: mcpStatus, enabled: false },
     { type: "separator" },
     { label: "Show CodingHarness", click: () => mainWindow?.show() },
-    { label: "Goal Mode", click: () => sendMenuCommand("goal") },
-    { label: "Command Palette", click: () => sendMenuCommand("command-palette") },
     { label: "Hide", click: () => mainWindow?.hide() },
     { type: "separator" },
-    { label: "Open in Browser", click: () => shell.openExternal(chUrl + "/") },
-    { label: "Copy Server URL", click: () => { require("electron").clipboard.writeText(chUrl); } },
+    { label: "Open Web UI in Browser", click: () => shell.openExternal(chUrl + "/") },
+    { label: "Copy Web URL", click: () => { require("electron").clipboard.writeText(chUrl); } },
+    { type: "separator" },
+    { label: "Copy MCP URL", enabled: chMcpPort > 0, click: () => { require("electron").clipboard.writeText(chMcpUrl); } },
     { type: "separator" },
     { label: "Check for Updates", click: () => checkForUpdates(true) },
     { type: "separator" },
@@ -521,6 +587,8 @@ function registerProtocolHandler() {
 ipcMain.handle("ch:info", () => ({
   chPort,
   chUrl,
+  chMcpPort,
+  chMcpUrl,
   version: app.getVersion(),
   platform: process.platform,
   arch: process.arch,
@@ -562,6 +630,21 @@ app.whenReady().then(async () => {
     createMainWindow();
     buildTray();
     setupAutoUpdater();
+    // Fire-and-forget: spawn the MCP server alongside the web server.
+    // Failure here is non-fatal — the web UI is the primary surface.
+    startChMcpServer().then((mcpPort) => {
+      if (mcpPort > 0) {
+        chMcpPort = mcpPort;
+        chMcpUrl = "http://127.0.0.1:" + mcpPort;
+        log.info("MCP server up on " + chMcpUrl);
+        refreshTray();
+        // Notify the renderer so the "Desktop" badge can include the
+        // MCP URL.
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("mcp:status", { port: chMcpPort, url: chMcpUrl });
+        }
+      }
+    }).catch((e) => log.warn("MCP server failed to start:", e.message));
   } catch (e) {
     log.error("startup failed:", e);
     const msg = "Failed to start CodingHarness:\n\n" + (e.message || e) + "\n\nLogs: " + log.transports.file.getFile().path;
@@ -584,5 +667,9 @@ app.on("before-quit", () => {
   if (chProcess && !chProcess.killed) {
     try { chProcess.kill("SIGTERM"); } catch (_) {}
     setTimeout(() => { try { chProcess?.kill("SIGKILL"); } catch (_) {} }, 1_500);
+  }
+  if (chMcpProcess && !chMcpProcess.killed) {
+    try { chMcpProcess.kill("SIGTERM"); } catch (_) {}
+    setTimeout(() => { try { chMcpProcess?.kill("SIGKILL"); } catch (_) {} }, 1_500);
   }
 });

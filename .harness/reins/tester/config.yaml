@@ -1,0 +1,9 @@
+# Tester rein — model preferences.
+# Same shape as developer/config.yaml. Per the user's preference
+# (2026-06-07), defaults to MiniMax M2.7.
+
+provider: minimax
+model: MiniMax-M2.7
+thinking:
+  enabled: true
+  level: low

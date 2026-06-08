@@ -3,6 +3,64 @@
 All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **MCP server** (`ch mcp`): Model Context Protocol server exposing
+  CodingHarness's 13 agent tools to external clients (Claude Code,
+  Cursor, Zed, etc.). Spec-compliant JSON-RPC 2.0 with SSE transport.
+  - `src/mcp-server.ts` — `startMcpServer({ port, host, cwd, approveBash,
+    allowRemote, apiKey })` returns a handle with the bound port, URL,
+    the public `McpServerInfo` (`name: "codingharness"`, `version: "0.2.2"`),
+    and `stop()`. Protocol version pinned to `2025-06-18`.
+  - JSON-RPC surface: `initialize`, `ping`, `tools/list`, `tools/call`,
+    `notifications/*` (notifications are no-ops on the server side).
+    `id: null` in a request body is rejected as `-32600 Invalid Request`
+    (NOT a notification), and a missing `id` field is treated the same
+    way — both are clearly separated from well-formed notifications.
+  - HTTP endpoints: `GET /health` (JSON status), `POST /mcp` (JSON-RPC),
+    `GET /sse` (Server-Sent Events for streamable clients).
+  - Tool definitions carry MCP `annotations`: `readOnlyHint`,
+    `destructiveHint`, `idempotentHint` (only when not read-only),
+    `openWorldHint` (only when true).
+  - **Security**: 1 MB body cap, slowloris timeouts (5 s headers, 30 s
+    read), CORS loopback-only by default (`--allow-remote` to opt in),
+    optional `Authorization: Bearer <MCP_API_KEY>` enforcement, refuses
+    to bind to non-loopback addresses unless `--allow-remote` is set.
+    Tool-call args are passed through the same `validateArgs` flow as
+    in-process calls, so the `__approval_bypass` / `__bypass` fields
+    can never be smuggled in from the wire.
+  - `ch mcp [--port <p>] [--host <h>] [--approve-bash] [--allow-remote]`
+    subcommand with the same auto-port / auto-host discovery as
+    `ch serve`.
+  - 16 new tests covering all four RPC methods, the four malformed-id
+    paths, the spec-required fields on `initialize` and `tools/list`,
+    the security caps, and the live wire round-trip.
+- **Electron shell now spawns `ch mcp` alongside `ch serve`**: the
+  desktop app acts as a hub for both the web UI and any external MCP
+  client on the user's machine.
+  - `electron/main.cjs` — new `startChMcpServer()` (mirrors
+    `startChServer()` but on a second free port), with auto-restart
+    on crash, deterministic 2 s timeout if the child never prints the
+    "MCP server listening on …" banner, and `CH_DESKTOP_AUTOSTART_MCP=0`
+    to disable.
+  - Tray menu now reports both ports: `● Server on …` AND
+    `● MCP on …`. The "Copy Server URL" / "Copy MCP URL" menu items
+    enable independently.
+  - IPC: `ch:info` returns `chServePort`, `chServeUrl`, `chMcpPort`,
+    `chMcpUrl` so the renderer badge can show the MCP URL too.
+  - Renderer: new `mcp:status` event, consumed by `app.js` to update
+    the "Desktop" badge with the MCP URL.
+- **`ch mcp` in the help order** (between `desktop` and `update`).
+- **Reins default to `MiniMax M2.7`**: every `.harness/reins/*/config.yaml`
+  now has `provider: minimax` and `model: MiniMax-M2.7` (or the
+  `--model` override), so the orchestrator boots straight onto the
+  user-preferred model.
+- **`minimax` provider preset** default model updated to `MiniMax-M2.7`
+  (was `MiniMax-M3`). Base URL, headers, and provider id are
+  unchanged.
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

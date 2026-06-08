@@ -658,6 +658,14 @@ function handleDesktopCommand(command) {
     case "new-session":
       $("new-session").click();
       break;
+    case "plan":
+      setComposerMode("plan");
+      inputEl.focus();
+      break;
+    case "build":
+      setComposerMode("build");
+      inputEl.focus();
+      break;
     case "goal":
       primeGoalInput();
       break;
@@ -689,6 +697,18 @@ function handleDeepLink(url) {
       autoResize();
       inputEl.focus();
       showInfo("Goal mode ready.");
+      return;
+    }
+    if (host === "plan") {
+      setComposerMode("plan");
+      inputEl.focus();
+      showInfo("Plan mode ready.");
+      return;
+    }
+    if (host === "build") {
+      setComposerMode("build");
+      inputEl.focus();
+      showInfo("Build mode ready.");
       return;
     }
     if (host === "session" && parts[0]) {

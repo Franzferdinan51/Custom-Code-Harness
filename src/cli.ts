@@ -126,6 +126,10 @@ registerSubcommand("desktop", "Launch the native desktop app (Electron).",
   "ch desktop [args...]",
   async (ctx) => { return runDesktopCmd(ctx); });
 
+registerSubcommand("mcp", "Run an MCP (Model Context Protocol) server exposing CodingHarness tools.",
+  "ch mcp [--port <n>] [--host <addr>] [--approve-bash]",
+  async (ctx) => { return runMcpCmd(ctx); });
+
 registerSubcommand("export", "Export a session as a training-friendly JSONL trajectory.",
   "ch export [session-id|--latest] [--format hermes|openai|share] [--out <dir>]",
   async (ctx) => { return runExportCmd(ctx); });
@@ -147,7 +151,7 @@ function showHelp(cmd?: string): number {
     "",
     "Subcommands:",
   ];
-    const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "desktop", "update", "export"];
+    const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "desktop", "mcp", "update", "export"];
   for (const name of order) {
     const s = SUBCOMMANDS.get(name);
     if (!s) continue;
@@ -527,6 +531,44 @@ async function runServeCmd(ctx: SubcommandContext): Promise<number> {
   const { startServer } = await import("./server.js");
   await startServer(runtime, { port, host });
   return 0;
+}
+
+/**
+ * `ch mcp` — run the MCP (Model Context Protocol) server.
+ *
+ * Exposes our tool registry to MCP-aware clients (Claude Code, Cursor,
+ * mcporter, etc.) over JSON-RPC 2.0 (HTTP POST at /mcp) and SSE
+ * (GET /sse). The Electron desktop shell also spawns this when the
+ * user runs `ch desktop` so external MCP clients can drive the same
+ * tools.
+ */
+async function runMcpCmd(ctx: SubcommandContext): Promise<number> {
+  const port = parseInt(ctx.port ?? "3456", 10);
+  const host = ctx.host ?? "127.0.0.1";
+  const approveBash = !!(ctx as { approveBash?: boolean }).approveBash;
+  const allowRemote = !!(ctx as { allowRemote?: boolean }).allowRemote;
+  if (!Number.isFinite(port) || port < 1 || port > 65535) {
+    process.stderr.write("error: --port must be 1..65535\n");
+    return 2;
+  }
+  ensurePaths();
+  const { startMcpServer } = await import("./mcp-server.js");
+  const r = await startMcpServer({
+    port, host, cwd: ctx.cwd, approveBash, allowRemote,
+  });
+  process.stdout.write(c.cyan("CodingHarness MCP server listening on ") + r.url + "\n");
+  process.stdout.write(c.dim(`  JSON-RPC:  POST ${r.url}/mcp\n`));
+  process.stdout.write(c.dim(`  SSE:       GET  ${r.url}/sse\n`));
+  process.stdout.write(c.dim(`  Health:    GET  ${r.url}/health\n`));
+  process.stdout.write(c.dim(`  Tools:     ${r.tools.length} (${r.tools.filter(t => t.annotations?.destructiveHint).length} destructive)\n`));
+  if (r.requiresApiKey) process.stdout.write(c.yellow("  Auth:      Bearer token required (MCP_API_KEY)\n"));
+  // SIGINT / SIGTERM: stop the server cleanly.
+  const onSig = () => { void r.stop().then(() => process.exit(0)); };
+  process.once("SIGINT", onSig);
+  process.once("SIGTERM", onSig);
+  return new Promise<number>((resolve) => {
+    r.server.on("close", () => { process.removeListener("SIGINT", onSig); process.removeListener("SIGTERM", onSig); resolve(0); });
+  });
 }
 
 async function runWebCmd(ctx: SubcommandContext): Promise<number> {

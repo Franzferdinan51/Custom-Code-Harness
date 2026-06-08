@@ -7,6 +7,21 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **`/agents <name>` + `ch agents show <name>` focused sub-agent
+  view** (`src/slash/builtin.ts`, `src/cli.ts`, `src/runtime.ts`,
+  `src/slash/registry.ts`, `src/__tests__/slash.test.ts`):
+  the agents list used to be just names + one-line descriptions.
+  Now both surfaces render a focused one-agent view with
+  description, tags, tool allowlist (or "inherits all parent
+  tools" when undefined), max steps, model / provider override,
+  and the system prompt verbatim. `ch agents` also accepts the
+  short form `ch agents <name>` as a shorthand for `show`.
+  - `HarnessRuntime.getAgent(name)` is the new pass-through to
+    `AgentRegistry.get()`. `SlashRuntime.getAgent?()` is the
+    optional contract for hosts that don't have a registry.
+  - 2 new tests pin the focused view and the "unknown agent"
+    friendly error.
+
 - **`ch info` CLI subcommand + `/info` slash command**
   (`src/runtime/info.ts`, `src/cli.ts`, `src/slash/builtin.ts`,
   `src/__tests__/slash.test.ts`): a single one-screen snapshot of the

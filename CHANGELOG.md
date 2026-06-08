@@ -7,6 +7,26 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **`ch info` CLI subcommand + `/info` slash command**
+  (`src/runtime/info.ts`, `src/cli.ts`, `src/slash/builtin.ts`,
+  `src/__tests__/slash.test.ts`): a single one-screen snapshot of the
+  running install so the user can answer "where is my config?",
+  "which provider is default?", "what version is this?" without
+  reading source or remembering paths.
+  - Prints: version, node + platform, CLI path, cwd, home, the
+    settings file path with provider/model/thinking/approval,
+    and the on-disk paths for sessions / logs / memory / skills
+    / agents.
+  - **`ch info --json`** emits a stable structured shape for
+    scripts, dashboards, and `/v1/info` consumers. The `RuntimeInfo`
+    interface is exported for downstream types.
+  - The `/info` slash command renders the same human view inside
+    the TUI, sharing the same `renderRuntimeInfo(cwd)` so the two
+    surfaces never drift.
+  - Listed under "Health" in `ch help` and grouped under "Status"
+    in `/help` alongside `/cost`, `/status`, `/tokens`.
+  - 1 new test covers the rendered output shape.
+
 - **Stack-aware `/init`** (`src/project/init.ts`, `src/slash/builtin.ts`,
   `src/__tests__/init.test.ts`, `src/__tests__/slash.test.ts`):
   detects the project's ecosystem from the manifest and writes a

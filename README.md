@@ -45,6 +45,7 @@ Following the same pattern as `grok` / `grok agent` / `codex`:
 | `ch serve`     | Run a headless HTTP server with `/v1/chat`, `/v1/spawn`, etc.    |
 | `ch export`    | Export a session as a JSONL trajectory (hermes / openai / share) |
 | `ch web`       | Start the server AND open the web UI in your browser            |
+| `ch desktop`   | Launch the native desktop app (Electron)                        |
 | `ch update`    | Self-update: `git pull && npm install && build && link`          |
 | `ch version`   | Print the version                                                |
 | `ch help`      | Show help (or `ch help <subcommand>` for a specific one)        |

@@ -161,6 +161,25 @@ All notable changes to CodingHarness are documented here. Format follows
     wired for prod and beta.
   - Web UI shows a "Desktop v0.2.2" badge in the sidebar when
     running under Electron (no-op in the browser).
+- **`ch desktop` startup command**: a new CLI subcommand that
+  launches the native desktop app. The `ch` binary is globally
+  linked, but Electron is per-project — so the command walks up
+  from CWD looking for a `package.json` with `name: "codingharness"`,
+  falls back to the script's own location, and spawns
+  `node_modules/.bin/electron` from the discovered root. Errors
+  clearly when run outside a CodingHarness checkout. SIGINT and
+  SIGTERM forward to the Electron child for clean shutdown.
+- **Electron shell bug fix**: `APP_ROOT` walked up two levels from
+  `electron/main.cjs` in dev mode, putting the binary in
+  `/Users/duckets/Desktop/bin/ch` (a directory that didn't exist).
+  Fixed to walk up one level: `<project>/bin/ch` is the correct
+  path. Packaged build path is unchanged.
+- **electron-context-menu dynamic import**: the v4 package is
+  ESM-only, so a plain `require("electron-context-menu")` from the
+  CommonJS main process throws `TypeError: contextMenu is not a
+  function`. Replaced with a deferred `await import(...)` inside
+  `app.whenReady()`. Falls back to Electron's default context menu
+  if the import fails.
 
 ## [0.2.1] - 2026-06-07
 

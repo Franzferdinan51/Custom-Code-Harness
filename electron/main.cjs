@@ -62,7 +62,12 @@ try {
 }
 
 const isDev = !app.isPackaged;
-const APP_ROOT = isDev ? path.join(__dirname, "..", "..") : path.join(__dirname, "..");
+// electron/main.cjs lives at <project>/electron/main.cjs when run via
+// `ch desktop` or `npm run electron`. The packaged build puts it at
+// <resources>/app.asar/out/main/index.js (or similar) — handled below.
+const APP_ROOT = isDev
+  ? path.join(__dirname, "..")        // <project>/ (one up from electron/)
+  : path.join(__dirname, "..", ".."); // resources/ when packaged
 const CH_BIN = process.env.CH_BIN || path.join(APP_ROOT, "bin", "ch");
 const WEB_DIR = process.env.CH_WEB_DIR || path.join(
   isDev ? APP_ROOT : process.resourcesPath,

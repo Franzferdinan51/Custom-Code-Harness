@@ -122,6 +122,12 @@ export function renderQuickStart(opts: { title?: string; showHeader?: boolean } 
   lines.push("  /plan          Frame the next prompt as planning and scope.");
   lines.push("  /build         Frame the next prompt as implementation.");
   lines.push("");
+  lines.push("Session ops:");
+  lines.push("  /tree          Inspect the current session tree.");
+  lines.push("  /fork          Branch from a prior user turn.");
+  lines.push("  /compact       Summarize older context.");
+  lines.push("  /export        Export the current session.");
+  lines.push("");
   lines.push("Type any prompt to start. Inside the TUI, /help shows every command.");
   return lines.join("\n");
 }
@@ -887,9 +893,11 @@ const treeCommand: SlashCommand = {
   description: "Show the session tree (with branching).",
   group: "context",
   async run(_a, ctx) {
-    const id = ctx.runtime?.().sessionId();
+    const rt = ctx.runtime?.();
+    const live = rt?.getSession?.() ?? null;
+    const id = live?.id ?? rt?.sessionId();
     if (!id) return "no active session";
-    const s = await Session.open(id);
+    const s = live ?? await Session.open(id);
     const entries = s.allEntries();
     if (entries.length === 0) return "(empty session)";
     return renderSessionTree(entries, s.meta.head ?? "");
@@ -902,9 +910,11 @@ const forkCommand: SlashCommand = {
   group: "session",
   usage: "/fork [user-message-id]",
   async run(args, ctx) {
-    const id = ctx.runtime?.().sessionId();
+    const rt = ctx.runtime?.();
+    const live = rt?.getSession?.() ?? null;
+    const id = live?.id ?? rt?.sessionId();
     if (!id) return "no active session";
-    const s = await Session.open(id);
+    const s = live ?? await Session.open(id);
     const entries = s.allEntries();
     const userEntries = entries.filter((e) => e.type === "user");
     const target = args.trim() || userEntries[userEntries.length - 2]?.id;

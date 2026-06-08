@@ -195,6 +195,32 @@ function setComposerMode(mode, { focusInput = false } = {}) {
   }
   updateComposerHint();
   renderComposerModeButtons();
+  const isPlan = state.composerMode === "plan";
+  $("mode-plan")?.classList.toggle("is-active", isPlan);
+  $("mode-build")?.classList.toggle("is-active", !isPlan);
+  $("mode-plan")?.setAttribute("aria-pressed", String(isPlan));
+  $("mode-build")?.setAttribute("aria-pressed", String(!isPlan));
+  $("composer-metric-plan")?.classList.toggle("is-active", isPlan);
+  $("composer-metric-build")?.classList.toggle("is-active", !isPlan);
+  $("composer-copy").textContent = isPlan
+    ? "Stay in analysis mode: clarify scope, assumptions, and next steps before changing code."
+    : "Execute directly in the repo: use tools, commands, and edits to ship the task.";
+  $("composer-status").textContent = isPlan
+    ? "Plan mode · reasoning first"
+    : "Build mode · direct execution";
+  $("composer-plan-copy").textContent = isPlan
+    ? "active · scope, assumptions, next steps"
+    : "scope, assumptions, next steps";
+  $("composer-build-copy").textContent = isPlan
+    ? "tools stay parked until you switch"
+    : "active · tools, commands, and edits";
+  $("input-hint").textContent = isPlan
+    ? "Plan mode avoids repo changes by default · ⌘/Ctrl+K commands · ⇧⏎ newline"
+    : "⌘/Ctrl+K commands · ⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear";
+  $("input-meta").textContent = "Mode: " + state.composerMode;
+  inputEl.placeholder = isPlan
+    ? "Describe the outcome and constraints. I’ll plan it before building."
+    : "Ask something, or start with /goal...";
   renderGoalActivity();
   if (focusInput) inputEl.focus();
 }
@@ -317,10 +343,31 @@ function renderGoalActivity() {
   const actionRow = el("div", { class: "sidebar-run-actions" }, []);
   const goalButton = el("button", { class: "sidebar-run-action", type: "button" }, "/goal");
   const commandsButton = el("button", { class: "sidebar-run-action", type: "button" }, "commands");
+  const treeButton = el("button", {
+    class: "sidebar-run-action",
+    type: "button",
+    title: "Send /tree to the current run",
+  }, "/tree");
+  const forkButton = el("button", {
+    class: "sidebar-run-action",
+    type: "button",
+    title: "Send /fork to the current run",
+  }, "/fork");
+  const compactButton = el("button", {
+    class: "sidebar-run-action",
+    type: "button",
+    title: "Send /compact to the current run",
+  }, "/compact");
   goalButton.addEventListener("click", () => primeGoalInput());
   commandsButton.addEventListener("click", () => openCommandPalette(""));
+  treeButton.addEventListener("click", () => runSlashShortcut("/tree", "session tree"));
+  forkButton.addEventListener("click", () => runSlashShortcut("/fork", "fork current session"));
+  compactButton.addEventListener("click", () => runSlashShortcut("/compact", "compact session"));
   actionRow.appendChild(goalButton);
   actionRow.appendChild(commandsButton);
+  actionRow.appendChild(treeButton);
+  actionRow.appendChild(forkButton);
+  actionRow.appendChild(compactButton);
 
   const modeRow = el("div", { class: "sidebar-run-actions" }, []);
   const buildButton = el("button", {
@@ -598,36 +645,6 @@ function closeCommandPalette() {
   commandPaletteInput.value = "";
 }
 
-function setComposerMode(mode) {
-  state.composerMode = mode === "plan" ? "plan" : "build";
-  const isPlan = state.composerMode === "plan";
-  $("mode-plan")?.classList.toggle("is-active", isPlan);
-  $("mode-build")?.classList.toggle("is-active", !isPlan);
-  $("mode-plan")?.setAttribute("aria-pressed", String(isPlan));
-  $("mode-build")?.setAttribute("aria-pressed", String(!isPlan));
-  $("composer-metric-plan")?.classList.toggle("is-active", isPlan);
-  $("composer-metric-build")?.classList.toggle("is-active", !isPlan);
-  $("composer-copy").textContent = isPlan
-    ? "Stay in analysis mode: clarify scope, assumptions, and next steps before changing code."
-    : "Execute directly in the repo: use tools, commands, and edits to ship the task.";
-  $("composer-status").textContent = isPlan
-    ? "Plan mode · reasoning first"
-    : "Build mode · direct execution";
-  $("composer-plan-copy").textContent = isPlan
-    ? "active · scope, assumptions, next steps"
-    : "scope, assumptions, next steps";
-  $("composer-build-copy").textContent = isPlan
-    ? "tools stay parked until you switch"
-    : "active · tools, commands, and edits";
-  $("input-hint").textContent = isPlan
-    ? "Plan mode avoids repo changes by default · ⌘/Ctrl+K commands · ⇧⏎ newline"
-    : "⌘/Ctrl+K commands · ⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear";
-  $("input-meta").textContent = "Mode: " + state.composerMode;
-  inputEl.placeholder = isPlan
-    ? "Describe the outcome and constraints. I’ll plan it before building."
-    : "Ask something, or start with /goal...";
-}
-
 function preparePromptForComposerMode(text) {
   const trimmed = text.trim();
   if (!trimmed || trimmed.startsWith("/")) return trimmed;
@@ -653,13 +670,16 @@ function primeGoalInput() {
   inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
 }
 
-function exportActiveSession() {
-  const sessionId = state.session || "latest";
-  const prompt = "/export " + sessionId + " --format share";
+function runSlashShortcut(prompt, displayText) {
   if (state.streaming) return;
   if (prompt.trim()) {
-    void sendPrompt(prompt, { displayText: "export session " + sessionId });
+    void sendPrompt(prompt, { displayText: displayText || prompt });
   }
+}
+
+function exportActiveSession() {
+  const sessionId = state.session || "latest";
+  runSlashShortcut("/export " + sessionId + " --format share", "export session " + sessionId);
 }
 
 function handleDesktopCommand(command) {

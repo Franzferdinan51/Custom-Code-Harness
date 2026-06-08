@@ -43,7 +43,7 @@ test("tryParseSlash returns null for non-slash input", () => {
 
 test("builtin registry has all expected commands", () => {
   const names = BUILTIN_REGISTRY.names();
-  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "export", "cost", "approval"]) {
+  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "compact", "tree", "fork", "export", "cost", "approval"]) {
     assert.ok(names.includes(want), "missing /" + want);
   }
 });
@@ -116,6 +116,11 @@ test("/welcome renders the quick-start card", async () => {
   assert.match(out!, /Workflow modes:/);
   assert.match(out!, /\/plan/);
   assert.match(out!, /\/build/);
+  assert.match(out!, /Session ops:/);
+  assert.match(out!, /\/tree/);
+  assert.match(out!, /\/fork/);
+  assert.match(out!, /\/compact/);
+  assert.match(out!, /\/export/);
 });
 
 test("/commands renders grouped command output", async () => {
@@ -165,6 +170,64 @@ test("/export writes a trajectory file for the active session", async () => {
     });
     assert.match(String(result), /exported 1 line/);
     assert.ok(existsSync(outDir));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("/tree renders the current session tree", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "ch-slash-tree-"));
+  try {
+    const s = await Session.create({ cwd, name: "tree-slash" });
+    const first = await s.append({ kind: "message", message: { role: "user", content: "hello tree" } });
+    await s.append({ kind: "message", message: { role: "assistant", content: "mainline answer" } });
+    await s.flush();
+    s.rewindTo(first.id);
+    await s.append({ kind: "message", message: { role: "assistant", content: "branched answer" } });
+    await s.flush();
+    const tree = BUILTIN_REGISTRY.get("tree");
+    assert.ok(tree);
+    const result = await tree!.run("", {
+      cwd,
+      runtime: () => ({ sessionId: () => s.id, getSession: () => s } as never),
+    });
+    assert.match(String(result), /hello tree/);
+    assert.match(String(result), /mainline answer/);
+    assert.match(String(result), /branched answer/);
+    assert.match(String(result), /→ .*user\s+hello tree/);
+    assert.match(String(result), /● .*assistant\s+branched answer/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("/fork forks from the previous user message and records a fork marker", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "ch-slash-fork-"));
+  try {
+    const s = await Session.create({ cwd, name: "fork-slash" });
+    const first = await s.append({ kind: "message", message: { role: "user", content: "fork me" } });
+    await s.append({ kind: "message", message: { role: "assistant", content: "reply one" } });
+    await s.append({ kind: "message", message: { role: "user", content: "fork target" } });
+    await s.append({ kind: "message", message: { role: "assistant", content: "reply two" } });
+    await s.flush();
+    const fork = BUILTIN_REGISTRY.get("fork");
+    assert.ok(fork);
+    const result = await fork!.run("", {
+      cwd,
+      runtime: () => ({ sessionId: () => s.id, getSession: () => s } as never),
+    });
+    const match = String(result).match(/^forked into (\S+) \(from (\S+)\)$/);
+    assert.ok(match, "unexpected /fork output: " + result);
+    assert.equal(match?.[2], first.id);
+
+    const child = await s.fork(first.id);
+    const entries = child.allEntries();
+    const last = entries[entries.length - 1];
+    assert.equal(last?.payload.kind, "fork");
+    assert.equal(last?.payload.kind === "fork" ? last.payload.fromEntryId : null, first.id);
+    assert.equal(entries.some((e) => e.payload.kind === "message" && e.payload.message.content === "fork me"), true);
+    assert.equal(entries.some((e) => e.payload.kind === "message" && e.payload.message.content === "reply one"), false);
+    assert.equal(entries.some((e) => e.payload.kind === "message" && e.payload.message.content === "fork target"), false);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

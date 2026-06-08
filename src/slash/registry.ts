@@ -21,6 +21,8 @@ export interface GoalActivityState {
 }
 
 export interface SlashRuntime {
+  /** Get the live session object if the host exposes one. */
+  getSession?(): import("../agent/session.js").Session | null;
   /** Current provider id. */
   providerId(): string | undefined;
   /** Current model. */

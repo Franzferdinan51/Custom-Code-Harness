@@ -9,6 +9,7 @@ import { SlashRegistry, tryParseSlash } from "./registry.js";
 import { c } from "../ui/colors.js";
 import { formatUSD } from "../agent/cost.js";
 import { Session, sessionToMessages } from "../agent/session.js";
+import { exportSession, defaultExportDir } from "../agent/trajectory.js";
 import { compact as runCompaction, roughTokenCount, defaultCutoff, previewCompaction, formatCompactionPreview } from "../agent/compaction.js";
 import { CronStore, formatSchedule, parseHumanSchedule, nextRun } from "../agent/cron.js";
 import { expandTemplate, loadPromptTemplates } from "../agent/prompts.js";
@@ -877,7 +878,7 @@ const initCommand: SlashCommand = {
   },
 };
 
-// ---------- /tree / /fork / /clone / /export (stubs) ----------
+// ---------- /tree / /fork / /export ----------
 
 import { renderSessionTree } from "./tree-render.js";
 
@@ -910,6 +911,49 @@ const forkCommand: SlashCommand = {
     if (!target) return "no user message to fork from";
     const child = await s.fork(target);
     return "forked into " + child.id + " (from " + target + ")";
+  },
+};
+
+const exportCommand: SlashCommand = {
+  name: "export",
+  description: "Export a session as a training-friendly JSONL trajectory.",
+  group: "session",
+  usage: "/export [session-id|latest] [--format hermes|openai|share] [--out <dir>]",
+  async run(args, ctx) {
+    const parts = args.trim().length > 0 ? args.trim().split(/\s+/) : [];
+    let sessionId: string | null = null;
+    let latest = false;
+    let format: "hermes" | "openai" | "share" = "openai";
+    let outDir: string | undefined;
+    for (let i = 0; i < parts.length; i++) {
+      const a = parts[i]!;
+      if (a === "--latest" || a === "latest") { latest = true; continue; }
+      if (a.startsWith("--format=")) { format = a.slice("--format=".length) as typeof format; continue; }
+      if (a === "--format" && parts[i + 1]) { format = parts[++i] as typeof format; continue; }
+      if (a.startsWith("--out=")) { outDir = a.slice("--out=".length); continue; }
+      if (a === "--out" && parts[i + 1]) { outDir = parts[++i]; continue; }
+      if (a.startsWith("--")) continue;
+      if (!sessionId) sessionId = a;
+    }
+    if (!["hermes", "openai", "share"].includes(format)) {
+      return "invalid format: " + format + " (use hermes, openai, or share)";
+    }
+    const rt = ctx.runtime?.();
+    let session: Session | null = rt?.getSession?.() ?? null;
+    if (!session && sessionId) {
+      session = await Session.open(sessionId);
+    } else if (!session && rt?.sessionId?.()) {
+      session = await Session.open(rt.sessionId()!);
+    } else if (!session && (latest || !sessionId)) {
+      const list = await Session.list(1);
+      if (list.length === 0) return "no sessions to export";
+      session = await Session.open(list[0]!.id);
+    }
+    if (!session) {
+      return "no active session";
+    }
+    const r = await exportSession(session, { format, outDir: outDir ?? defaultExportDir() });
+    return "exported " + r.lineCount + " line" + (r.lineCount === 1 ? "" : "s") + " to " + r.path;
   },
 };
 
@@ -1030,6 +1074,7 @@ BUILTIN_REGISTRY.register(planModeCommand);
 BUILTIN_REGISTRY.register(buildModeCommand);
 BUILTIN_REGISTRY.register(goalCommand);
 BUILTIN_REGISTRY.register(loopCommand);
+BUILTIN_REGISTRY.register(exportCommand);
 BUILTIN_REGISTRY.register(statusCommand);
 BUILTIN_REGISTRY.register(usageCommand);
 BUILTIN_REGISTRY.register(thinkCommand);

@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BUILTIN_REGISTRY } from "../slash/builtin.js";
@@ -43,7 +43,7 @@ test("tryParseSlash returns null for non-slash input", () => {
 
 test("builtin registry has all expected commands", () => {
   const names = BUILTIN_REGISTRY.names();
-  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "cost", "approval"]) {
+  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "export", "cost", "approval"]) {
     assert.ok(names.includes(want), "missing /" + want);
   }
 });
@@ -56,6 +56,66 @@ test("/help renders a list of commands", async () => {
   assert.match(out!, /\/help/);
   assert.match(out!, /\/goal/);
   assert.match(out!, /\/loop/);
+});
+
+test("/help groups commands and shows the quick-start card", async () => {
+  const help = BUILTIN_REGISTRY.get("help");
+  assert.ok(help);
+  const out = await help!.run("", { cwd: "/" });
+  assert.ok(typeof out === "string");
+  // Quick start at the top with the canonical 4 commands.
+  assert.match(out!, /Quick start/);
+  assert.match(out!, /\/help\b/);
+  assert.match(out!, /\/model\b/);
+  assert.match(out!, /\/goal\b/);
+  assert.match(out!, /\/status\b/);
+  // Grouped headings appear in the reference section.
+  assert.match(out!, /Workflow/);
+  assert.match(out!, /Session/);
+  assert.match(out!, /Model/);
+  assert.match(out!, /Context/);
+  assert.match(out!, /Tools/);
+  assert.match(out!, /Settings/);
+  assert.match(out!, /Status/);
+  // Key hints at the bottom so the user always sees the bindings.
+  assert.match(out!, /Tab completes/);
+  assert.match(out!, /Ctrl\+G/);
+});
+
+test("/help <name> gives a focused one-command view", async () => {
+  const help = BUILTIN_REGISTRY.get("help");
+  assert.ok(help);
+  const out = await help!.run("goal", { cwd: "/" });
+  assert.ok(typeof out === "string");
+  assert.match(out!, /\/goal —/);
+  assert.match(out!, /group: workflow/);
+  assert.match(out!, /\/help alone shows every command/);
+});
+
+test("/help on an unknown command suggests /help", async () => {
+  const help = BUILTIN_REGISTRY.get("help");
+  assert.ok(help);
+  const out = await help!.run("nope", { cwd: "/" });
+  assert.ok(typeof out === "string");
+  assert.match(out!, /no such command: \/nope/);
+  assert.match(out!, /\/help/);
+});
+
+test("/welcome renders the quick-start card", async () => {
+  const welcome = BUILTIN_REGISTRY.get("welcome");
+  assert.ok(welcome);
+  const out = await welcome!.run("", { cwd: "/" });
+  assert.ok(typeof out === "string");
+  assert.match(out!, /Quick start/);
+  assert.match(out!, /\/help/);
+  assert.match(out!, /\/model/);
+  assert.match(out!, /\/goal/);
+  assert.match(out!, /\/status/);
+  // Workflow modes are the second thing the user discovers — they
+  // need to know /plan and /build exist to set their framing.
+  assert.match(out!, /Workflow modes:/);
+  assert.match(out!, /\/plan/);
+  assert.match(out!, /\/build/);
 });
 
 test("/commands renders grouped command output", async () => {
@@ -89,6 +149,25 @@ test("/mcp reports transport and usage hints", async () => {
   assert.match(out!, /MCP support is built in/);
   assert.match(out!, /stdio/);
   assert.match(out!, /HTTP/);
+});
+
+test("/export writes a trajectory file for the active session", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "ch-slash-export-"));
+  try {
+    const s = await Session.create({ cwd, name: "export-slash" });
+    await s.append({ kind: "message", message: { role: "user", content: "export me" } });
+    const outDir = join(cwd, "exports");
+    const exp = BUILTIN_REGISTRY.get("export");
+    assert.ok(exp);
+    const result = await exp!.run(`--format openai --out ${outDir}`, {
+      cwd,
+      runtime: () => ({ sessionId: () => s.id, getSession: () => s } as never),
+    });
+    assert.match(String(result), /exported 1 line/);
+    assert.ok(existsSync(outDir));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test("/plan and /build toggle composer mode in runtime", async () => {

@@ -130,6 +130,19 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Fixed
 
+- **`ch sessions` printed the usage string instead of the session
+  list** (`src/slash/builtin.ts`, `src/__tests__/slash.test.ts`).
+  The slash command did `args.trim().split(/\s+/)` and then
+  `const sub = parts[0] ?? "list"` — but `"".split(/\s+/)` returns
+  `[""]`, not `[]`, so `parts[0]` is the empty string (not
+  nullish). The early `if (sub === "list")` branch never fired,
+  and the run fell through to the usage error. Same bug in
+  `/memory` (defaulted to `"read"`). Fixed by filtering empty
+  strings out of the split result. Two new tests pin the
+  behavior — both commands now return the empty-state marker
+  or the live data, never the usage string. `ch sessions`
+  becomes the one-line way to see your recent sessions; same
+  for `ch memory`.
 - **ESM `require()` calls in two source files** (`src/cli.ts:645`,
   `src/slash/builtin.ts:681`). Both used `require("node:fs")` /
   `require("node:child_process")` inside an ES module

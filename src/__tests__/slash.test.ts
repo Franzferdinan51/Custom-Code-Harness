@@ -70,6 +70,17 @@ test("/commands renders grouped command output", async () => {
   assert.match(out!, /\/build/);
 });
 
+test("/welcome includes workflow modes and the quick-start card", async () => {
+  const welcome = BUILTIN_REGISTRY.get("welcome");
+  assert.ok(welcome);
+  const out = await welcome!.run("", { cwd: "/" });
+  assert.ok(typeof out === "string");
+  assert.match(out!, /Quick start/);
+  assert.match(out!, /Workflow modes:/);
+  assert.match(out!, /\/plan/);
+  assert.match(out!, /\/build/);
+});
+
 test("/plan and /build toggle composer mode in runtime", async () => {
   let mode: "plan" | "build" = "build";
   const rt = {

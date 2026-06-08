@@ -18,11 +18,11 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 // ---------- /help ----------
 
 const HELP_GROUPS: Array<{ id: string; title: string; blurb: string }> = [
-  { id: "workflow", title: "Workflow",  blurb: "Run the agent at different levels of autonomy." },
+  { id: "workflow", title: "Workflow",  blurb: "Run, schedule, or repeat work." },
   { id: "session",  title: "Session",   blurb: "Control the conversation history and branches." },
   { id: "model",    title: "Model",     blurb: "Switch provider or model on the fly." },
   { id: "context",  title: "Context",   blurb: "Manage memory, skills, and loaded context." },
-  { id: "tools",    title: "Tools",     blurb: "Sub-agents, approval, and shell policy." },
+  { id: "tools",    title: "Tools",     blurb: "Sub-agents, shell approval, and project setup." },
   { id: "settings", title: "Settings",  blurb: "Personality, thinking level, and approval." },
   { id: "status",   title: "Status",    blurb: "Inspect cost, tokens, sessions, and health." },
 ];
@@ -116,6 +116,10 @@ export function renderQuickStart(opts: { title?: string; showHeader?: boolean } 
   for (const q of QUICK_START) {
     lines.push("  " + q.label.padEnd(14) + q.hint);
   }
+  lines.push("");
+  lines.push("Workflow modes:");
+  lines.push("  /plan          Frame the next prompt as planning and scope.");
+  lines.push("  /build         Frame the next prompt as implementation.");
   lines.push("");
   lines.push("Type any prompt to start. Inside the TUI, /help shows every command.");
   return lines.join("\n");

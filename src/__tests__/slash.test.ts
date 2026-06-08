@@ -81,6 +81,16 @@ test("/welcome includes workflow modes and the quick-start card", async () => {
   assert.match(out!, /\/build/);
 });
 
+test("/mcp reports transport and usage hints", async () => {
+  const mcp = BUILTIN_REGISTRY.get("mcp");
+  assert.ok(mcp);
+  const out = await mcp!.run("status", { cwd: "/" });
+  assert.ok(typeof out === "string");
+  assert.match(out!, /MCP support is built in/);
+  assert.match(out!, /stdio/);
+  assert.match(out!, /HTTP/);
+});
+
 test("/plan and /build toggle composer mode in runtime", async () => {
   let mode: "plan" | "build" = "build";
   const rt = {

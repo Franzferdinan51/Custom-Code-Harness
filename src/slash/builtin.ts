@@ -942,10 +942,40 @@ const promptsCommand: SlashCommand = {
 
 const mcpCommand: SlashCommand = {
   name: "mcp",
-  description: "Manage Model Context Protocol servers (status / add / remove). v1 is a stub.",
+  description: "Show MCP server usage and connection hints.",
   group: "tools",
-  async run(_a) {
-    return "MCP is a documented stub in v1. To enable: drop an mcp.json in ~/.codingharness/ with a list of {name, command, args} servers. Full MCP client is on the roadmap.";
+  usage: "/mcp [status|stdio|http]",
+  async run(args, ctx) {
+    const rt = ctx.runtime?.();
+    const mode = args.trim() || "status";
+    const lines = [
+      "CodingHarness MCP support is built in.",
+      "",
+      "Use `ch mcp --stdio` to expose the tool registry over stdio for local MCP clients.",
+      "Use `ch mcp --port <n>` to run the HTTP/SSE server on a loopback port.",
+      "The desktop app can also autostart the MCP sidecar and show its URL in the Desktop settings section.",
+    ];
+    if (mode === "status") {
+      lines.push("");
+      lines.push("Current runtime:");
+      lines.push("  provider: " + (rt?.providerId?.() ?? "(unset)"));
+      lines.push("  model:    " + (rt?.model?.() ?? "(unset)"));
+      lines.push("  session:  " + (rt?.sessionId?.() ?? "(unset)"));
+    } else if (mode === "stdio") {
+      lines.push("");
+      lines.push("stdio transport:");
+      lines.push("  ch mcp --stdio");
+      lines.push("  stdin/stdout carry JSON-RPC 2.0; stderr is for logs only.");
+    } else if (mode === "http") {
+      lines.push("");
+      lines.push("HTTP transport:");
+      lines.push("  ch mcp --port 3456 --host 127.0.0.1");
+      lines.push("  POST /mcp, GET /health, GET /sse");
+    } else {
+      lines.push("");
+      lines.push("usage: /mcp [status|stdio|http]");
+    }
+    return lines.join("\n");
   },
 };
 

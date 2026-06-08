@@ -1018,6 +1018,7 @@ async function resumeSession(id) {
 const settingsModal = $("settings-modal");
 const settingsProviderMeta = $("setting-provider-meta");
 const settingsAuthMeta = $("setting-auth-meta");
+const settingsMcpStatus = $("setting-mcp-status");
 
 function providerPresetById(id) {
   return state.providerPresets.find((item) => item.id === id) || null;
@@ -1129,6 +1130,11 @@ $("settings").addEventListener("click", async () => {
       $("setting-keychain").textContent = kc.available
         ? `${kc.backend} · ${kc.entries.length} credential${kc.entries.length === 1 ? "" : "s"}`
         : "unavailable on this platform";
+      if (settingsMcpStatus) {
+        settingsMcpStatus.textContent = info.chMcpUrl
+          ? `${info.chMcpUrl} · ${info.chMcpPort ? "running" : "starting"}`
+          : "disabled";
+      }
       // Auto-launch
       const al = info.autoLaunch || {};
       $("setting-autolaunch").checked = !!al.openAtLogin;
@@ -1254,6 +1260,12 @@ $("setting-auth-open").addEventListener("click", async () => {
 $("setting-auth-launch").addEventListener("click", async () => {
   const url = $("setting-auth-launch").dataset.url;
   await openProviderUrl(url);
+});
+window.ch?.onMcpStatus?.((info) => {
+  if (!settingsMcpStatus) return;
+  const url = info?.url || "";
+  const port = info?.port || 0;
+  settingsMcpStatus.textContent = url ? `${url} · ${port > 0 ? "running" : "starting"}` : "disabled";
 });
 $("settings-cancel").addEventListener("click", () => { settingsModal.hidden = true; });
 $("settings-save").addEventListener("click", async () => {

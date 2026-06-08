@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld("ch", {
   onDeepLink: (cb) => on("deep-link", cb),
   // Listen for badge count updates.
   onBadge: (cb) => on("ch:badge", cb),
+  // Listen for MCP sidecar status updates.
+  onMcpStatus: (cb) => on("mcp:status", cb),
   // Listen for notifications from the web server (agent done, etc).
   onServerNotify: (cb) => on("server:notify", cb),
 

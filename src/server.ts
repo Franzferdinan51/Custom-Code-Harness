@@ -5,6 +5,7 @@
 //   GET  /styles.css, /app.js      — Web UI assets
 //   GET  /v1/status                 — { version, model, provider }
 //   GET  /v1/diag                   — connectivity / latency check
+//   GET  /v1/info                   — runtime snapshot (version, paths, provider, model)
 //   GET  /v1/tokens                 — rough token count of active session
 //   GET  /v1/agents                 — list of sub-agents
 //   GET  /v1/skills                 — list of skills
@@ -14,6 +15,8 @@
 //   GET  /v1/commands               — list of slash commands
 //   GET  /v1/settings               — current settings
 //   POST /v1/settings               — { provider, model, baseUrl, apiKey, approval, thinking } update
+//   GET  /v1/provider/catalog       — provider catalog with auth modes (mirrors /provider list)
+//   POST /v1/provider/set-key       — { provider, apiKey, model? } non-interactive save + diag
 //   POST /v1/chat                   — { prompt, agent? } one-shot JSON
 //   POST /v1/chat/stream            — SSE: text, tool_start, tool_end, info, error, approval_required, usage, done
 //   POST /v1/spawn                  — { agent, prompt } — synchronous sub-agent run
@@ -188,6 +191,70 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         // command and the `ch diag` CLI subcommand use.
         const r = await runtime.runDiag();
         sendJson(res, r.ok ? 200 : 503, r);
+        return;
+      }
+      if (req.method === "GET" && path === "/v1/info") {
+        // Runtime snapshot for HTTP consumers. Same shape as
+        // `ch info --json` and the runtime.info module.
+        const { collectRuntimeInfo } = await import("./runtime/info.js");
+        sendJson(res, 200, collectRuntimeInfo(runtime.cwd));
+        return;
+      }
+      if (req.method === "GET" && path === "/v1/provider/catalog") {
+        // Provider catalog for HTTP consumers. Mirrors
+        // `ch provider list` and `/provider list`. The web UI
+        // uses this to populate the setup wizard dropdowns.
+        sendJson(res, 200, {
+          providers: listProviderPresets().map((p) => ({
+            id: p.id,
+            label: p.label,
+            description: p.description ?? "",
+            protocol: p.protocol,
+            defaultBaseUrl: p.defaultBaseUrl,
+            defaultModel: p.defaultModel,
+            authModes: p.authModes,
+            defaultAuthMode: p.defaultAuthMode,
+            apiKeyEnv: p.apiKeyEnv,
+            authDocsUrl: p.authDocsUrl,
+            authLaunchUrl: p.authLaunchUrl,
+          })),
+        });
+        return;
+      }
+      if (req.method === "POST" && path === "/v1/provider/set-key") {
+        // Non-interactive save. Same as `ch provider set-key` and
+        // `/provider setup <id> <key>`. The body is JSON:
+        //   { provider: "openai", apiKey: "sk-...", model?: "gpt-4o" }
+        // The key is validated (non-empty, ≥8 chars) and the
+        // provider is invalidated so the new key is picked up
+        // on the next call. Returns the diag result so the web
+        // UI can show a green/red indicator without a follow-up
+        // request.
+        const body = await readJson<{ provider?: string; apiKey?: string; model?: string }>(req);
+        const provider = (body.provider ?? "").trim();
+        const apiKey = (body.apiKey ?? "").trim();
+        if (!provider || !apiKey) {
+          sendError(res, 400, "missing provider or apiKey");
+          return;
+        }
+        const save = await runtime.saveProviderApiKey(provider, apiKey, { model: body.model });
+        if (!save.ok) {
+          sendError(res, 400, save.reason ?? "could not save key");
+          return;
+        }
+        // Best-effort diag so the UI gets instant feedback. Don't
+        // block on it — a slow provider shouldn't make the save
+        // request hang.
+        let diagStatus: { ok: boolean; firstByteMs?: number; totalMs?: number; error?: string } = { ok: true };
+        try {
+          const d = await runtime.runDiag();
+          diagStatus = d.ok
+            ? { ok: true, firstByteMs: d.firstByteMs, totalMs: d.totalMs }
+            : { ok: false, error: d.error ?? "no response" };
+        } catch (e) {
+          diagStatus = { ok: false, error: (e as Error).message };
+        }
+        sendJson(res, 200, { ok: true, provider, model: runtime.model(), diag: diagStatus });
         return;
       }
       if (req.method === "GET" && path === "/v1/tokens") {

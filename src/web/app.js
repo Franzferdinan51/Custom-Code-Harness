@@ -308,6 +308,11 @@ async function refreshStatus() {
     $("model").textContent = state.provider + " / " + state.model;
     $("header-session").textContent = "session " + shortSessionId(state.session);
     $("approval-status").textContent = state.approval;
+    // Show the "first-run setup" sidebar button only when no
+    // provider is configured. Lets users re-open the wizard
+    // after dismissing it once.
+    const onboardBtn = $("quick-onboard");
+    if (onboardBtn) onboardBtn.hidden = state.provider !== "—";
     renderGoalActivity();
   } catch (e) {
     console.error("status:", e);
@@ -959,6 +964,13 @@ $("command-palette-button").addEventListener("click", () => openCommandPalette("
 $("goal-button").addEventListener("click", () => primeGoalInput());
 $("quick-goal").addEventListener("click", () => primeGoalInput());
 $("quick-export").addEventListener("click", () => exportActiveSession());
+$("quick-onboard")?.addEventListener("click", async () => {
+  // Manual re-open of the first-run setup wizard. Useful after
+  // dismissing it once or when switching providers.
+  await loadOnboardCatalog();
+  populateOnboardProviderSelect();
+  showOnboard();
+});
 $("composer-goal")?.addEventListener("click", () => primeGoalInput());
 $("composer-commands")?.addEventListener("click", () => openCommandPalette(""));
 $("composer-new-session")?.addEventListener("click", () => $("new-session").click());
@@ -1315,6 +1327,151 @@ $("settings-save").addEventListener("click", async () => {
   } catch (e) { addMessage({ kind: "error", text: "settings: " + e.message }); }
 });
 
+// ---------- First-run onboarding wizard ----------
+//
+// Mirrors the /onboard slash command and `ch onboard` so all
+// three surfaces give the same 3-step flow: pick provider,
+// save key, test. The wizard auto-opens when the web app
+// loads with no provider configured.
+
+const onboardModal = $("onboard-modal");
+const onboardProviderSel = $("onboard-provider");
+const onboardProviderMeta = $("onboard-provider-meta");
+const onboardApiKey = $("onboard-apikey");
+const onboardModel = $("onboard-model");
+const onboardEnvHint = $("onboard-env-hint");
+const onboardTestBtn = $("onboard-test");
+const onboardResult = $("onboard-result");
+const onboardSkipBtn = $("onboard-skip");
+let onboardCatalog = null;
+
+async function loadOnboardCatalog() {
+  try {
+    const r = await api("/v1/provider/catalog");
+    onboardCatalog = r.providers || [];
+  } catch (e) {
+    onboardCatalog = [];
+  }
+}
+
+function populateOnboardProviderSelect() {
+  if (!onboardCatalog) return;
+  onboardProviderSel.innerHTML = "";
+  for (const p of onboardCatalog) {
+    const opt = el("option", { value: p.id }, p.label + (p.defaultModel ? "  (" + p.defaultModel + ")" : ""));
+    onboardProviderSel.appendChild(opt);
+  }
+  // Default to openai if available, else first option.
+  onboardProviderSel.value = "openai";
+  if (!onboardCatalog.find((p) => p.id === "openai")) {
+    onboardProviderSel.value = onboardCatalog[0]?.id || "";
+  }
+  syncOnboardMeta();
+}
+
+function syncOnboardMeta() {
+  const id = onboardProviderSel.value;
+  const p = onboardCatalog?.find((x) => x.id === id);
+  if (!p) {
+    onboardProviderMeta.textContent = "";
+    onboardEnvHint.textContent = "";
+    return;
+  }
+  const authModes = (p.authModes || []).join(" / ");
+  onboardProviderMeta.textContent =
+    (p.description ? p.description + " · " : "") +
+    "auth: " + (authModes || "n/a") +
+    (p.authDocsUrl ? " · " + p.authDocsUrl : "");
+  onboardModel.placeholder = p.defaultModel ? "(default: " + p.defaultModel + ")" : "model";
+  const envVar = (p.apiKeyEnv || [])[0];
+  onboardEnvHint.textContent = envVar
+    ? "Or set " + envVar + " in your shell and restart — whichever is easier."
+    : "Stored locally in settings.json — never sent anywhere except this provider.";
+}
+
+function showOnboard() {
+  if (!onboardModal) return;
+  onboardResult.textContent = "";
+  onboardResult.className = "onboard-result";
+  onboardModal.hidden = false;
+}
+
+function closeOnboard() {
+  if (!onboardModal) return;
+  onboardModal.hidden = true;
+  // Persist the "I've seen this" hint so we don't auto-open again
+  // on every refresh. Users can still summon it via the sidebar.
+  try { localStorage.setItem("ch.onboardSeenAt", String(Date.now())); } catch {}
+}
+
+onboardSkipBtn?.addEventListener("click", closeOnboard);
+onboardProviderSel?.addEventListener("change", syncOnboardMeta);
+
+onboardTestBtn?.addEventListener("click", async () => {
+  const provider = onboardProviderSel.value;
+  const apiKey = onboardApiKey.value;
+  const model = onboardModel.value.trim();
+  if (!provider) { showOnboardError("pick a provider first"); return; }
+  if (!apiKey || apiKey.length < 8) { showOnboardError("paste a key (≥8 chars)"); return; }
+  onboardTestBtn.disabled = true;
+  onboardTestBtn.textContent = "saving & testing…";
+  onboardResult.className = "onboard-result";
+  onboardResult.textContent = "";
+  try {
+    const r = await api("/v1/provider/set-key", {
+      method: "POST",
+      body: { provider, apiKey, model: model || undefined },
+    });
+    if (r.diag?.ok) {
+      showOnboardOk(
+        "✓ saved. diag: " + r.diag.firstByteMs + "ms first byte, " +
+        r.diag.totalMs + "ms total. default model: " + r.model
+      );
+      // Refresh everything so the new state shows up immediately.
+      await refreshAll();
+      // Close after a short pause so the user sees the result.
+      setTimeout(closeOnboard, 1800);
+    } else {
+      showOnboardError("diag failed: " + (r.diag?.error || "no response") + " — key saved, but the connection test failed. Re-run to overwrite.");
+    }
+  } catch (e) {
+    showOnboardError("save failed: " + (e?.message || "network error"));
+  } finally {
+    onboardTestBtn.disabled = false;
+    onboardTestBtn.textContent = "save & test";
+  }
+});
+
+function showOnboardOk(text) {
+  onboardResult.className = "onboard-result ok";
+  onboardResult.textContent = text;
+}
+function showOnboardError(text) {
+  onboardResult.className = "onboard-result err";
+  onboardResult.textContent = text;
+}
+
+async function maybeShowOnboard() {
+  // Show the wizard only when:
+  //   1. The user has never seen it (or saw it >30 days ago), AND
+  //   2. There is no provider configured (the existing "no provider"
+  //      info banner is the trigger).
+  if (state.provider === "—") {
+    let seenAt = 0;
+    try { seenAt = parseInt(localStorage.getItem("ch.onboardSeenAt") || "0", 10) || 0; } catch {}
+    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+    if (Date.now() - seenAt > thirtyDays) {
+      await loadOnboardCatalog();
+      populateOnboardProviderSelect();
+      showOnboard();
+    } else {
+      // The user already saw the wizard recently; just keep the
+      // small info banner so they remember it's available.
+      showInfo("No provider configured. Run /onboard or open ⚙ settings to set one up.");
+    }
+  }
+}
+
 // ---------- Init ----------
 
 (async () => {
@@ -1324,10 +1481,11 @@ $("settings-save").addEventListener("click", async () => {
   setInterval(refreshUsage, 5000);
   setInterval(refreshSessions, 15000);
   setInterval(refreshAgents, 30000);
-  // Quick info banner if no provider is configured.
-  if (state.provider === "—") {
-    showInfo("No provider configured. Open ⚙ settings or set OPENAI_API_KEY in your environment.");
-  }
+  // First-run onboarding. Mirrors /onboard (slash) and ch onboard
+  // (CLI) so all three surfaces give the same setup flow. The
+  // wizard stays dismissable; the localStorage key suppresses it
+  // for 30 days after a skip.
+  void maybeShowOnboard();
   // Native shell hooks (Electron only — window.ch is undefined in browser).
   if (window.ch) {
     try {

@@ -45,6 +45,7 @@
           <button class="sidebar-button" id="quick-export">export session</button>
           <button class="sidebar-button" id="new-session">+ new session</button>
           <button class="sidebar-button" id="settings">⚙ settings</button>
+          <button class="sidebar-button" id="quick-onboard" hidden>first-run setup</button>
           <button class="sidebar-button desktop-only" id="show-logs" hidden>show logs</button>
           <button class="sidebar-button desktop-only" id="reveal-appdata" hidden>app data</button>
         </div>
@@ -258,6 +259,61 @@
       <div class="command-palette-hint">Enter inserts a command, /goal starts a structured run, Ctrl/⌘+K opens this palette.</div>
       <input id="command-palette-input" class="command-palette-input" type="text" placeholder="Filter commands or type /goal" />
       <div class="command-palette-list" id="command-palette-list"></div>
+    </div>
+  </div>
+
+  <!--
+    First-run onboarding wizard. Mirrors the /onboard slash
+    command and `ch onboard` CLI subcommand so all three
+    surfaces give the same 3-step flow: pick provider, save
+    key, test. The wizard auto-opens when the web app loads
+    with no provider configured (no env var, no settings.json
+    entry, no keychain).
+  -->
+  <div class="onboard-modal" id="onboard-modal" hidden>
+    <div class="onboard-card">
+      <div class="onboard-header">
+        <div class="onboard-eyebrow">first run</div>
+        <div class="onboard-title">Welcome to CodingHarness</div>
+        <div class="onboard-subtitle">Let's set up a provider so the agent can do things. Three quick steps.</div>
+      </div>
+      <ol class="onboard-steps">
+        <li class="onboard-step" data-step="pick">
+          <div class="onboard-step-num">1</div>
+          <div class="onboard-step-body">
+            <div class="onboard-step-title">Pick a provider</div>
+            <div class="onboard-step-hint">Where your model API lives. OpenAI and Anthropic are hosted; LM Studio is local.</div>
+            <select id="onboard-provider" class="onboard-select"></select>
+            <div class="onboard-provider-meta" id="onboard-provider-meta"></div>
+          </div>
+        </li>
+        <li class="onboard-step" data-step="key">
+          <div class="onboard-step-num">2</div>
+          <div class="onboard-step-body">
+            <div class="onboard-step-title">Save your key</div>
+            <div class="onboard-step-hint">Stored locally in <code>~/.codingharness/settings.json</code>. Never sent anywhere except to the provider.</div>
+            <input id="onboard-apikey" type="password" class="onboard-input" placeholder="paste API key" autocomplete="off" />
+            <div class="onboard-model-row">
+              <label>Model</label>
+              <input id="onboard-model" type="text" class="onboard-input onboard-input-small" placeholder="model (defaults to the provider's recommended one)" />
+            </div>
+            <div class="onboard-env-hint" id="onboard-env-hint"></div>
+          </div>
+        </li>
+        <li class="onboard-step" data-step="test">
+          <div class="onboard-step-num">3</div>
+          <div class="onboard-step-body">
+            <div class="onboard-step-title">Test the connection</div>
+            <div class="onboard-step-hint">A tiny /diag round-trip. Tells you the key works and reports latency.</div>
+            <button id="onboard-test" class="onboard-btn onboard-btn-primary" type="button">save &amp; test</button>
+            <div class="onboard-result" id="onboard-result"></div>
+          </div>
+        </li>
+      </ol>
+      <div class="onboard-footer">
+        <button id="onboard-skip" class="onboard-btn" type="button">skip for now</button>
+        <div class="onboard-footer-hint">You can run <code>/onboard</code> (or open ⚙ settings) any time.</div>
+      </div>
     </div>
   </div>
 

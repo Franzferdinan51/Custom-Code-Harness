@@ -141,6 +141,48 @@ const welcomeCommand: SlashCommand = {
   run() { return renderQuickStart({ title: "Quick start" }); },
 };
 
+/** First-run wizard. On a fresh install, walks the user through
+ *  picking a provider, saving a key, and confirming the connection
+ *  works. On a configured install, prints a one-line "you're all
+ *  set" summary and points at /provider for changes. */
+const onboardCommand: SlashCommand = {
+  name: "onboard",
+  description: "First-run setup wizard: pick a provider, save a key, test it.",
+  group: "session",
+  usage: "/onboard",
+  async run(_a, ctx) {
+    const rt = ctx.runtime?.();
+    if (!rt) return "(no runtime)";
+    const lines: string[] = [];
+    if (rt.isFirstRun?.()) {
+      lines.push("Welcome to CodingHarness!");
+      lines.push("");
+      lines.push("Looks like this is your first run. Let's set up a provider so the agent can actually do things.");
+      lines.push("");
+      lines.push("Step 1:  pick a provider.");
+      const { renderProviderList } = await import("../provider/setup.js");
+      lines.push(renderProviderList());
+      lines.push("");
+      lines.push("Step 2:  save a key for the one you picked:");
+      lines.push("  /provider setup <id> <your-key>");
+      lines.push("");
+      lines.push("Step 3:  I'll run /diag automatically to confirm the key works.");
+      lines.push("          If it fails, /provider setup <id> again to overwrite.");
+      lines.push("");
+      lines.push("Tip: you can paste the key with a leading space to avoid some shells logging it.");
+    } else {
+      lines.push("You're already set up.");
+      lines.push("  provider:  " + (rt.providerId() ?? "(unset)"));
+      lines.push("  model:     " + (rt.model() ?? "(unset)"));
+      lines.push("");
+      lines.push("To change provider or model:  /provider <id> [model]");
+      lines.push("To set up a different one:    /provider setup <id>");
+      lines.push("To see all options:           /provider list");
+    }
+    return lines.join("\n");
+  },
+};
+
 // ---------- /clear / /new / /reset ----------
 
 const clearCommand: SlashCommand = {
@@ -370,14 +412,88 @@ const modelCommand: SlashCommand = {
 
 const providerCommand: SlashCommand = {
   name: "provider",
-  description: "Show or change the current provider (optionally with model).",
+  description: "Show, switch, or set up a provider (interactive on first run).",
   group: "model",
-  usage: "/provider [id] [model]",
+  usage: "/provider [id] [model] | /provider setup [id [key]] | /provider list",
   async run(args, ctx) {
     const rt = ctx.runtime?.();
     if (!rt) return "(no runtime)";
     const trimmed = args.trim();
-    if (!trimmed) return "provider: " + (rt.providerId() ?? "(unset)") + "\nuse: /provider <id> [model]";
+    // `/provider` with no args — show current, plus a setup hint
+    // when the user has no provider configured yet.
+    if (!trimmed) {
+      const id = rt.providerId() ?? "(unset)";
+      const model = rt.model() ?? "(unset)";
+      const lines = [
+        "Provider: " + id,
+        "Model:    " + model,
+      ];
+      if (rt.isFirstRun?.()) {
+        const { renderProviderList } = await import("../provider/setup.js");
+        lines.push("");
+        lines.push("Looks like a first run — let's set one up:");
+        lines.push(renderProviderList());
+      } else {
+        lines.push("");
+        lines.push("Switch:  /provider <id> [model]   (e.g. /provider openai gpt-4o)");
+        lines.push("Setup:   /provider setup           (interactive)");
+        lines.push("List:    /provider list            (all providers)");
+      }
+      return lines.join("\n");
+    }
+    // `/provider list` — show the catalog.
+    if (trimmed === "list") {
+      const { renderProviderList } = await import("../provider/setup.js");
+      return renderProviderList();
+    }
+    // `/provider setup ...` — interactive setup wizard.
+    if (trimmed.startsWith("setup")) {
+      const setupArgs = trimmed.slice("setup".length).trim();
+      const { getProviderPreset } = await import("../providers/presets.js");
+      const { renderProviderSetup, parseProviderSetupArgs } = await import("../provider/setup.js");
+      if (!setupArgs) {
+        // No provider given — show the picker.
+        const { renderProviderList } = await import("../provider/setup.js");
+        return renderProviderList();
+      }
+      const parsed = parseProviderSetupArgs(setupArgs);
+      if (!parsed) {
+        return "no such provider. try: /provider list";
+      }
+      const preset = getProviderPreset(parsed.providerId)!;
+      // `/provider setup <id>` (no key) — show the setup card.
+      if (!parsed.apiKey) {
+        return renderProviderSetup(preset);
+      }
+      // `/provider setup <id> <key>` — save and verify.
+      const save = await rt.saveProviderApiKey?.(parsed.providerId, parsed.apiKey);
+      if (!save) {
+        return "(runtime doesn't support saving keys — try setting " +
+          preset.apiKeyEnv[0] + " in your shell)";
+      }
+      if (!save.ok) {
+        return "could not save key: " + (save.reason ?? "unknown");
+      }
+      // Persist + run a quick diag to confirm it works.
+      const lines = [
+        "✓ saved API key for " + preset.label,
+        "  default model: " + (rt.model() ?? preset.defaultModel),
+        "",
+        "Running /diag to verify the connection...",
+      ];
+      try {
+        const diag = await rt.runDiag?.();
+        if (diag) {
+          lines.push(diag.ok
+            ? "✓ diag ok — first byte " + diag.firstByteMs + "ms, " + diag.totalMs + "ms total"
+            : "✗ diag failed: " + (diag.error ?? "no response"));
+        }
+      } catch (e) {
+        lines.push("✗ diag crashed: " + (e as Error).message);
+      }
+      return lines.join("\n");
+    }
+    // `/provider <id> [model]` — the original fast-switch.
     const parts = trimmed.split(/\s+/);
     await rt.setProviderAndModel(parts[0]!, parts[1]);
     return "provider set to " + parts[0] + (parts[1] ? " (model " + parts[1] + ")" : "");
@@ -1216,6 +1332,7 @@ export const BUILTIN_REGISTRY = new SlashRegistry();
 BUILTIN_REGISTRY.register(commandsCommand);
 BUILTIN_REGISTRY.register(helpCommand);
 BUILTIN_REGISTRY.register(welcomeCommand);
+BUILTIN_REGISTRY.register(onboardCommand);
 BUILTIN_REGISTRY.register(clearCommand);
 BUILTIN_REGISTRY.register(newCommand);
 BUILTIN_REGISTRY.register(resetCommand);

@@ -106,6 +106,14 @@ registerSubcommand("welcome", "Print the quick-start card (4 commands to get goi
   "ch welcome",
   async (_ctx) => { return runWelcomeCmd(); });
 
+registerSubcommand("onboard", "First-run setup wizard: pick a provider, save a key, test it.",
+  "ch onboard",
+  async (ctx) => { return runOnboardCmd(ctx); });
+
+registerSubcommand("provider", "Show, switch, or set up a provider (interactive on first run).",
+  "ch provider [list|setup <id> [key]|set-key <id> <key>|<id> [model]]",
+  async (ctx) => { return runProviderCmd(ctx); });
+
 registerSubcommand("diag", "Run a connectivity / latency check against the current provider + model.",
   "ch diag [--json]",
   async (ctx) => { return runDiagCmd(ctx); });
@@ -192,7 +200,7 @@ function showHelp(cmd?: string): number {
   // first, then categories. Mirrors the desktop app's Quick Actions row.
   const groups: Array<{ title: string; blurb: string; names: string[] }> = [
     { title: "Get started", blurb: "Open the harness.",
-      names: ["chat", "tui", "repl", "web", "desktop", "welcome"] },
+      names: ["chat", "tui", "repl", "web", "desktop", "welcome", "onboard", "provider"] },
     { title: "Run a prompt", blurb: "One-shot, autonomous, or multi-step.",
       names: ["run", "agent", "code", "goal", "loop"] },
     { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling.",
@@ -602,6 +610,102 @@ async function runWelcomeCmd(): Promise<number> {
   const { renderQuickStart } = await import("./slash/builtin.js");
   process.stdout.write(renderQuickStart() + "\n");
   process.stdout.write("\nType `ch help` for the full subcommand list.\n");
+  return 0;
+}
+
+/** `ch onboard` — first-run setup wizard. Same shape as the `/onboard`
+ *  slash command, but prints to stdout so the user can read it
+ *  without launching the TUI. */
+async function runOnboardCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const { HarnessRuntime } = await import("./runtime.js");
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const cmd = BUILTIN_REGISTRY.get("onboard");
+  if (!cmd) { process.stderr.write("error: /onboard command missing\n"); return 1; }
+  const out = await cmd.run("", { cwd: ctx.cwd, runtime: () => runtime });
+  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
+  return 0;
+}
+
+/** `ch provider` — list, set up, set a key, or fast-switch.
+ *  Mirrors `/provider` so the two surfaces can't disagree. */
+async function runProviderCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const { HarnessRuntime } = await import("./runtime.js");
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const sub = ctx.args[0];
+
+  // `ch provider list` — catalog.
+  if (sub === "list") {
+    const { renderProviderList } = await import("./provider/setup.js");
+    process.stdout.write(renderProviderList() + "\n");
+    return 0;
+  }
+
+  // `ch provider setup [id] [key]` — interactive setup.
+  if (sub === "setup") {
+    const { renderProviderSetup, parseProviderSetupArgs, renderProviderList } = await import("./provider/setup.js");
+    const { getProviderPreset } = await import("./providers/presets.js");
+    const setupArgs = ctx.args.slice(1).join(" ");
+    if (!setupArgs.trim()) {
+      process.stdout.write(renderProviderList() + "\n");
+      return 0;
+    }
+    const parsed = parseProviderSetupArgs(setupArgs);
+    if (!parsed) {
+      process.stderr.write("no such provider. try: ch provider list\n");
+      return 2;
+    }
+    const preset = getProviderPreset(parsed.providerId)!;
+    // `ch provider setup <id>` (no key) — print the setup card.
+    if (!parsed.apiKey) {
+      process.stdout.write(renderProviderSetup(preset) + "\n");
+      return 0;
+    }
+    // `ch provider setup <id> <key>` — save and verify.
+    const save = await runtime.saveProviderApiKey(parsed.providerId, parsed.apiKey);
+    if (!save.ok) {
+      process.stderr.write("could not save key: " + (save.reason ?? "unknown") + "\n");
+      return 1;
+    }
+    process.stdout.write("✓ saved API key for " + preset.label + "\n");
+    process.stdout.write("  default model: " + (runtime.model() ?? preset.defaultModel) + "\n");
+    process.stdout.write("\nRunning diag to verify...\n");
+    try {
+      const diag = await runtime.runDiag();
+      process.stdout.write(diag.ok
+        ? "✓ diag ok — first byte " + diag.firstByteMs + "ms, " + diag.totalMs + "ms total\n"
+        : "✗ diag failed: " + (diag.error ?? "no response") + "\n");
+      if (!diag.ok) return 1;
+    } catch (e) {
+      process.stderr.write("✗ diag crashed: " + (e as Error).message + "\n");
+      return 1;
+    }
+    return 0;
+  }
+
+  // `ch provider set-key <id> <key>` — non-interactive save.
+  if (sub === "set-key") {
+    const id = ctx.args[1];
+    const key = ctx.args.slice(2).join(" ");
+    if (!id || !key) {
+      process.stderr.write("usage: ch provider set-key <id> <key>\n");
+      return 2;
+    }
+    const save = await runtime.saveProviderApiKey(id, key);
+    if (!save.ok) {
+      process.stderr.write("could not save key: " + (save.reason ?? "unknown") + "\n");
+      return 1;
+    }
+    process.stdout.write("✓ saved API key for " + id + "\n");
+    return 0;
+  }
+
+  // `ch provider` (no args) or `ch provider <id> [model]` — fast switch.
+  const cmd = BUILTIN_REGISTRY.get("provider");
+  if (!cmd) { process.stderr.write("error: /provider command missing\n"); return 1; }
+  const out = await cmd.run(ctx.args.join(" "), { cwd: ctx.cwd, runtime: () => runtime });
+  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
   return 0;
 }
 

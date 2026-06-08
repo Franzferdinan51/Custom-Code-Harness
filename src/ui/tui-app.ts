@@ -50,6 +50,13 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
   // tui.start() already paints the quick-start banner; no need to add
   // a duplicate "Welcome" line.
 
+  // First-run hint. If no provider is configured, surface a one-time
+  // nudge so the user knows /provider / /onboard exist. We don't
+  // interrupt their flow — just a small note at the top of the log.
+  if (runtime.isFirstRun?.()) {
+    tui.addMessage({ kind: "system", text: "Heads up: no provider is configured yet. Type /onboard to set one up, or /provider list to see what's supported." });
+  }
+
   // Clean up the approval handler on exit.
   process.once("exit", clearApproval);
 
@@ -87,7 +94,15 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
         try {
           const out = await cmd.run(parsed.args, { cwd: ctx.cwd, runtime: () => runtime });
           if (typeof out === "string" && out.length > 0) {
-            tui.addMessage({ kind: "info", text: out });
+            // Multi-line output (provider setup card, /help, etc.)
+            // renders as a framed block so the user can scan it as
+            // a single unit. Short single-line results still use the
+            // compact "info" message style.
+            if (out.includes("\n") && out.length > 80) {
+              tui.addBlock("/" + parsed.name, out);
+            } else {
+              tui.addMessage({ kind: "info", text: out });
+            }
           } else if (cmd.name === "quit" || cmd.name === "exit") {
             tui.stop();
             process.exit(0);
@@ -211,7 +226,12 @@ async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd:
           tui.setStatus({ tokensIn: u.inputTokens, tokensOut: u.outputTokens });
         },
         onError: (e) => { tui.addMessage({ kind: "error", text: e.message }); },
-        onInfo: () => {},
+        onInfo: (text) => {
+          // onInfo fires for "thinking...", retries, provider notes, etc.
+          // Surface them as transient info banners so the user sees
+          // what's happening without scrolling into the agent log.
+          if (text) tui.setInfo(text);
+        },
       },
       onComplete: (m) => {
         void session.append({ kind: "message", message: m });

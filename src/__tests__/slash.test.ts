@@ -43,7 +43,7 @@ test("tryParseSlash returns null for non-slash input", () => {
 
 test("builtin registry has all expected commands", () => {
   const names = BUILTIN_REGISTRY.names();
-  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "compact", "tree", "fork", "export", "cost", "approval", "think", "verbose", "trace", "info"]) {
+  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "compact", "tree", "fork", "export", "cost", "approval", "think", "verbose", "trace", "info", "welcome", "onboard"]) {
     assert.ok(names.includes(want), "missing /" + want);
   }
 });
@@ -521,6 +521,133 @@ test("/skill <name> still loads (backward-compatible shorthand)", async () => {
   const out = await skill!.run("alpha", { cwd: "/", runtime: () => rt as never });
   assert.match(String(out), /Loaded skill: alpha/);
   assert.match(String(out), /alpha body/);
+});
+
+test("/onboard first run shows the wizard", async () => {
+  const onboard = BUILTIN_REGISTRY.get("onboard");
+  assert.ok(onboard);
+  const rt = {
+    providerId: () => undefined,
+    model: () => undefined,
+    isFirstRun: () => true,
+  };
+  const out = await onboard!.run("", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /Welcome to CodingHarness/);
+  assert.match(String(out), /first run/i);
+  assert.match(String(out), /Step 1/);
+  assert.match(String(out), /Step 2/);
+  assert.match(String(out), /Step 3/);
+});
+
+test("/onboard when configured shows a short status", async () => {
+  const onboard = BUILTIN_REGISTRY.get("onboard");
+  assert.ok(onboard);
+  const rt = {
+    providerId: () => "openai",
+    model: () => "gpt-4o",
+    isFirstRun: () => false,
+  };
+  const out = await onboard!.run("", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /already set up/);
+  assert.match(String(out), /openai/);
+  assert.match(String(out), /gpt-4o/);
+});
+
+test("/provider with no args on first run suggests the setup wizard", async () => {
+  const provider = BUILTIN_REGISTRY.get("provider");
+  assert.ok(provider);
+  const rt = {
+    providerId: () => undefined,
+    model: () => undefined,
+    isFirstRun: () => true,
+  };
+  const out = await provider!.run("", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /Provider: \(unset\)/);
+  assert.match(String(out), /first run/);
+  assert.match(String(out), /\/openai/);
+});
+
+test("/provider list shows the catalog", async () => {
+  const provider = BUILTIN_REGISTRY.get("provider");
+  assert.ok(provider);
+  const rt = {
+    providerId: () => "openai",
+    model: () => "gpt-4o",
+    isFirstRun: () => false,
+  };
+  const out = await provider!.run("list", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /\/openai/);
+  assert.match(String(out), /\/anthropic/);
+  assert.match(String(out), /\/minimax/);
+});
+
+test("/provider setup <id> <key> saves and runs /diag", async () => {
+  const provider = BUILTIN_REGISTRY.get("provider");
+  assert.ok(provider);
+  let savedWith: { id: string; key: string } | null = null;
+  const rt = {
+    providerId: () => "openai",
+    model: () => "gpt-4o",
+    isFirstRun: () => false,
+    async saveProviderApiKey(id: string, key: string) {
+      savedWith = { id, key };
+      return { ok: true };
+    },
+    async runDiag() {
+      return { ok: true, firstByteMs: 100, totalMs: 250, inputTokens: 5, outputTokens: 2 };
+    },
+  };
+  const out = await provider!.run("setup anthropic sk-test-key-1234", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /saved API key/);
+  assert.match(String(out), /Anthropic/);
+  assert.match(String(out), /diag ok/);
+  assert.deepEqual(savedWith, { id: "anthropic", key: "sk-test-key-1234" });
+});
+
+test("/provider setup <id> (no key) prints the setup card", async () => {
+  const provider = BUILTIN_REGISTRY.get("provider");
+  assert.ok(provider);
+  const rt = {
+    providerId: () => "openai",
+    model: () => "gpt-4o",
+    isFirstRun: () => false,
+  };
+  // Use openai (which has authDocsUrl in the preset) so the test
+  // exercises the docs row as well as the env-var row.
+  const out = await provider!.run("setup openai", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /Setup: OpenAI/);
+  assert.match(String(out), /apiKey|api-key/);
+  assert.match(String(out), /docs:/);
+  assert.match(String(out), /OPENAI_API_KEY/);
+});
+
+test("/provider setup with unknown provider returns a friendly error", async () => {
+  const provider = BUILTIN_REGISTRY.get("provider");
+  assert.ok(provider);
+  const rt = {
+    providerId: () => "openai",
+    model: () => "gpt-4o",
+    isFirstRun: () => false,
+  };
+  const out = await provider!.run("setup nope", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /no such provider/);
+  assert.match(String(out), /provider list/);
+});
+
+test("/provider setup <id> <bad-key> returns a structured error", async () => {
+  const provider = BUILTIN_REGISTRY.get("provider");
+  assert.ok(provider);
+  const rt = {
+    providerId: () => "openai",
+    model: () => "gpt-4o",
+    isFirstRun: () => false,
+    async saveProviderApiKey(_id: string, _key: string) {
+      return { ok: false, reason: "key is too short to be a real API key" };
+    },
+  };
+  const out = await provider!.run("setup anthropic x", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /could not save key/);
+  assert.match(String(out), /too short/);
 });
 
 test("/skill show <unknown> returns a friendly error", async () => {

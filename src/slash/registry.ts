@@ -81,6 +81,12 @@ export interface SlashRuntime {
    * support it (e.g. in tests with a stubbed runtime).
    */
   runDiag?(): Promise<import("../runtime.js").DiagResult>;
+  /** Save an API key for a provider. Returns `{ok, reason?}`. Used
+   *  by `/provider setup <id> <key>` and the onboarding wizard. */
+  saveProviderApiKey?(providerId: string, apiKey: string, opts?: { makeDefault?: boolean; model?: string }): Promise<{ ok: boolean; reason?: string }>;
+  /** True when no provider is configured at all. The TUI uses this
+   *  on launch to print an onboarding hint instead of a generic welcome. */
+  isFirstRun?(): boolean;
 }
 
 export interface SlashCommand {

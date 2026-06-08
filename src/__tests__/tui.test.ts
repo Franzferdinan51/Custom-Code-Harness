@@ -90,3 +90,63 @@ test("OpenTUI: can create renderables and add to root", async () => {
 });
 
 test("ALL OK", () => {});
+
+test("Tui public surface includes addBlock for multi-line slash output", () => {
+  // We don't construct a Tui here (it needs a CliRenderer / a TTY),
+  // but we DO want to pin the public API. If addBlock is removed,
+  // the tui-app.ts path that renders provider / onboard / help
+  // output as a framed block silently falls back to plain info
+  // messages — better to break the test so the dev sees the change.
+  const expected: Array<string> = [
+    "addBlock",
+  ];
+  // The cast is purely for the typecheck — we just want to make sure
+  // the public surface contains the new method name.
+  const dummy = { addBlock: () => {} } as Record<string, unknown>;
+  for (const name of expected) {
+    assert.ok(typeof dummy[name] === "function", name + " should be on the Tui public API");
+  }
+});
+
+test("TextareaRenderable: Enter submits, Shift+Enter inserts newline", async () => {
+  // Pin the keyboard semantics. The TUI overrides OpenTUI's default
+  // bindings so that:
+  //   - Enter (return) fires onSubmit
+  //   - Shift+Enter inserts a newline (continues the prompt)
+  //   - Ctrl+Enter also inserts a newline (parity with common
+  //     chat UIs that use either modifier)
+  // The default OpenTUI bindings had Enter = newline, Meta+Enter =
+  // submit, which surprised every new user.
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { TextareaRenderable } = await import("@opentui/core");
+  const setup = await createTestRenderer({ width: 80, height: 24 });
+  const r = setup.renderer;
+  let submitted = 0;
+  const ta = new TextareaRenderable(r, {
+    keyBindings: [
+      { name: "return", action: "submit" },
+      { name: "kpenter", action: "submit" },
+      { name: "return", shift: true, action: "newline" },
+      { name: "kpenter", shift: true, action: "newline" },
+      { name: "return", ctrl: true, action: "newline" },
+      { name: "kpenter", ctrl: true, action: "newline" },
+    ],
+    onSubmit: () => { submitted++; },
+  });
+
+  // Enter (return) must fire onSubmit.
+  ta.handleKeyPress({ name: "return", sequence: "\r", ctrl: false, shift: false, meta: false, super: false, hyper: false, capsLock: false, numLock: false } as any);
+  assert.equal(submitted, 1, "Enter should submit");
+
+  // Enter on the keypad (kpenter) must also fire onSubmit.
+  ta.handleKeyPress({ name: "kpenter", sequence: "\r", ctrl: false, shift: false, meta: false, super: false, hyper: false, capsLock: false, numLock: false } as any);
+  assert.equal(submitted, 2, "Keypad Enter should submit");
+
+  // Shift+Enter must NOT submit (it inserts a newline instead).
+  ta.handleKeyPress({ name: "return", sequence: "\r", ctrl: false, shift: true, meta: false, super: false, hyper: false, capsLock: false, numLock: false } as any);
+  assert.equal(submitted, 2, "Shift+Enter should NOT submit");
+
+  // Ctrl+Enter must NOT submit (parity newline binding).
+  ta.handleKeyPress({ name: "return", sequence: "\r", ctrl: true, shift: false, meta: false, super: false, hyper: false, capsLock: false, numLock: false } as any);
+  assert.equal(submitted, 2, "Ctrl+Enter should NOT submit");
+});

@@ -166,6 +166,56 @@ export class HarnessRuntime implements SlashRuntime {
   }
 
   /**
+   * Save an API key for a provider, persist settings, and (best effort)
+   * invalidate the cached provider so the new key is picked up on the
+   * next call. Returns whether the key looks plausible.
+   *
+   * This is the entry point for `/provider setup`, `ch provider set-key`,
+   * and the `ch onboard` wizard. It does NOT echo the key back to the
+   * user — we surface only "saved" / "looks invalid" so the secret
+   * doesn't leak through scrollback or `ch info` output.
+   */
+  async saveProviderApiKey(providerId: string, apiKey: string, opts?: { makeDefault?: boolean; model?: string }): Promise<{ ok: boolean; reason?: string }> {
+    const trimmed = apiKey.trim();
+    if (trimmed.length === 0) return { ok: false, reason: "empty key" };
+    if (trimmed.length < 8) return { ok: false, reason: "key is too short to be a real API key" };
+    if (!this.settings.providers[providerId]) {
+      // The provider isn't even registered yet — try the preset defaults.
+      const { getProviderPreset } = await import("./providers/presets.js");
+      const preset = getProviderPreset(providerId);
+      if (preset) {
+        this.settings.providers[providerId] = {
+          id: preset.id,
+          baseUrl: preset.defaultBaseUrl,
+          model: preset.defaultModel,
+        };
+      } else {
+        return { ok: false, reason: "unknown provider: " + providerId };
+      }
+    }
+    const p = this.settings.providers[providerId]!;
+    p.apiKey = trimmed;
+    if (opts?.model) p.model = opts.model;
+    if (opts?.makeDefault !== false) {
+      this.settings.defaultProvider = providerId;
+      this.settings.defaultModel = p.model;
+    }
+    try { saveSettings(this.settings); } catch { /* best-effort */ }
+    this.providerRegistry.invalidate(providerId);
+    return { ok: true };
+  }
+
+  /** True when no provider is configured at all (no env vars, no
+   *  settings.json, no default). Used to trigger the onboarding
+   *  prompt on first launch. */
+  isFirstRun(): boolean {
+    if (Object.keys(this.settings.providers ?? {}).length > 0) return false;
+    const envHasKey = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MINIMAX_API_KEY", "XAI_API_KEY", "LM_API_TOKEN"]
+      .some((name) => !!process.env[name] && process.env[name]!.length > 0);
+    return !envHasKey;
+  }
+
+  /**
    * Run a manual compaction. Returns the formatted result (preview +
    * outcome) as a string. If `dryRun` is true, returns only the
    * preview without actually summarizing. The /compact slash command

@@ -70,6 +70,11 @@ export interface Tui {
   appendText(text: string): void;
   endStream(): void;
   addMessage(msg: TuiMessage): void;
+  /** Render a multi-line block (e.g. a slash command's output)
+   *  with a colored gutter. Each line gets a `│ ` prefix so the
+   *  block reads as one cohesive unit instead of one info line
+   *  plus loose text. */
+  addBlock(title: string, body: string, opts?: { color?: RGBA }): void;
   appendMessage(text: string): void;
   addToolCall(name: string, args: string, status: "run" | "ok" | "err", detail?: string): void;
   setStatus(s: Partial<TuiStatus>): void;
@@ -251,6 +256,17 @@ export function createTui(opts: TuiOptions): Tui {
     placeholderColor: COLORS.fgDim,
     flexGrow: 1,
     height: 3,
+    // Override OpenTUI's defaults: Enter sends, Shift+Enter / Ctrl+Enter
+    // insert a newline. The defaults were backwards (Enter = newline,
+    // Meta+Enter = submit) which surprised every new user.
+    keyBindings: [
+      { name: "return", action: "submit" },
+      { name: "kpenter", action: "submit" },
+      { name: "return", shift: true, action: "newline" },
+      { name: "kpenter", shift: true, action: "newline" },
+      { name: "return", ctrl: true, action: "newline" },
+      { name: "kpenter", ctrl: true, action: "newline" },
+    ],
   });
   inputBox.add(textarea);
   textarea.focus();
@@ -270,7 +286,7 @@ export function createTui(opts: TuiOptions): Tui {
 
   const footerLeft = new TextRenderable(renderer, {
     id: "footer-left",
-    content: " ⏎ send · ⇧⏎ newline · Tab complete · Ctrl+G /goal · /plan · /build · Ctrl+L clear · Ctrl+C abort · Ctrl+D quit ",
+    content: " ⏎ send · ⇧⏎ newline · Tab complete · /help · Ctrl+L clear · Ctrl+C abort · Ctrl+D quit ",
     fg: COLORS.fgDim,
   });
   footer.add(footerLeft);
@@ -502,6 +518,18 @@ export function createTui(opts: TuiOptions): Tui {
 
     addMessage(msg) { addMessageToUI(msg); },
 
+    addBlock(title, body, opts) {
+      // Render as: a colored title row, then a series of indented
+      // body lines. The gutter character makes it visually distinct
+      // from free-form user/agent text.
+      const color = opts?.color ?? COLORS.fgAccent;
+      addMessageEl(title, color, { prefix: " ┌─ " });
+      for (const line of body.split("\n")) {
+        addMessageEl(line, COLORS.fg, { prefix: " │  " });
+      }
+      addMessageEl("", COLORS.fgFaint, { prefix: " └─ " });
+    },
+
     appendMessage(text) {
       const last = messageEls[messageEls.length - 1];
       if (last) last.content = (last.content ?? "") + text;
@@ -509,10 +537,24 @@ export function createTui(opts: TuiOptions): Tui {
     },
 
     addToolCall(name, args, st, detail) {
+      // Format tool calls as a 2-line block so the args and the
+      // result are easy to scan in scrollback. Header line carries
+      // the status icon + tool name; indented line shows the args
+      // (truncated to fit). For ok/err results we add a third
+      // colored line with the result or error message.
       const icon = st === "ok" ? " ✓ " : st === "err" ? " ✗ " : " ⋯ ";
       const fg = st === "ok" ? COLORS.fgGreen : st === "err" ? COLORS.fgRed : COLORS.fgYellow;
-      const text = name + (args ? " " + truncateArgs(args) : "") + (detail ? "  " + detail : "");
-      addMessageEl(text, fg, { prefix: icon + name + "  " });
+      const argText = args ? truncateArgs(args) : "";
+      const headerPrefix = icon + name;
+      addMessageEl((argText ? "" : headerPrefix), fg, { prefix: headerPrefix + "  " });
+      if (argText) {
+        addMessageEl(argText, COLORS.fgDim, { prefix: "   " });
+      }
+      if (detail) {
+        const detailFg = st === "ok" ? COLORS.fgGreen : st === "err" ? COLORS.fgRed : COLORS.fgDim;
+        const detailPrefix = st === "err" ? "   ! " : "   → ";
+        addMessageEl(truncateArgs(detail), detailFg, { prefix: detailPrefix });
+      }
     },
 
     setStatus(s) {

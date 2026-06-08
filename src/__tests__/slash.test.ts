@@ -442,6 +442,37 @@ test("/memory with no args defaults to read", async () => {
   assert.match(out!, /test memory entry/);
 });
 
+test("/agents <name> shows the focused one-agent view", async () => {
+  const { AgentRegistry } = await import("../agent/agents.js");
+  const reg = new AgentRegistry();
+  const agents = BUILTIN_REGISTRY.get("agents");
+  assert.ok(agents);
+  const explore = reg.get("explore");
+  assert.ok(explore);
+  const out = await agents!.run("explore", { cwd: "/", runtime: () => ({
+    listAgents: () => reg.list(),
+    getAgent: (n: string) => reg.get(n),
+  } as never) });
+  assert.ok(typeof out === "string");
+  assert.match(out!, /explore\b/);
+  assert.match(out!, /Read-only explorer/);
+  assert.match(out!, /tools: read, grep, find, ls, bash/);
+  assert.match(out!, /max steps: 12/);
+});
+
+test("/agents <name> returns a friendly error for an unknown name", async () => {
+  const { AgentRegistry } = await import("../agent/agents.js");
+  const reg = new AgentRegistry();
+  const agents = BUILTIN_REGISTRY.get("agents");
+  assert.ok(agents);
+  const out = await agents!.run("nope", { cwd: "/", runtime: () => ({
+    listAgents: () => reg.list(),
+    getAgent: (n: string) => reg.get(n),
+  } as never) });
+  assert.match(String(out), /no such agent: nope/);
+  assert.match(String(out), /\/agents alone/);
+});
+
 test("/info renders the runtime snapshot", async () => {
   const info = BUILTIN_REGISTRY.get("info");
   assert.ok(info);

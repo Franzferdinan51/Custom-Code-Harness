@@ -442,6 +442,10 @@ export class HarnessRuntime implements SlashRuntime {
 
   // ---- Slash helpers exposed to commands ----
   listAgents() { return this.subagents.list(); }
+  /** Look up a single agent definition by name. Returns undefined
+   *  when the agent isn't registered. Used by `/agents <name>` and
+   *  the future `ch agents show <name>` CLI subcommand. */
+  getAgent(name: string) { return this.subagents.get(name); }
 
   // ---- Internals ----
 

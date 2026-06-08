@@ -66,6 +66,10 @@ export interface SlashRuntime {
   };
   /** List sub-agents. */
   listAgents?(): Array<{ name: string; description: string; builtin?: boolean }>;
+  /** Look up a single sub-agent by name. Used by `/agents <name>`
+   *  for the focused one-agent view. Returns undefined when the
+   *  agent isn't registered. */
+  getAgent?(name: string): import("../agent/agents.js").AgentDefinition | undefined;
   /** Update live goal-mode activity for hosts like the desktop UI. */
   setGoalActivity?(state: GoalActivityState | null): void;
   /** Read current goal-mode activity, if any. */

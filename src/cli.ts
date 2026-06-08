@@ -118,8 +118,8 @@ registerSubcommand("skills", "List installed skills.",
   "ch skills",
   async (ctx) => { return listSkillsCmd(ctx); });
 
-registerSubcommand("agents", "List available sub-agents.",
-  "ch agents",
+registerSubcommand("agents", "List available sub-agents (or show details for one).",
+  "ch agents [list|show <name>]",
   async (ctx) => { return listAgentsCmd(ctx); });
 
 registerSubcommand("skill", "Run a skill: load it and feed to the agent.",
@@ -620,6 +620,56 @@ async function listSkillsCmd(ctx: SubcommandContext): Promise<number> {
 async function listAgentsCmd(ctx: SubcommandContext): Promise<number> {
   const { AgentRegistry } = await import("./agent/agents.js");
   const reg = new AgentRegistry({ cwd: ctx.cwd });
+  // `ch agents show <name>` — focused one-agent view, same shape
+  // as `/agents <name>` inside the TUI. Both go through the same
+  // formatting helpers so the two surfaces never drift.
+  const sub = ctx.args[0];
+  if (sub === "show" || sub === "get") {
+    const name = ctx.args[1];
+    if (!name) {
+      process.stderr.write("usage: ch agents show <name>\n");
+      return 2;
+    }
+    const a = reg.get(name);
+    if (!a) {
+      process.stderr.write("no such agent: " + name + "\n");
+      return 1;
+    }
+    const lines: string[] = [];
+    lines.push(a.name + (a.builtin ? " (built-in)" : ""));
+    lines.push("  " + a.description);
+    if (a.tags && a.tags.length > 0) lines.push("  tags: " + a.tags.join(", "));
+    if (a.tools && a.tools.length > 0) lines.push("  tools: " + a.tools.join(", "));
+    else if (a.tools !== undefined) lines.push("  tools: (none — read-only)");
+    else lines.push("  tools: (inherits all parent tools)");
+    if (a.maxSteps) lines.push("  max steps: " + a.maxSteps);
+    if (a.model) lines.push("  model: " + a.model);
+    if (a.providerId) lines.push("  provider: " + a.providerId);
+    if (a.systemPrompt) {
+      lines.push("  system prompt:");
+      for (const line of a.systemPrompt.split("\n")) lines.push("    " + line);
+    }
+    if (a.systemPromptAppend) {
+      lines.push("  appends:");
+      for (const line of a.systemPromptAppend.split("\n")) lines.push("    " + line);
+    }
+    process.stdout.write(lines.join("\n") + "\n");
+    return 0;
+  }
+  if (sub && sub !== "list") {
+    // `ch agents <name>` — short form of `show`. If a single
+    // argument matches a known agent name, show its details;
+    // otherwise assume the user meant `list` and include the
+    // unknown name in the error.
+    const a = reg.get(sub);
+    if (a) {
+      // Tail-call the show branch by re-running with `show`.
+      return listAgentsCmd({ ...ctx, args: ["show", sub] });
+    }
+    process.stderr.write("unknown subcommand or agent: " + sub + "\n");
+    process.stderr.write("usage: ch agents [list|show <name>]\n");
+    return 2;
+  }
   for (const a of reg.list()) {
     process.stdout.write(a.name + (a.builtin ? " (built-in)" : "") + " — " + a.description + "\n");
   }

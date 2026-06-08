@@ -14,6 +14,7 @@ import { compact as runCompaction, roughTokenCount, defaultCutoff, previewCompac
 import { CronStore, formatSchedule, parseHumanSchedule, nextRun } from "../agent/cron.js";
 import { expandTemplate, loadPromptTemplates } from "../agent/prompts.js";
 import { runDiagnostics, renderDiagnostics } from "../doctor.js";
+import type { AgentDefinition } from "../agent/agents.js";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 
 // ---------- /help ----------
@@ -763,11 +764,46 @@ const skillCommand: SlashCommand = {
 
 const agentsCommand: SlashCommand = {
   name: "agents",
-  description: "List available sub-agents.",
+  description: "List available sub-agents (or show details for one).",
   group: "tools",
-  async run(_a, ctx) {
-    const rt = ctx.runtime?.() as { listAgents?: () => Array<{ name: string; description: string; builtin?: boolean }> } | undefined;
+  usage: "/agents [name]",
+  async run(args, ctx) {
+    const rt = ctx.runtime?.() as
+      | { listAgents?: () => Array<{ name: string; description: string; builtin?: boolean }>; getAgent?: (n: string) => AgentDefinition | undefined }
+      | undefined;
     if (!rt?.listAgents) return "(sub-agent registry not available)";
+    const want = args.trim();
+    // Focused one-agent view when a name is given. Useful for
+    // "what does /implement actually do?" without scrolling a list.
+    if (want) {
+      const a = rt.getAgent?.(want);
+      if (!a) return "no such agent: " + want + " — try /agents alone for the full list.";
+      const lines: string[] = [];
+      lines.push(a.name + (a.builtin ? " (built-in)" : ""));
+      lines.push("  " + a.description);
+      if (a.tags && a.tags.length > 0) {
+        lines.push("  tags: " + a.tags.join(", "));
+      }
+      if (a.tools && a.tools.length > 0) {
+        lines.push("  tools: " + a.tools.join(", "));
+      } else if (a.tools !== undefined) {
+        lines.push("  tools: (none — read-only)");
+      } else {
+        lines.push("  tools: (inherits all parent tools)");
+      }
+      if (a.maxSteps) lines.push("  max steps: " + a.maxSteps);
+      if (a.model) lines.push("  model: " + a.model);
+      if (a.providerId) lines.push("  provider: " + a.providerId);
+      if (a.systemPrompt) {
+        lines.push("  system prompt:");
+        for (const line of a.systemPrompt.split("\n")) lines.push("    " + line);
+      }
+      if (a.systemPromptAppend) {
+        lines.push("  appends:");
+        for (const line of a.systemPromptAppend.split("\n")) lines.push("    " + line);
+      }
+      return lines.join("\n");
+    }
     const list = rt.listAgents();
     if (list.length === 0) return "(no agents registered)";
     return list.map((a, i) => (i + 1) + ". " + a.name + (a.builtin ? " (built-in)" : "") + " — " + a.description).join("\n");

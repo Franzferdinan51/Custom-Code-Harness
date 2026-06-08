@@ -35,6 +35,8 @@ Following the same pattern as `grok` / `grok agent` / `codex`:
 | `ch goal`      | Multi-step auto-planning toward an objective                    |
 | `ch loop`      | Re-send a prompt N times, with optional sentinel                 |
 | `ch doctor`    | Run diagnostics and print the report                             |
+| `ch diag`      | Connectivity / latency probe against the current provider+model |
+| `ch tokens`    | Rough token count of the active session's messages               |
 | `ch skills`    | List installed skills                                            |
 | `ch agents`    | List available sub-agents                                        |
 | `ch skill`     | Load a skill by name and feed it to the agent                    |

@@ -4,6 +4,8 @@
 //   GET  /                         — Web UI (index.html)
 //   GET  /styles.css, /app.js      — Web UI assets
 //   GET  /v1/status                 — { version, model, provider }
+//   GET  /v1/diag                   — connectivity / latency check
+//   GET  /v1/tokens                 — rough token count of active session
 //   GET  /v1/agents                 — list of sub-agents
 //   GET  /v1/skills                 — list of skills
 //   GET  /v1/sessions               — list of sessions
@@ -179,6 +181,30 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         const t = runtime.cost ? runtime.cost.total() : { inputTokens: 0, outputTokens: 0, cost: 0 };
         const perModel = runtime.cost ? runtime.cost.perModel().slice(0, 1) : [];
         sendJson(res, 200, { ...t, topModel: perModel[0] ?? null });
+        return;
+      }
+      if (req.method === "GET" && path === "/v1/diag") {
+        // Connectivity / latency probe. The same call the /diag slash
+        // command and the `ch diag` CLI subcommand use.
+        const r = await runtime.runDiag();
+        sendJson(res, r.ok ? 200 : 503, r);
+        return;
+      }
+      if (req.method === "GET" && path === "/v1/tokens") {
+        // Rough token count of the active session's model-visible
+        // messages. Useful for dashboards and pre-compact checks.
+        const id = runtime.sessionId();
+        if (!id) { sendError(res, 400, "no active session"); return; }
+        const s = await Session.open(id);
+        const msgs = sessionToMessages(s);
+        const { roughTokenCount } = await import("./agent/compaction.js");
+        const total = roughTokenCount(msgs);
+        sendJson(res, 200, {
+          session: id,
+          messages: msgs.length,
+          tokens: total,
+          breakdown: msgs.map((m) => ({ role: m.role, tokens: roughTokenCount([m]) })),
+        });
         return;
       }
       if (req.method === "GET" && path === "/v1/commands") {
@@ -360,7 +386,7 @@ async function runOneChat(runtime: HarnessRuntime, prompt: string) {
   const messages = sessionToMessages(session);
   const result = await runAgent({
     provider, model,
-    system: await runtime["buildSystemPrompt"](),
+    system: await runtime.buildSystemPrompt(),
     messages, tools: runtime.tools, cwd: process.cwd(),
     signal: new AbortController().signal,
     limits: { ...DEFAULT_LIMITS },
@@ -426,7 +452,7 @@ async function streamChat(runtime: HarnessRuntime, prompt: string, res: ServerRe
   try {
     const result = await runAgent({
       provider, model,
-      system: await runtime["buildSystemPrompt"](),
+      system: await runtime.buildSystemPrompt(),
       messages, tools: runtime.tools, cwd: process.cwd(),
       signal: new AbortController().signal,
       limits: { ...DEFAULT_LIMITS },

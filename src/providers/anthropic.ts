@@ -166,7 +166,6 @@ async function* parseAnthropicSSE(body: ReadableStream<Uint8Array>, signal: Abor
   let buf = "";
   // Anthropic streams content_block_start with tool input accumulated via deltas.
   let currentTool: { id: string; name: string; args: string } | null = null;
-  let currentText = "";
   let inputTokens = 0;
   let outputTokens = 0;
 
@@ -211,12 +210,12 @@ async function* parseAnthropicSSE(body: ReadableStream<Uint8Array>, signal: Abor
                 args: JSON.stringify(parsed.content_block.input ?? {}),
               };
             } else if (parsed.content_block?.type === "text") {
-              currentText = "";
+              // Text block start — Anthropic resets its own accumulator
+              // on the wire; we just stream the deltas as they arrive.
             }
             break;
           case "content_block_delta":
             if (parsed.delta?.type === "text_delta" && typeof parsed.delta.text === "string") {
-              currentText += parsed.delta.text;
               yield { type: "text", text: parsed.delta.text };
             } else if (parsed.delta?.type === "input_json_delta" && currentTool) {
               // Anthropic streams partial JSON; we accumulate then emit at stop.

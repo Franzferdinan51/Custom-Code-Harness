@@ -18,7 +18,7 @@ import { loadContextFiles, formatContextForPrompt } from "./agent/context.js";
 import { loadExtensions } from "./agent/extensions.js";
 import { compact as runCompaction, roughTokenCount, previewCompaction, formatCompactionPreview } from "./agent/compaction.js";
 import { paths } from "./config/paths.js";
-import type { ChatMessage, ToolCall, ToolResult, Provider } from "./types.js";
+import type { ChatMessage, ToolCall, ToolResult, Provider, ProviderRequest } from "./types.js";
 import { CostTracker, formatUSD, callCost } from "./agent/cost.js";
 import { DEFAULT_APPROVAL, type ApprovalConfig } from "./agent/approval.js";
 import { saveSettings } from "./config/settings.js";
@@ -38,6 +38,28 @@ export interface RuntimeOutputHandler {
   onInfo?: (text: string) => void;
   onError?: (error: Error) => void;
   onTurnEnd?: () => void;
+}
+
+/**
+ * Result of a `runDiag()` connectivity / latency probe. Returned from
+ * `HarnessRuntime.runDiag()` and surfaced unchanged by the `/diag` slash
+ * command, the `ch diag` CLI subcommand, and the `GET /v1/diag` HTTP
+ * endpoint. Shape is stable — external dashboards can depend on it.
+ */
+export interface DiagResult {
+  ok: boolean;
+  provider?: string;
+  model?: string;
+  /** Time from request start to the first streamed event. 0 on error. */
+  firstByteMs: number;
+  /** Time from request start to completion. */
+  totalMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Truncated model reply (usually "pong" for the canned prompt). */
+  reply?: string;
+  /** Set when `ok === false`. */
+  error?: string;
 }
 
 export class HarnessRuntime implements SlashRuntime {
@@ -166,6 +188,80 @@ export class HarnessRuntime implements SlashRuntime {
       return previewStr + "\n\n  ✗ compaction failed: " + (e as Error).message;
     }
   }
+
+  /**
+   * Run a connectivity / latency check against the current default
+   * provider. Streams a single tiny prompt and reports:
+   *   - whether the provider responded successfully
+   *   - first-byte latency (ms from request start to first event)
+   *   - total latency (ms from request start to done)
+   *   - input / output / total tokens
+   *   - the model's literal reply (typically "ok" or similar)
+   *
+   * The HTTP `/v1/diag` endpoint and the `ch diag` CLI subcommand both
+   * delegate to this so the three surfaces (slash, CLI, REST) return
+   * the exact same shape.
+   */
+  async runDiag(): Promise<DiagResult> {
+    const empty: DiagResult = { ok: false, firstByteMs: 0, totalMs: 0, inputTokens: 0, outputTokens: 0 };
+    const provider = this.providerRegistry.default();
+    if (!provider) {
+      return { ...empty, provider: this.providerId(), model: this.model(), error: "no provider configured" };
+    }
+    const model = this.settings.defaultModel;
+    if (!model) {
+      return { ...empty, provider: provider.id, model: "(none)", error: "no model configured — run /model" };
+    }
+    const started = Date.now();
+    let firstByteMs: number | null = null;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let reply = "";
+    let sawAnyEvent = false;
+    const ac = new AbortController();
+    const timeout = setTimeout(() => ac.abort(new Error("diag timeout after 30s")), 30_000);
+    try {
+      const req: ProviderRequest = {
+        model,
+        system: "You are a connectivity check. Reply with the single word: pong",
+        messages: [{ role: "user", content: "ping" }],
+        tools: [],
+        maxTokens: 32,
+        temperature: 0,
+        signal: ac.signal,
+      };
+      for await (const ev of provider.stream(req)) {
+        if (!sawAnyEvent) { firstByteMs = Date.now() - started; sawAnyEvent = true; }
+        if (ev.type === "text") reply += ev.text ?? "";
+        else if (ev.type === "usage" && ev.usage) { inputTokens = ev.usage.inputTokens; outputTokens = ev.usage.outputTokens; }
+        else if (ev.type === "error") throw new Error(ev.error?.message ?? "provider error");
+      }
+      return {
+        ok: true,
+        provider: provider.id,
+        model,
+        firstByteMs: firstByteMs ?? 0,
+        totalMs: Date.now() - started,
+        inputTokens,
+        outputTokens,
+        reply: reply.trim().slice(0, 200),
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        provider: provider.id,
+        model,
+        firstByteMs: firstByteMs ?? 0,
+        totalMs: Date.now() - started,
+        inputTokens,
+        outputTokens,
+        error: (e as Error).message,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async setSession(id: string): Promise<void> { this.session = await Session.open(id); this.lastUserPrompt = null; }
   sessionId(): string | undefined { return this.session?.id; }
   clearHistory(): void { void Session.create({ cwd: this.cwd }).then((s) => { this.session = s; this.lastUserPrompt = null; }); }
@@ -325,12 +421,21 @@ export class HarnessRuntime implements SlashRuntime {
 
   // ---- Internals ----
 
-  private buildToolServices(provider: Provider, model: string) {
+  /**
+   * Build the `services` map that tools receive in their ToolContext.
+   * Public so unit tests can exercise `spawnSubagent` and the other
+   * service functions directly (without going through the agent loop).
+   */
+  buildToolServices(provider: Provider, model: string) {
     const rt = this;
     return {
       spawnSubagent: async (input: { agent: string; prompt: string; model?: string; providerId?: string; cwd?: string }) => {
         const ac = new AbortController();
-        process.once("SIGINT", () => ac.abort());
+        // Stash the listener so we can remove the EXACT same one in `finally`.
+        // (Previously this used an inline arrow — removeListener could never
+        //  match it, so SIGINT listeners accumulated across sub-agent calls.)
+        const onSig = () => ac.abort();
+        process.once("SIGINT", onSig);
         const id = input.agent + ":" + Date.now().toString(36);
         rt.activeSubagents.set(id, { prompt: input.prompt, startedAt: Date.now(), status: "running" });
         try {
@@ -343,7 +448,7 @@ export class HarnessRuntime implements SlashRuntime {
           setTimeout(() => rt.activeSubagents.delete(id), 5_000);
           return r;
         } finally {
-          process.removeListener("SIGINT", () => ac.abort());
+          process.removeListener("SIGINT", onSig);
         }
       },
       loadSkill: async (name: string) => {
@@ -412,7 +517,12 @@ export class HarnessRuntime implements SlashRuntime {
     return chain;
   }
 
-  private async buildSystemPrompt(): Promise<string> {
+  /**
+   * Build the system prompt used for the current model turn. Public so
+   * `ch run --json` and other one-shot modes can stream with the same
+   * system prompt as the REPL/TUI/Web UI.
+   */
+  async buildSystemPrompt(): Promise<string> {
     const parts: string[] = [];
     parts.push("You are CodingHarness, a coding assistant running in a terminal.");
     parts.push("Working directory: " + this.cwd);

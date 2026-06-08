@@ -7,7 +7,7 @@
 // accepted for backward compatibility.
 
 import { parseArgs } from "node:util";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import * as fs from "node:fs";
@@ -86,6 +86,14 @@ registerSubcommand("doctor", "Run diagnostics and print the report.",
   "ch doctor",
   async (ctx) => { return runDoctorCmd(ctx); });
 
+registerSubcommand("diag", "Run a connectivity / latency check against the current provider + model.",
+  "ch diag [--json]",
+  async (ctx) => { return runDiagCmd(ctx); });
+
+registerSubcommand("tokens", "Show the rough token count of the active session's messages.",
+  "ch tokens",
+  async (ctx) => { return runTokensCmd(ctx); });
+
 registerSubcommand("skills", "List installed skills.",
   "ch skills",
   async (ctx) => { return listSkillsCmd(ctx); });
@@ -155,7 +163,7 @@ function showHelp(cmd?: string): number {
     "",
     "Subcommands:",
   ];
-    const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "desktop", "mcp", "update", "export"];
+    const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "diag", "tokens", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "desktop", "mcp", "update", "export"];
   for (const name of order) {
     const s = SUBCOMMANDS.get(name);
     if (!s) continue;
@@ -372,7 +380,7 @@ async function runOneShot(ctx: SubcommandContext, mode: "run" | "agent" | "code"
     try {
       const result = await runAgent({
         provider, model,
-        system: await runtime["buildSystemPrompt"](),
+        system: await runtime.buildSystemPrompt(),
         messages,
         tools: runtime.tools,
         cwd: ctx.cwd,
@@ -528,7 +536,7 @@ async function runInitCmd(ctx: SubcommandContext): Promise<number> {
 async function runServeCmd(ctx: SubcommandContext): Promise<number> {
   const port = parseInt(ctx.port ?? "7777", 10);
   const host = ctx.host ?? "127.0.0.1";
-  const noOpen = !!(ctx as { noOpen?: boolean }).noOpen;
+  const noOpen = !!ctx.noOpen;
   if (!Number.isFinite(port) || port < 1 || port > 65535) {
     process.stderr.write("error: --port must be 1..65535\n");
     return 2;
@@ -567,14 +575,14 @@ async function runServeCmd(ctx: SubcommandContext): Promise<number> {
  * drive the same tools.
  */
 async function runMcpCmd(ctx: SubcommandContext): Promise<number> {
-  const stdio = !!(ctx as { stdio?: boolean }).stdio;
-  const approveBash = !!(ctx as { approveBash?: boolean }).approveBash;
+  const stdio = !!ctx.stdio;
+  const approveBash = !!ctx.approveBash;
   if (stdio) {
     return runMcpStdio(ctx, approveBash);
   }
   const port = parseInt(ctx.port ?? "3456", 10);
   const host = ctx.host ?? "127.0.0.1";
-  const allowRemote = !!(ctx as { allowRemote?: boolean }).allowRemote;
+  const allowRemote = !!ctx.allowRemote;
   if (!Number.isFinite(port) || port < 1 || port > 65535) {
     process.stderr.write("error: --port must be 1..65535\n");
     return 2;
@@ -642,7 +650,6 @@ async function runWebCmd(ctx: SubcommandContext): Promise<number> {
 }
 
 function openBrowser(url: string): Promise<void> {
-  const { execFile } = require("node:child_process") as typeof import("node:child_process");
   return new Promise<void>((resolve, reject) => {
     const cmd = process.platform === "darwin" ? "open" :
                 process.platform === "win32" ? "start" : "xdg-open";
@@ -652,10 +659,77 @@ function openBrowser(url: string): Promise<void> {
 }
 
 async function runUpdateCmd(ctx: SubcommandContext): Promise<number> {
-  const channel = (ctx as { channel?: string }).channel ?? "stable";
-  const checkOnly = !!(ctx as { check?: boolean }).check;
+  // `channel` and `check` are parsed by the legacy flag-mode parseArgs, not
+  // buildContext — read them defensively so a future move doesn't silently
+  // break this path.
+  const legacyCtx = ctx as SubcommandContext & { channel?: string; check?: boolean };
+  const channel = legacyCtx.channel ?? "stable";
+  const checkOnly = !!legacyCtx.check;
   const { runUpdate } = await import("./updater.js");
   return runUpdate({ cwd: ctx.cwd, channel, checkOnly });
+}
+
+async function runDiagCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const settings = loadSettings();
+  if (ctx.provider) settings.defaultProvider = ctx.provider;
+  if (ctx.model) settings.defaultModel = ctx.model;
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: true });
+  const r = await runtime.runDiag();
+  if (ctx.json) {
+    process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+  } else {
+    if (!r.ok) {
+      process.stdout.write(c.red("✗ diag failed") + "\n");
+      process.stdout.write("  provider: " + (r.provider ?? "(none)") + "\n");
+      process.stdout.write("  model:    " + (r.model ?? "(none)") + "\n");
+      process.stdout.write("  error:    " + (r.error ?? "(unknown)") + "\n");
+    } else {
+      process.stdout.write(c.green("✓ diag ok") + "\n");
+      process.stdout.write("  provider:  " + r.provider + "\n");
+      process.stdout.write("  model:     " + r.model + "\n");
+      process.stdout.write("  first-byte:" + r.firstByteMs + " ms\n");
+      process.stdout.write("  total:     " + r.totalMs + " ms\n");
+      process.stdout.write("  tokens:    " + r.inputTokens + " in / " + r.outputTokens + " out\n");
+      if (r.reply) process.stdout.write("  reply:     " + JSON.stringify(r.reply) + "\n");
+    }
+  }
+  return r.ok ? 0 : 1;
+}
+
+async function runTokensCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const settings = loadSettings();
+  if (ctx.provider) settings.defaultProvider = ctx.provider;
+  if (ctx.model) settings.defaultModel = ctx.model;
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: false });
+  const id = runtime.sessionId();
+  if (!id) {
+    process.stderr.write("no active session — start one with `ch chat` or pass a prompt\n");
+    return 1;
+  }
+  const { Session, sessionToMessages } = await import("./agent/session.js");
+  const { roughTokenCount } = await import("./agent/compaction.js");
+  const s = await Session.open(id);
+  const msgs = sessionToMessages(s);
+  if (msgs.length === 0) {
+    process.stdout.write("session has no messages yet\n");
+    return 0;
+  }
+  const total = roughTokenCount(msgs);
+  if (ctx.json) {
+    process.stdout.write(JSON.stringify({ session: id, messages: msgs.length, tokens: total, breakdown: msgs.map((m) => ({ role: m.role, tokens: roughTokenCount([m]) })) }, null, 2) + "\n");
+  } else {
+    process.stdout.write("session:   " + id + "\n");
+    process.stdout.write("messages:  " + msgs.length + "\n");
+    process.stdout.write("tokens:    " + total + " (rough)\n");
+    process.stdout.write("by role:\n");
+    for (const m of msgs.slice(-10)) {
+      process.stdout.write("  " + m.role.padEnd(10) + roughTokenCount([m]) + "\n");
+    }
+    if (msgs.length > 10) process.stdout.write("  …(" + (msgs.length - 10) + " earlier messages omitted)\n");
+  }
+  return 0;
 }
 
 /**

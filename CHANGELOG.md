@@ -7,6 +7,79 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **`/diag` slash command + `ch diag` CLI subcommand + `GET /v1/diag`
+  HTTP endpoint** (`src/runtime.ts`, `src/slash/builtin.ts`,
+  `src/cli.ts`, `src/server.ts`, `src/slash/registry.ts`): a single
+  connectivity / latency probe that hits the current default provider
+  with a tiny canned prompt and reports whether the call succeeded,
+  first-byte latency, total latency, input / output tokens, and the
+  model's literal reply. The three surfaces (slash, CLI, REST) all
+  delegate to `HarnessRuntime.runDiag()` so dashboards, scripts, and
+  the TUI see the exact same shape. `ch diag --json` for
+  machine-readable output; the HTTP endpoint returns 503 on failure
+  so monitoring can alert on it. The new `DiagResult` interface is
+  stable and exported.
+- **`/tokens` slash command + `ch tokens` CLI subcommand + `GET
+  /v1/tokens` HTTP endpoint** (`src/slash/builtin.ts`, `src/cli.ts`,
+  `src/server.ts`): rough token count of the active session's
+  model-visible messages, with a per-role breakdown for the last
+  ten messages. Useful for pre-compact checks and per-turn cost
+  budgeting. `ch tokens --json` for machine-readable output. Backed
+  by the existing `roughTokenCount()` from `compaction.ts` so the
+  number matches what `/compact` would actually compact.
+- **`buildToolServices()` is now public on `HarnessRuntime`** (was
+  `private`). The unit tests for the SIGINT-listener-leak fix needed
+  to drive the spawn-subagent service directly; the public method
+  makes that possible without exposing runtime internals to user
+  code. `buildSystemPrompt()` is also public — `ch run --json` and
+  one-shot modes need to stream with the same system prompt as the
+  REPL, and the bracket-notation escape hatch was brittle.
+
+### Fixed
+
+- **ESM `require()` calls in two source files** (`src/cli.ts:645`,
+  `src/slash/builtin.ts:681`). Both used `require("node:fs")` /
+  `require("node:child_process")` inside an ES module
+  (`"type": "module"`). They worked in Bun and via tsx's CJS
+  interop, but pure-Node ESM contexts would throw
+  `ReferenceError: require is not defined`. Replaced with proper
+  top-level `import` statements.
+- **Sub-agent SIGINT listener leak** (`src/runtime.ts`). The
+  `spawnSubagent` service in `buildToolServices` called
+  `process.once("SIGINT", () => ac.abort())` and then in the
+  `finally` block called
+  `process.removeListener("SIGINT", () => ac.abort())` — but
+  `removeListener` requires the SAME function reference, and the
+  inline arrow on the remove line is a different function. Result:
+  every spawned sub-agent left behind a permanent SIGINT listener.
+  Stored the function in a `const onSig` so the `removeListener`
+  call actually matches. Added a regression test that spawns 15
+  sub-agents across 3 runtimes and asserts the listener count is
+  unchanged.
+- **`runDiag()` shape**: when no provider or model is configured,
+  the result now includes `firstByteMs`, `totalMs`, `inputTokens`,
+  and `outputTokens` (always zero on error) so consumers don't
+  have to special-case the error path.
+- **Roundabout `fs/promises` import in session reader**
+  (`src/agent/session.ts:266`). The function used
+  `await import("node:fs/promises").then((m) => m.readFile(...))`
+  to read the sidecar meta file, even though `readFile` was
+  already imported at the top of the same file. Replaced with the
+  imported binding.
+- **Stale `(ctx as { stdio?: boolean })` casts in `src/cli.ts`**.
+  The casts predated the addition of `stdio`, `approveBash`, and
+  `allowRemote` to the `SubcommandContext` interface. Dropped the
+  casts and read the typed fields directly. Same fix for
+  `runUpdateCmd`'s `channel` / `check` (read with a typed alias
+  instead of an inline `as`).
+- **Dead `currentText` accumulator in `src/providers/anthropic.ts`**
+  and the dead `p.message.role === "tool"` branch in
+  `payloadKindToType` (`src/agent/session.ts`). The role is narrowed
+  to `user | assistant | system` by the discriminated union, so
+  the `tool` check was unreachable. Removed.
+
+### Added (continued — from prior unreleased work)
+
 - **Electron desktop features** (`electron/desktop-features.cjs`,
   `electron/main.cjs`, `electron/preload.cjs`, `src/web/{index.html,
   app.js, styles.css}`): five new OS-level capabilities modeled on

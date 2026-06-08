@@ -13,6 +13,7 @@ import { compact as runCompaction, roughTokenCount, defaultCutoff, previewCompac
 import { CronStore, formatSchedule, parseHumanSchedule, nextRun } from "../agent/cron.js";
 import { expandTemplate, loadPromptTemplates } from "../agent/prompts.js";
 import { runDiagnostics, renderDiagnostics } from "../doctor.js";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 
 // ---------- /help ----------
 
@@ -670,6 +671,67 @@ const doctorCommand: SlashCommand = {
   },
 };
 
+// ---------- /tokens ----------
+
+const tokensCommand: SlashCommand = {
+  name: "tokens",
+  description: "Show the rough token count of the active session's messages.",
+  group: "status",
+  usage: "/tokens",
+  async run(_a, ctx) {
+    const id = ctx.runtime?.().sessionId();
+    if (!id) return "no active session — start one with /new or pass a prompt";
+    const s = await Session.open(id);
+    const msgs = sessionToMessages(s);
+    if (msgs.length === 0) return "session has no messages yet";
+    const tokens = roughTokenCount(msgs);
+    const breakdown: Array<{ role: string; tokens: number; chars: number }> = [];
+    for (const m of msgs) {
+      const c = (typeof m.content === "string" ? m.content : JSON.stringify(m.content)).length;
+      breakdown.push({ role: m.role, tokens: roughTokenCount([m]), chars: c });
+    }
+    const lines: string[] = [];
+    lines.push(c.bold("Session tokens (rough)"));
+    lines.push("  total:    " + tokens + " (~" + Math.round(tokens * 4) + " chars)");
+    lines.push("  messages: " + msgs.length);
+    lines.push("  by role:");
+    for (const b of breakdown.slice(-10)) {
+      lines.push("    " + b.role.padEnd(10) + b.tokens + " (~" + b.chars + " chars)");
+    }
+    if (breakdown.length > 10) lines.push("    …(" + (breakdown.length - 10) + " earlier messages omitted)");
+    return lines.join("\n");
+  },
+};
+
+const diagCommand: SlashCommand = {
+  name: "diag",
+  description: "Connectivity / latency check against the current provider + model.",
+  group: "tools",
+  usage: "/diag",
+  async run(_a, ctx) {
+    const rt = ctx.runtime?.() as { runDiag?: () => Promise<{ ok: boolean; provider?: string; model?: string; firstByteMs: number; totalMs: number; inputTokens: number; outputTokens: number; reply?: string; error?: string }> } | undefined;
+    if (!rt?.runDiag) return "(diag not available in this runtime)";
+    const r = await rt.runDiag();
+    if (!r.ok) {
+      return [
+        c.red("✗ diag failed"),
+        "  provider: " + (r.provider ?? "(none)"),
+        "  model:    " + (r.model ?? "(none)"),
+        "  error:    " + (r.error ?? "(unknown)"),
+      ].join("\n");
+    }
+    return [
+      c.green("✓ diag ok"),
+      "  provider:  " + r.provider,
+      "  model:     " + r.model,
+      "  first-byte:" + r.firstByteMs + " ms",
+      "  total:     " + r.totalMs + " ms",
+      "  tokens:    " + r.inputTokens + " in / " + r.outputTokens + " out",
+      r.reply ? "  reply:     " + JSON.stringify(r.reply) : "",
+    ].filter(Boolean).join("\n");
+  },
+};
+
 // ---------- /init ----------
 
 const initCommand: SlashCommand = {
@@ -678,7 +740,6 @@ const initCommand: SlashCommand = {
   group: "tools",
   run(_a, ctx) {
     const path = ctx.cwd + "/.codingharness/AGENTS.md";
-    const { mkdirSync, writeFileSync, existsSync } = require("node:fs") as typeof import("node:fs");
     if (existsSync(path)) return path + " already exists";
     mkdirSync(ctx.cwd + "/.codingharness", { recursive: true });
     writeFileSync(path, [
@@ -853,6 +914,8 @@ BUILTIN_REGISTRY.register(skillCommand);
 BUILTIN_REGISTRY.register(agentsCommand);
 BUILTIN_REGISTRY.register(cronCommand);
 BUILTIN_REGISTRY.register(doctorCommand);
+BUILTIN_REGISTRY.register(diagCommand);
+BUILTIN_REGISTRY.register(tokensCommand);
 BUILTIN_REGISTRY.register(initCommand);
 BUILTIN_REGISTRY.register(treeCommand);
 BUILTIN_REGISTRY.register(forkCommand);

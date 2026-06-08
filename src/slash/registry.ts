@@ -64,6 +64,13 @@ export interface SlashRuntime {
   setGoalActivity?(state: GoalActivityState | null): void;
   /** Read current goal-mode activity, if any. */
   getGoalActivity?(): GoalActivityState | null;
+  /**
+   * Run a connectivity / latency check against the current default
+   * provider. Returns the structured result; the `/diag` slash command
+   * formats it for the TUI. Returns `null` if the runtime does not
+   * support it (e.g. in tests with a stubbed runtime).
+   */
+  runDiag?(): Promise<import("../runtime.js").DiagResult>;
 }
 
 export interface SlashCommand {

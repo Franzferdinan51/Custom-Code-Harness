@@ -3,7 +3,7 @@
 // fork, and rewind without copying the whole history.
 
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, rename, stat, unlink } from "node:fs/promises";
+import { mkdir, rename, readFile, stat, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
@@ -248,7 +248,11 @@ export class Session {
 
 function payloadKindToType(p: SessionPayload): EntryType {
   switch (p.kind) {
-    case "message": return p.message.role === "user" ? "user" : p.message.role === "tool" ? "tool" : "assistant";
+    case "message":
+      // `message` payloads carry user / assistant / system turns. Tool
+      // results are stored separately as { kind: "tool_result" }, so
+      // the role discriminator only ever lands on those three values.
+      return p.message.role === "user" ? "user" : "assistant";
     case "tool_result": return "tool";
     case "tool_call_record": return "assistant";
     case "system": return "system";
@@ -263,7 +267,7 @@ async function readMetaFromFile(file: string): Promise<SessionMeta> {
   const metaFile = `${file}.meta.json`;
   if (existsSync(metaFile)) {
     try {
-      const j = JSON.parse(await import("node:fs/promises").then((m) => m.readFile(metaFile, "utf-8")));
+      const j = JSON.parse(await readFile(metaFile, "utf-8"));
       return j as SessionMeta;
     } catch { /* fall through */ }
   }

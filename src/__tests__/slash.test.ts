@@ -43,7 +43,7 @@ test("tryParseSlash returns null for non-slash input", () => {
 
 test("builtin registry has all expected commands", () => {
   const names = BUILTIN_REGISTRY.names();
-  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "loop", "cost", "approval"]) {
+  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "cost", "approval"]) {
     assert.ok(names.includes(want), "missing /" + want);
   }
 });
@@ -63,9 +63,27 @@ test("/commands renders grouped command output", async () => {
   assert.ok(commands);
   const out = await commands!.run("", { cwd: "/" });
   assert.ok(typeof out === "string");
-  assert.match(out!, /Slash commands:/);
-  assert.match(out!, /WORKFLOW/);
+  assert.match(out!, /Quick start/);
+  assert.match(out!, /Full reference/);
   assert.match(out!, /\/goal/);
+  assert.match(out!, /\/plan/);
+  assert.match(out!, /\/build/);
+});
+
+test("/plan and /build toggle composer mode in runtime", async () => {
+  let mode: "plan" | "build" = "build";
+  const rt = {
+    setComposerMode(next: "plan" | "build") { mode = next; },
+  };
+  const plan = BUILTIN_REGISTRY.get("plan");
+  const build = BUILTIN_REGISTRY.get("build");
+  assert.ok(plan);
+  assert.ok(build);
+  const out1 = await plan!.run("", { cwd: "/", runtime: () => rt as never });
+  const out2 = await build!.run("", { cwd: "/", runtime: () => rt as never });
+  assert.equal(mode, "build");
+  assert.match(out1!, /workflow set to plan/);
+  assert.match(out2!, /workflow set to build/);
 });
 
 test("/goal uses internal prompts instead of recursively invoking slash commands", async () => {

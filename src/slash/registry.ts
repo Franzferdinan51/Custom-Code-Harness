@@ -43,6 +43,10 @@ export interface SlashRuntime {
   sendPromptWithCapture(prompt: string): Promise<string>;
   /** Set the thinking level. */
   setThinking?(level: string): void;
+  /** Set the workflow framing used for plain prompts. */
+  setComposerMode?(mode: "plan" | "build"): void;
+  /** Read the current workflow framing. */
+  getComposerMode?(): "plan" | "build";
   /** Set the personality. null clears. */
   setPersonality?(name: string | null): void;
   /** Persistent memory store. */

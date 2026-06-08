@@ -17,27 +17,116 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 
 // ---------- /help ----------
 
+const HELP_GROUPS: Array<{ id: string; title: string; blurb: string }> = [
+  { id: "workflow", title: "Workflow",  blurb: "Run the agent at different levels of autonomy." },
+  { id: "session",  title: "Session",   blurb: "Control the conversation history and branches." },
+  { id: "model",    title: "Model",     blurb: "Switch provider or model on the fly." },
+  { id: "context",  title: "Context",   blurb: "Manage memory, skills, and loaded context." },
+  { id: "tools",    title: "Tools",     blurb: "Sub-agents, approval, and shell policy." },
+  { id: "settings", title: "Settings",  blurb: "Personality, thinking level, and approval." },
+  { id: "status",   title: "Status",    blurb: "Inspect cost, tokens, sessions, and health." },
+];
+
+/** The 4 commands we show to a brand-new user. Kept in one place so the
+ *  TUI banner, the `/help` quick-start, the web UI onboarding card, and
+ *  the `ch welcome` subcommand all stay in sync. */
+export const QUICK_START: ReadonlyArray<{ cmd: string; label: string; hint: string }> = [
+  { cmd: "help",     label: "/help",     hint: "Show all commands (grouped)" },
+  { cmd: "model",    label: "/model",    hint: "Switch model — /model <name>" },
+  { cmd: "goal",     label: "/goal",     hint: "Multi-step objective — /goal <task>" },
+  { cmd: "status",   label: "/status",   hint: "Session, model, and tool summary" },
+];
+
 const helpCommand: SlashCommand = {
   name: "help",
-  description: "Show available slash commands.",
+  description: "Show available slash commands (or details on one).",
   group: "session",
   usage: "/help [command]",
   run(args, ctx) {
     const want = args.trim();
     if (want) {
       const cmd = BUILTIN_REGISTRY.get(want);
-      if (!cmd) return "no such command: /" + want;
-      return ["/" + cmd.name + " — " + cmd.description, cmd.usage ? "  " + cmd.usage : ""].filter(Boolean).join("\n");
+      if (!cmd) return "no such command: /" + want + " — try /help for the full list.";
+      const lines = [
+        "/" + cmd.name + " — " + cmd.description,
+        cmd.usage ? "  " + cmd.usage : "  /" + cmd.name,
+        cmd.group ? "  group: " + cmd.group : "",
+        "",
+        "Tip: /help alone shows every command, grouped.",
+      ].filter(Boolean);
+      return lines.join("\n");
     }
-    const lines: string[] = ["Built-in commands:"];
-    for (const c of BUILTIN_REGISTRY.list()) {
-      const use = c.usage ? "  " + c.usage : "  /" + c.name;
-      lines.push(use.padEnd(38) + c.description);
+    // Quick start at the top, then grouped reference.
+    const lines: string[] = [];
+    lines.push("Quick start — type these to get going:");
+    for (const q of QUICK_START) {
+      lines.push("  " + q.label.padEnd(14) + q.hint);
     }
     lines.push("");
-    lines.push("Type /help <command> for details on a specific command.");
+    lines.push("Full reference (use /help <name> for details on any command):");
+    const byGroup = new Map<string, SlashCommand[]>();
+    for (const c of BUILTIN_REGISTRY.list()) {
+      const g = c.group ?? "other";
+      const arr = byGroup.get(g) ?? [];
+      arr.push(c);
+      byGroup.set(g, arr);
+    }
+    for (const g of HELP_GROUPS) {
+      const items = byGroup.get(g.id);
+      if (!items?.length) continue;
+      lines.push("");
+      lines.push(g.title + " — " + g.blurb);
+      for (const c of items) {
+        const use = c.usage ? c.usage : "/" + c.name;
+        lines.push("  " + use.padEnd(34) + c.description);
+      }
+    }
+    // Catch any commands that landed in a group not in HELP_GROUPS.
+    const known = new Set(HELP_GROUPS.map((g) => g.id));
+    const extra = [...byGroup.entries()].filter(([k]) => !known.has(k));
+    if (extra.length > 0) {
+      lines.push("");
+      lines.push("Other:");
+      for (const [, items] of extra) {
+        for (const c of items) {
+          const use = c.usage ? c.usage : "/" + c.name;
+          lines.push("  " + use.padEnd(34) + c.description);
+        }
+      }
+    }
+    lines.push("");
+    lines.push("Keys: Tab completes · Ctrl+G inserts /goal · Ctrl+C aborts · Ctrl+D quits.");
     return lines.join("\n");
   },
+};
+
+// ---------- /welcome ----------
+
+/** Print a short, easy-to-scan quick-start. Designed for first-run and
+ *  "I forgot how to use this" moments — it fits in 6 lines and points
+ *  at /help for the full reference. Shared with the TUI banner and the
+ *  `ch welcome` CLI subcommand. */
+export function renderQuickStart(opts: { title?: string; showHeader?: boolean } = {}): string {
+  const title = opts.title ?? "Welcome to CodingHarness";
+  const lines: string[] = [];
+  if (opts.showHeader !== false) {
+    lines.push(title);
+    lines.push("A few things to try:");
+  }
+  for (const q of QUICK_START) {
+    lines.push("  " + q.label.padEnd(14) + q.hint);
+  }
+  lines.push("");
+  lines.push("Type any prompt to start. Inside the TUI, /help shows every command.");
+  return lines.join("\n");
+}
+
+const welcomeCommand: SlashCommand = {
+  name: "welcome",
+  description: "Show the quick-start card (4 commands to get going).",
+  group: "session",
+  usage: "/welcome",
+  run() { return renderQuickStart({ title: "Quick start" }); },
 };
 
 // ---------- /clear / /new / /reset ----------
@@ -280,6 +369,28 @@ const providerCommand: SlashCommand = {
     const parts = trimmed.split(/\s+/);
     await rt.setProviderAndModel(parts[0]!, parts[1]);
     return "provider set to " + parts[0] + (parts[1] ? " (model " + parts[1] + ")" : "");
+  },
+};
+
+const planModeCommand: SlashCommand = {
+  name: "plan",
+  description: "Switch the current workflow framing to plan mode.",
+  group: "workflow",
+  usage: "/plan",
+  run(_args, ctx) {
+    ctx.runtime?.().setComposerMode?.("plan");
+    return "workflow set to plan";
+  },
+};
+
+const buildModeCommand: SlashCommand = {
+  name: "build",
+  description: "Switch the current workflow framing to build mode.",
+  group: "workflow",
+  usage: "/build",
+  run(_args, ctx) {
+    ctx.runtime?.().setComposerMode?.("build");
+    return "workflow set to build";
   },
 };
 
@@ -860,29 +971,8 @@ const commandsCommand: SlashCommand = {
   group: "session",
   usage: "/commands [name]",
   run(args, ctx) {
-    const want = args.trim();
-    if (want) return helpCommand.run(want, ctx);
-    const groups = new Map<string, SlashCommand[]>();
-    for (const cmd of BUILTIN_REGISTRY.list()) {
-      const group = cmd.group ?? "other";
-      const existing = groups.get(group) ?? [];
-      existing.push(cmd);
-      groups.set(group, existing);
-    }
-    const order = ["workflow", "session", "model", "context", "tools", "settings", "status", "other"];
-    const lines: string[] = ["Slash commands:"];
-    for (const group of order) {
-      const items = groups.get(group);
-      if (!items?.length) continue;
-      lines.push("");
-      lines.push(group.toUpperCase());
-      for (const cmd of items) {
-        lines.push(("  /" + cmd.name).padEnd(18) + cmd.description);
-      }
-    }
-    lines.push("");
-    lines.push("Use /commands <name> or /help <name> for details.");
-    return lines.join("\n");
+    // Delegate to /help so the grouping + quick-start stay in lockstep.
+    return helpCommand.run(args, ctx);
   },
 };
 
@@ -891,6 +981,7 @@ const commandsCommand: SlashCommand = {
 export const BUILTIN_REGISTRY = new SlashRegistry();
 BUILTIN_REGISTRY.register(commandsCommand);
 BUILTIN_REGISTRY.register(helpCommand);
+BUILTIN_REGISTRY.register(welcomeCommand);
 BUILTIN_REGISTRY.register(clearCommand);
 BUILTIN_REGISTRY.register(newCommand);
 BUILTIN_REGISTRY.register(resetCommand);
@@ -901,6 +992,8 @@ BUILTIN_REGISTRY.register(sessionsCommand);
 BUILTIN_REGISTRY.register(resumeCommand);
 BUILTIN_REGISTRY.register(modelCommand);
 BUILTIN_REGISTRY.register(providerCommand);
+BUILTIN_REGISTRY.register(planModeCommand);
+BUILTIN_REGISTRY.register(buildModeCommand);
 BUILTIN_REGISTRY.register(goalCommand);
 BUILTIN_REGISTRY.register(loopCommand);
 BUILTIN_REGISTRY.register(statusCommand);

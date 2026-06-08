@@ -85,6 +85,7 @@ export class HarnessRuntime implements SlashRuntime {
   private lastTokensOut = 0;
   private verbose = false;
   private trace = false;
+  private composerMode: "plan" | "build" = "build";
   /** Cumulative usage for the lifetime of this Runtime. */
   readonly cost = new CostTracker();
   /** Currently-running sub-agents (for the sidebar). */
@@ -277,6 +278,8 @@ export class HarnessRuntime implements SlashRuntime {
     process.stdout.write(s + "\n");
   }
   setThinking(level: string): void { this.thinking = level; }
+  setComposerMode(mode: "plan" | "build"): void { this.composerMode = mode === "plan" ? "plan" : "build"; }
+  getComposerMode(): "plan" | "build" { return this.composerMode; }
   setPersonality(name: string | null): void { this.personality = name; }
 
   // ---- The real work ----

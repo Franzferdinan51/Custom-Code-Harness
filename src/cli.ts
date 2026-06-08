@@ -86,6 +86,10 @@ registerSubcommand("doctor", "Run diagnostics and print the report.",
   "ch doctor",
   async (ctx) => { return runDoctorCmd(ctx); });
 
+registerSubcommand("welcome", "Print the quick-start card (4 commands to get going).",
+  "ch welcome",
+  async (_ctx) => { return runWelcomeCmd(); });
+
 registerSubcommand("diag", "Run a connectivity / latency check against the current provider + model.",
   "ch diag [--json]",
   async (ctx) => { return runDiagCmd(ctx); });
@@ -156,21 +160,43 @@ function showHelp(cmd?: string): number {
     process.stdout.write(s.usage + "\n\n" + s.description + "\n");
     return 0;
   }
+  // Grouped subcommand layout. Easy to scan; new users see "Get started"
+  // first, then categories. Mirrors the desktop app's Quick Actions row.
+  const groups: Array<{ title: string; blurb: string; names: string[] }> = [
+    { title: "Get started", blurb: "Open the harness.",
+      names: ["chat", "tui", "repl", "web", "desktop", "welcome"] },
+    { title: "Run a prompt", blurb: "One-shot, autonomous, or multi-step.",
+      names: ["run", "agent", "code", "goal", "loop"] },
+    { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling.",
+      names: ["sessions", "memory", "skills", "agents", "skill", "cron", "init", "export"] },
+    { title: "Health",         blurb: "Connectivity and diagnostics.",
+      names: ["doctor", "diag", "tokens"] },
+    { title: "Integrate",      blurb: "MCP server, updates.",
+      names: ["mcp", "update"] },
+  ];
   const lines: string[] = [
     "CodingHarness — a versatile terminal coding harness.",
     "",
     "Usage: ch <subcommand> [args...]",
     "",
-    "Subcommands:",
+    "Quick start:",
+    "  ch                        # open the TUI (or `ch web` for the browser UI)",
+    "  ch agent \"fix the login bug\"  # one-shot autonomous run",
+    "  ch goal \"wire OAuth\"      # multi-step plan-and-execute",
+    "  ch doctor                 # verify provider + env",
+    "",
   ];
-    const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "diag", "tokens", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "desktop", "mcp", "update", "export"];
-  for (const name of order) {
-    const s = SUBCOMMANDS.get(name);
-    if (!s) continue;
-    lines.push("  " + name.padEnd(10) + s.description);
+  for (const g of groups) {
+    lines.push(g.title + " — " + g.blurb);
+    for (const name of g.names) {
+      const s = SUBCOMMANDS.get(name);
+      if (!s) continue;
+      lines.push("  " + name.padEnd(10) + s.description);
+    }
+    lines.push("");
   }
-  lines.push("");
-  lines.push("Run `ch help <subcommand>` for details. Inside the TUI, type `/help` for slash commands.");
+  lines.push("Run `ch help <subcommand>` for details on a specific command.");
+  lines.push("Inside the TUI, type `/help` for the slash-command reference.");
   lines.push("");
   lines.push("Common options (work with most subcommands):");
   lines.push("  --cwd <path>          Working directory (default: process.cwd)");
@@ -462,6 +488,17 @@ async function runDoctorCmd(ctx: SubcommandContext): Promise<number> {
   const { runDiagnostics, renderDiagnostics } = await import("./doctor.js");
   const items = await runDiagnostics({ cwd: ctx.cwd });
   process.stdout.write(renderDiagnostics(items) + "\n");
+  return 0;
+}
+
+/** Print the same quick-start card the TUI shows on launch. Shared
+ *  source of truth lives in `slash/builtin.ts` so the four surfaces
+ *  (TUI banner, /welcome slash, ch welcome CLI, web onboarding) stay
+ *  in lockstep. */
+async function runWelcomeCmd(): Promise<number> {
+  const { renderQuickStart } = await import("./slash/builtin.js");
+  process.stdout.write(renderQuickStart() + "\n");
+  process.stdout.write("\nType `ch help` for the full subcommand list.\n");
   return 0;
 }
 

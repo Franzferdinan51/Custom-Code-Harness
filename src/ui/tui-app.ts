@@ -32,6 +32,12 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
       thinking: "medium",
     },
   });
+  tui.setComposerMode?.(runtime.getComposerMode?.() ?? "build");
+  const setComposerMode = (mode: "plan" | "build") => {
+    runtime.setComposerMode?.(mode);
+    tui.setComposerMode?.(mode);
+    tui.setInfo(mode === "plan" ? "plan mode enabled" : "build mode enabled");
+  };
 
   // Wire the approval flow: when the bash tool flags a command, pop
   // the TUI modal. "allow-always" gets persisted to settings.json by
@@ -41,7 +47,8 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
   );
 
   tui.start();
-  tui.addMessage({ kind: "info", text: "Welcome to CodingHarness v" + RUNTIME_VERSION + ". Type /help for commands." });
+  // tui.start() already paints the quick-start banner; no need to add
+  // a duplicate "Welcome" line.
 
   // Clean up the approval handler on exit.
   process.once("exit", clearApproval);
@@ -51,6 +58,16 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
     // Try slash command first.
     const parsed = tryParseSlash(raw);
     if (parsed) {
+      if (parsed.name === "plan" || parsed.name === "build") {
+        setComposerMode(parsed.name);
+        tui.addMessage({ kind: "info", text: "workflow set to " + parsed.name });
+        tui.setRunState({
+          phase: "complete",
+          title: "/" + parsed.name,
+          detail: "workflow switched to " + parsed.name,
+        });
+        return;
+      }
       const cmd = BUILTIN_REGISTRY.get(parsed.name);
       if (cmd) {
         tui.addMessage({ kind: "system", text: "/ " + parsed.name + " " + parsed.args });
@@ -141,7 +158,8 @@ async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd:
   }
 
   // Persist user message.
-  await session.append({ kind: "message", message: { role: "user", content: prompt } });
+  const framedPrompt = framePromptForComposerMode(prompt, runtime.getComposerMode?.() ?? "build");
+  await session.append({ kind: "message", message: { role: "user", content: framedPrompt } });
   const messages = sessionToMessages(session);
 
   const provider = runtime.providerRegistry.default();
@@ -154,7 +172,7 @@ async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd:
   tui.setRunState({
     phase: "running",
     title: "agent turn",
-    detail: summarizeText(prompt, 36),
+      detail: summarizeText(prompt, 36),
   });
 
   const ac = new AbortController();
@@ -218,6 +236,30 @@ async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd:
   } finally {
     process.removeListener("SIGINT", onSig);
   }
+}
+
+function framePromptForComposerMode(prompt: string, mode: "plan" | "build"): string {
+  if (prompt.trim().startsWith("/")) return prompt;
+  if (mode === "plan") {
+    return [
+      "Plan mode:",
+      "Treat the user's request as a planning task in the current repository.",
+      "Do not propose file edits unless the user explicitly asks for implementation.",
+      "Return a concise plan, key files or areas to inspect, and any risks or unknowns.",
+      "",
+      "User request:",
+      prompt,
+    ].join("\n");
+  }
+  return [
+    "Build mode:",
+    "Treat the user's request as an implementation task in the current repository.",
+    "Prefer concrete edits, clear next steps, and concise explanations.",
+    "If details are missing, make sensible assumptions and state them briefly.",
+    "",
+    "User request:",
+    prompt,
+  ].join("\n");
 }
 
 function summarizeText(text: string, max = 36): string {

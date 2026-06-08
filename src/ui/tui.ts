@@ -16,7 +16,7 @@
 //   ├─ footer (1 row) ─────────────────────────────────────┘
 
 import { CliRenderer, BoxRenderable, TextRenderable, ScrollBoxRenderable, TextareaRenderable, RGBA } from "@opentui/core";
-import { BUILTIN_REGISTRY } from "../slash/builtin.js";
+import { BUILTIN_REGISTRY, QUICK_START, renderQuickStart } from "../slash/builtin.js";
 import { tryParseSlash } from "../slash/registry.js";
 import { runAgent, DEFAULT_LIMITS } from "../agent/loop.js";
 import { sessionToMessages } from "../agent/session.js";
@@ -81,6 +81,8 @@ export interface Tui {
   setStatus(s: Partial<TuiStatus>): void;
   setRunState(s: Partial<TuiRunState>): void;
   setSlashNames(names: string[]): void;
+  setComposerMode(mode: "plan" | "build"): void;
+  getComposerMode(): "plan" | "build";
   onSubmit(cb: (text: string) => void): void;
   onAction(cb: (a: TuiAction) => void): void;
   setInfo(text: string): void;
@@ -303,7 +305,7 @@ export function createTui(opts: TuiOptions): Tui {
 
   const footerLeft = new TextRenderable(renderer, {
     id: "footer-left",
-    content: " ⏎ send · ⇧⏎ newline · Tab complete · Ctrl+G /goal · Ctrl+C abort · Ctrl+D quit ",
+    content: " ⏎ send · ⇧⏎ newline · Tab complete · Ctrl+G /goal · /plan · /build · Ctrl+L clear · Ctrl+C abort · Ctrl+D quit ",
     fg: COLORS.fgDim,
   });
   footer.add(footerLeft);
@@ -317,6 +319,7 @@ export function createTui(opts: TuiOptions): Tui {
     tokensIn: 0, tokensOut: 0, steps: 0, thinking: "medium",
     ...opts.status,
   };
+  let composerMode: "plan" | "build" = "build";
   const runState: TuiRunState = {
     phase: "idle",
     title: "idle",
@@ -376,9 +379,9 @@ export function createTui(opts: TuiOptions): Tui {
       sbGoalMeta.fg = COLORS.fgDim;
       sbGoalDetail.fg = runState.phase === "error" ? COLORS.fgRed : COLORS.fgFaint;
     } else {
-      sbGoalState.content = "  idle";
-      sbGoalMeta.content = "  Ctrl+G inserts /goal";
-      sbGoalDetail.content = "  Type a prompt or /command";
+      sbGoalState.content = "  idle — try a prompt";
+      sbGoalMeta.content = "  /help · /goal · /model · /plan · /build";
+      sbGoalDetail.content = "  ⏎ sends · Tab completes · " + composerMode + " mode";
       sbGoalState.fg = COLORS.fgDim;
       sbGoalMeta.fg = COLORS.fgDim;
       sbGoalDetail.fg = COLORS.fgFaint;
@@ -429,8 +432,15 @@ export function createTui(opts: TuiOptions): Tui {
     headerLeft.content = " CodingHarness v" + VERSION + "  " + (status.provider || "—") + "/" + (status.model || "—") + "  " + (status.cwd || "—");
     const costText = runtime && runtime.cost ? " · " + formatUSD(runtime.cost.total().cost) : "";
     headerRight.content = "tokens " + status.tokensIn + " in / " + status.tokensOut + " out" + costText + "  ";
-    footerRight.content = "steps " + status.steps + "  ";
+    footerRight.content = "steps " + status.steps + " · " + composerMode + " mode  ";
     markSidebarDirty();
+  }
+
+  function updateComposerMode(mode: "plan" | "build"): void {
+    composerMode = mode === "plan" ? "plan" : "build";
+    updateStatus();
+    refreshCommandPreview();
+    renderer.requestRender();
   }
 
   function addMessageEl(text: string, fg: RGBA, opts2: { prefix?: string } = {}): TextRenderable {
@@ -536,7 +546,15 @@ export function createTui(opts: TuiOptions): Tui {
   return {
     async start() {
       updateStatus();
-      addMessageEl("Welcome to CodingHarness v" + VERSION + ". Type /help for commands.", COLORS.fgCyan, { prefix: " · " });
+      // First-launch onboarding. We always show the quick-start card on
+      // launch — it's cheap, fits in 6 lines, and the user can ignore it.
+      // Returning users have already seen it; the persistent sidebar hint
+      // keeps the same 4 commands one keystroke away.
+      const quick = renderQuickStart({ title: "CodingHarness v" + VERSION + " — quick start" });
+      for (const line of quick.split("\n")) {
+        addMessageEl(line, line.startsWith("  ") ? COLORS.fg : COLORS.fgCyan, { prefix: line.startsWith("  ") ? "   " : " · " });
+      }
+      addMessageEl("(type /help any time to see every command)", COLORS.fgDim, { prefix: " · " });
       await doRefresh();
       refreshCommandPreview();
       renderer.start();
@@ -604,6 +622,8 @@ export function createTui(opts: TuiOptions): Tui {
     },
 
     setSlashNames(names) { slashNames = names.slice(); },
+    setComposerMode(mode) { updateComposerMode(mode); },
+    getComposerMode() { return composerMode; },
     onSubmit(cb) { submitListeners.add(cb); },
     onAction(cb) { actionListeners.add(cb); },
 
@@ -640,17 +660,22 @@ function truncateArgs(args: string): string {
 function buildCommandPreview(text: string, slashNames: string[]): string {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
-    return "Type a prompt or /command.\nCtrl+G inserts /goal · Tab completes slash commands.";
+    const lines = ["Type a prompt or /command to start."];
+    for (const q of QUICK_START) {
+      lines.push("  " + q.label.padEnd(12) + q.hint);
+    }
+    lines.push("Tab completes · Ctrl+G inserts /goal · /plan · /build · Ctrl+C aborts · Ctrl+D quits.");
+    return lines.join("\n");
   }
 
   if (!trimmed.startsWith("/")) {
-    return "Type a prompt or /command.\nCtrl+G inserts /goal · Tab completes slash commands.";
+    return "⏎ sends this prompt. /help for commands, /goal for multi-step work, /plan or /build to switch modes.";
   }
 
   const firstToken = trimmed.split(/\s+/, 1)[0] ?? "";
   const bare = firstToken.slice(1);
   if (!bare) {
-    return "Slash commands: /goal /help /model\nTab completes the highlighted command.";
+    return "Slash commands: /goal /help /model /plan /build\nTab completes the highlighted command.";
   }
 
   if (!trimmed.includes(" ")) {

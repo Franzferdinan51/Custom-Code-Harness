@@ -9,6 +9,8 @@
 //   GET  /v1/tokens                 — rough token count of active session
 //   GET  /v1/agents                 — list of sub-agents
 //   GET  /v1/skills                 — list of skills
+//   GET  /v1/todo                   — in-session todo list
+//   POST /v1/todo                   — { items | action: add|clear, item? } update the list
 //   GET  /v1/sessions               — list of sessions
 //   POST /v1/session                — { id? } start or resume
 //   GET  /v1/usage                  — { inputTokens, outputTokens, cost, topModel }
@@ -162,6 +164,38 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
       if (req.method === "GET" && path === "/v1/skills") {
         const all = await runtime.skills.list();
         sendJson(res, 200, { skills: all.map((s) => ({ name: s.name, description: s.description })) });
+        return;
+      }
+      if (req.method === "GET" && path === "/v1/todo") {
+        // In-session todo list. Same data the `todo` tool sees.
+        const items = runtime.readTodo ? runtime.readTodo() : [];
+        sendJson(res, 200, { items });
+        return;
+      }
+      if (req.method === "POST" && path === "/v1/todo") {
+        // Replace the in-session todo list. Body: { items: string[] }
+        // or { action: "add"|"clear", item?: string }.
+        // Persists to the session JSONL so reloads see it.
+        if (!runtime.writeTodo) { sendError(res, 500, "runtime doesn't support todo"); return; }
+        const body = await readJson<{ items?: string[]; action?: "add" | "set" | "clear"; item?: string }>(req);
+        if (Array.isArray(body.items)) {
+          await runtime.writeTodo(body.items.filter((x) => typeof x === "string"));
+          sendJson(res, 200, { ok: true, items: body.items });
+          return;
+        }
+        if (body.action === "clear") {
+          await runtime.writeTodo([]);
+          sendJson(res, 200, { ok: true, items: [] });
+          return;
+        }
+        if (body.action === "add" && typeof body.item === "string") {
+          const current = runtime.readTodo ? runtime.readTodo() : [];
+          const next = [...current, body.item];
+          await runtime.writeTodo(next);
+          sendJson(res, 200, { ok: true, items: next });
+          return;
+        }
+        sendError(res, 400, "missing items array, action=clear, or action=add + item");
         return;
       }
       if (req.method === "GET" && path === "/v1/sessions") {

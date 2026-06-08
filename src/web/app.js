@@ -498,6 +498,44 @@ async function refreshAgents() {
   } catch (e) { console.error("agents:", e); }
 }
 
+// In-session todo list. Mirrors the /todo slash command and
+// ch todo CLI subcommand. The list is included in every agent
+// turn, so changes here are picked up by the next prompt
+// automatically.
+async function refreshTodo() {
+  try {
+    const j = await api("/v1/todo");
+    const list = $("todo-list");
+    list.innerHTML = "";
+    const items = j.items || [];
+    if (items.length === 0) {
+      list.appendChild(el("div", { class: "sidebar-empty" }, "(empty)"));
+      return;
+    }
+    items.forEach((text, i) => {
+      const row = el("div", { class: "sidebar-todo-item" }, [
+        el("span", { class: "sidebar-todo-item-num" }, (i + 1) + "."),
+        el("span", { class: "sidebar-todo-item-text" }, text),
+        el("button", {
+          class: "sidebar-todo-item-x",
+          title: "remove this todo",
+          "data-index": String(i),
+        }, "×"),
+      ]);
+      // Wire the remove button.
+      const x = row.querySelector(".sidebar-todo-item-x");
+      x.addEventListener("click", async () => {
+        const next = items.filter((_, k) => k !== i);
+        try {
+          await api("/v1/todo", { method: "POST", body: { items: next } });
+          void refreshTodo();
+        } catch (e) { /* ignore */ }
+      });
+      list.appendChild(row);
+    });
+  } catch (e) { console.error("todo:", e); }
+}
+
 async function refreshUsage() {
   try {
     const j = await api("/v1/usage");
@@ -530,7 +568,7 @@ function formatAgo(t) {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshStatus(), refreshSessions(), refreshAgents(), refreshUsage()]);
+  await Promise.all([refreshStatus(), refreshSessions(), refreshAgents(), refreshUsage(), refreshTodo()]);
   try {
     const cmds = await api("/v1/commands");
     state.slashNames = cmds.commands || [];
@@ -964,6 +1002,24 @@ $("command-palette-button").addEventListener("click", () => openCommandPalette("
 $("goal-button").addEventListener("click", () => primeGoalInput());
 $("quick-goal").addEventListener("click", () => primeGoalInput());
 $("quick-export").addEventListener("click", () => exportActiveSession());
+
+// In-session todo: add via the form, remove via the × button.
+const todoForm = $("todo-form");
+const todoInput = $("todo-input");
+if (todoForm && todoInput) {
+  todoForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = todoInput.value.trim();
+    if (!text) return;
+    todoInput.disabled = true;
+    try {
+      await api("/v1/todo", { method: "POST", body: { action: "add", item: text } });
+      todoInput.value = "";
+      void refreshTodo();
+    } catch (e) { /* ignore */ }
+    finally { todoInput.disabled = false; todoInput.focus(); }
+  });
+}
 $("quick-onboard")?.addEventListener("click", async () => {
   // Manual re-open of the first-run setup wizard. Useful after
   // dismissing it once or when switching providers.
@@ -1481,6 +1537,7 @@ async function maybeShowOnboard() {
   setInterval(refreshUsage, 5000);
   setInterval(refreshSessions, 15000);
   setInterval(refreshAgents, 30000);
+  setInterval(refreshTodo, 10000);
   // First-run onboarding. Mirrors /onboard (slash) and ch onboard
   // (CLI) so all three surfaces give the same setup flow. The
   // wizard stays dismissable; the localStorage key suppresses it

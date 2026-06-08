@@ -192,3 +192,72 @@ test("/v1/provider/set-key is unknown-provider safe", async () => {
     } finally { kill(); }
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+test("/v1/todo GET returns an empty list on a fresh runtime", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-todo-get-"));
+  try {
+    const { port, kill } = await startServer(home);
+    try {
+      const r = await getJson<{ items: string[] }>(`http://127.0.0.1:${port}/v1/todo`);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.items, []);
+    } finally { kill(); }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("/v1/todo POST with { items } replaces the list", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-todo-set-"));
+  try {
+    const { port, kill } = await startServer(home);
+    try {
+      const r = await postJson<{ ok: boolean; items: string[] }>(`http://127.0.0.1:${port}/v1/todo`, {
+        items: ["alpha", "beta two", "gamma"],
+      });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.ok, true);
+      assert.deepEqual(r.body.items, ["alpha", "beta two", "gamma"]);
+      // GET should return the same list.
+      const r2 = await getJson<{ items: string[] }>(`http://127.0.0.1:${port}/v1/todo`);
+      assert.deepEqual(r2.body.items, ["alpha", "beta two", "gamma"]);
+    } finally { kill(); }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("/v1/todo POST with { action: add, item } appends", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-todo-add-"));
+  try {
+    const { port, kill } = await startServer(home);
+    try {
+      await postJson(`http://127.0.0.1:${port}/v1/todo`, { items: ["first"] });
+      const r = await postJson<{ ok: boolean; items: string[] }>(`http://127.0.0.1:${port}/v1/todo`, {
+        action: "add", item: "second",
+      });
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.items, ["first", "second"]);
+    } finally { kill(); }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("/v1/todo POST with { action: clear } empties the list", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-todo-clear-"));
+  try {
+    const { port, kill } = await startServer(home);
+    try {
+      await postJson(`http://127.0.0.1:${port}/v1/todo`, { items: ["a", "b", "c"] });
+      const r = await postJson<{ ok: boolean; items: string[] }>(`http://127.0.0.1:${port}/v1/todo`, { action: "clear" });
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.items, []);
+    } finally { kill(); }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("/v1/todo POST rejects missing fields with 400", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-todo-bad-"));
+  try {
+    const { port, kill } = await startServer(home);
+    try {
+      const r = await postJson<{ error?: string }>(`http://127.0.0.1:${port}/v1/todo`, {});
+      assert.equal(r.status, 400);
+    } finally { kill(); }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});

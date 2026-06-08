@@ -1448,3 +1448,71 @@ html, body {
   font-size: 11px;
   color: var(--fg-cyan);
 }
+
+/* ---------- Todo list in the sidebar ---------- */
+.sidebar-todo {
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.sidebar-todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 0;
+  color: var(--fg);
+}
+.sidebar-todo-item-num {
+  flex-shrink: 0;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  width: 18px;
+}
+.sidebar-todo-item-text {
+  flex: 1;
+  word-break: break-word;
+}
+.sidebar-todo-item-x {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  color: var(--fg-faint);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.sidebar-todo-item-x:hover { color: var(--fg-red, #ff6b6b); }
+.sidebar-todo-form {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.sidebar-todo-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+}
+.sidebar-todo-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.sidebar-todo-clear {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.sidebar-todo-clear:hover { color: var(--fg-red, #ff6b6b); border-color: var(--fg-red, #ff6b6b); }

@@ -18,10 +18,11 @@
     "test:smoke": "tsx src/__tests__/smoke.ts",
     "electron": "electron .",
     "electron:dev": "ELECTRON_ENABLE_LOGGING=1 electron .",
-    "dist:mac": "electron-builder --mac --x64 --arm64",
-    "dist:win": "electron-builder --win --x64",
-    "dist:linux": "electron-builder --linux --x64",
-    "dist": "electron-builder -mwl"
+    "dist:mac": "electron-builder --mac --x64 --arm64 --config electron/electron-builder.config.cjs",
+    "dist:win": "electron-builder --win --x64 --config electron/electron-builder.config.cjs",
+    "dist:linux": "electron-builder --linux --x64 --config electron/electron-builder.config.cjs",
+    "dist": "electron-builder -mwl --config electron/electron-builder.config.cjs",
+    "dist:publish": "electron-builder -mwl --publish always --config electron/electron-builder.config.cjs"
   },
   "engines": {
     "node": ">=18.17"
@@ -59,6 +60,11 @@
     "typescript": "^5.6.0"
   },
   "dependencies": {
-    "@opentui/core": "^0.3.4"
+    "@opentui/core": "^0.3.4",
+    "electron-context-menu": "^4.1.2",
+    "electron-log": "^5.2.0",
+    "electron-store": "^10.0.0",
+    "electron-updater": "^6.3.9",
+    "electron-window-state": "^5.0.3"
   }
 }

@@ -67,6 +67,18 @@ html, body {
   letter-spacing: 0.2px;
 }
 
+.sidebar-title { display: flex; align-items: center; gap: 0.5rem; }
+.desktop-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(108, 140, 255, 0.18);
+  color: #6c8cff;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
 .sidebar-version {
   font-size: 11px;
   color: var(--fg-faint);

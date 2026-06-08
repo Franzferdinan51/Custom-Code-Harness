@@ -467,6 +467,7 @@ npx tsc --noEmit       # type check
 - [x] Trajectory export for training (Hermes-style) — done in v0.2.2
 - [x] Session branching UI (`/tree`) — done in v0.2.2
 - [x] Compaction UI: show diff of what was summarized — done in v0.2.2
+- [x] Real desktop shell (modeled on opencode) — done in v0.2.2
 
 ## License
 

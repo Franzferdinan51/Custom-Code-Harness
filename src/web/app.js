@@ -522,6 +522,32 @@ $("settings-save").addEventListener("click", async () => {
   if (state.provider === "—") {
     showInfo("No provider configured. Open ⚙ settings or set OPENAI_API_KEY in your environment.");
   }
+  // Native shell hooks (Electron only — window.ch is undefined in browser).
+  if (window.ch) {
+    try {
+      const info = await window.ch.info();
+      if (info && info.electron) {
+        // Show a "Desktop" badge in the header so the user knows the
+        // native shell is wrapping the page.
+        const badge = document.createElement("span");
+        badge.className = "desktop-badge";
+        badge.textContent = "Desktop v" + info.version;
+        badge.title = "Electron " + info.electron + " · Node " + info.node + " · Chrome " + info.chrome;
+        const brand = document.querySelector(".sidebar-title");
+        if (brand) brand.appendChild(badge);
+      }
+      window.ch.onMenuCommand && window.ch.onMenuCommand(() => {
+        // File > New Session
+        const newBtn = document.getElementById("new-session");
+        if (newBtn) newBtn.click();
+        else location.reload();
+      });
+      window.ch.onDeepLink && window.ch.onDeepLink((url) => {
+        // ch://new-session or ch://session/abc123
+        showInfo("Deep link: " + url);
+      });
+    } catch { /* not in electron — ignore */ }
+  }
 })();
 
 function showInfo(text) {

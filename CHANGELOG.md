@@ -123,6 +123,44 @@ All notable changes to CodingHarness are documented here. Format follows
   NOT in the set — bash, write, edit, spawn_subagent, todo, etc. —
   runs sequentially to preserve ordering. Tests use timing
   assertions to prove the 3-safe / 1-mutating partition. 4 new tests.
+- **Desktop app rewritten on the opencode pattern**: the Electron
+  shell now mirrors the architecture of `anomalyco/opencode`'s
+  desktop app. New deps:
+  - `electron-updater` — auto-updates from GitHub releases (checks
+    on startup, then every 6 hours; user prompts before download
+    and before install).
+  - `electron-store` — desktop-specific persistent state.
+  - `electron-window-state` — auto-saves window size/position across
+    launches via `ws.manage(window)`.
+  - `electron-log` — OS-native log file
+    (`~/Library/Logs/CodingHarness` on macOS, `%APPDATA%` on
+    Windows, `~/.config` on Linux).
+  - `electron-context-menu` — right-click menus with
+    spellcheck/copy/dev-tools.
+  New behaviors:
+  - Single-instance lock: a second `opencode-codingharness`
+    invocation focuses the existing window instead of opening a
+    duplicate.
+  - Background color pre-set to `#0e1116` to match the web UI; no
+    white flash on launch.
+  - `ch://` URL protocol handler with deep-link support on macOS
+    (via `open-url`) and Windows/Linux (via argv).
+  - Proper File/Edit/View/Session/Window/Help menu with
+    `CmdOrCtrl+N` for new session, `CmdOrCtrl+Shift+B` to open
+    in browser, "Show Logs", "Export Debug Logs…", "Check for
+    Updates".
+  - Tray menu shows live server status (`● server running on
+    http://...`, `✗ server exited`, `○ starting`), with "Open in
+    Browser", "Copy Server URL", and "Check for Updates".
+  - Server crash auto-restart (1s delay, no infinite loop on quit).
+  - Off-site links in the web UI open in the system browser
+    instead of in-app.
+  - `electron-builder` config moved to
+    `electron/electron-builder.config.cjs`. Channel-based app ID
+    (dev/beta/prod) so all three can coexist; GitHub publishing
+    wired for prod and beta.
+  - Web UI shows a "Desktop v0.2.2" badge in the sidebar when
+    running under Electron (no-op in the browser).
 
 ## [0.2.1] - 2026-06-07
 

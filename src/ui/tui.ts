@@ -342,7 +342,11 @@ export function createTui(opts: TuiOptions): Tui {
   function updateStatus(): void {
     headerLeft.content = " CodingHarness v" + VERSION + "  " + (status.provider || "—") + "/" + (status.model || "—") + "  " + (status.cwd || "—");
     const thinking = runtime?.settings.thinking ?? status.thinking ?? "medium";
-    headerRight.content = (status.session && status.session !== "—" ? "session " + status.session.slice(0, 8) : "no session") + " · " + composerMode + " · " + thinking + "  ";
+    const flags = [
+      runtime?.settings.ui?.verbose ? "verbose" : "",
+      runtime?.settings.ui?.trace ? "trace" : "",
+    ].filter(Boolean).join(" · ");
+    headerRight.content = (status.session && status.session !== "—" ? "session " + status.session.slice(0, 8) : "no session") + " · " + composerMode + " · " + thinking + (flags ? " · " + flags : "") + "  ";
     footerRight.content = status.steps > 0 ? "steps " + status.steps + "  " : "ready  ";
     markSidebarDirty();
   }

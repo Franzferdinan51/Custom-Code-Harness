@@ -42,6 +42,8 @@ test("ch desktop: appears in the subcommand list", () => {
   assert.match(r.stdout, /fork/);
   assert.match(r.stdout, /compact/);
   assert.match(r.stdout, /think/);
+  assert.match(r.stdout, /verbose/);
+  assert.match(r.stdout, /trace/);
 });
 
 test("ch think sets and reports the thinking level", () => {
@@ -63,6 +65,46 @@ test("ch think sets and reports the thinking level", () => {
     });
     assert.equal(show.status, 0, show.stderr);
     assert.match(show.stdout, /thinking level: high/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("ch verbose and ch trace toggle runtime logging", () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-debug-"));
+  try {
+    const env = { ...process.env, CODINGHARNESS_HOME: home, NO_COLOR: "1" };
+    const verboseOn = spawnSync("bun", ["src/cli.ts", "verbose", "on"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(verboseOn.status, 0, verboseOn.stderr);
+    assert.match(verboseOn.stdout, /verbose enabled/);
+
+    const verboseShow = spawnSync("bun", ["src/cli.ts", "verbose"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(verboseShow.status, 0, verboseShow.stderr);
+    assert.match(verboseShow.stdout, /verbose: on/);
+
+    const traceOn = spawnSync("bun", ["src/cli.ts", "trace", "on"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(traceOn.status, 0, traceOn.stderr);
+    assert.match(traceOn.stdout, /trace enabled/);
+
+    const traceShow = spawnSync("bun", ["src/cli.ts", "trace"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(traceShow.status, 0, traceShow.stderr);
+    assert.match(traceShow.stdout, /trace: on/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

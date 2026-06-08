@@ -82,6 +82,18 @@ registerSubcommand("think", "Show or set the thinking level (off|minimal|low|med
   "ch think [level]",
   async (ctx) => { return runThinkCmd(ctx); });
 
+registerSubcommand("verbose", "Show or toggle verbose runtime logging.",
+  "ch verbose [on|off|toggle]",
+  async (ctx) => { return runVerboseCmd(ctx); });
+
+registerSubcommand("trace", "Show or toggle trace output for tool calls.",
+  "ch trace [on|off|toggle]",
+  async (ctx) => { return runTraceCmd(ctx); });
+
+registerSubcommand("info", "Show runtime info: version, paths, provider, model.",
+  "ch info [--json]",
+  async (ctx) => { return runInfoCmd(ctx); });
+
 registerSubcommand("loop", "Re-send the previous (or new) prompt N times, with optional sentinel.",
   "ch loop [N] [sentinel] <prompt>  (or: ch loop N)",
   async (ctx) => { return runLoopCmd(ctx); });
@@ -186,9 +198,9 @@ function showHelp(cmd?: string): number {
     { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling.",
       names: ["sessions", "tree", "fork", "compact", "memory", "skills", "agents", "skill", "cron", "init", "export"] },
     { title: "Settings", blurb: "Thinking level and model preferences.",
-      names: ["think"] },
+      names: ["think", "verbose", "trace"] },
     { title: "Health",         blurb: "Connectivity and diagnostics.",
-      names: ["doctor", "diag", "tokens"] },
+      names: ["doctor", "diag", "tokens", "info"] },
     { title: "Integrate",      blurb: "MCP server, updates.",
       names: ["mcp", "update"] },
   ];
@@ -246,6 +258,8 @@ function showHelp(cmd?: string): number {
   lines.push("  ch code \"explain src/cli.ts\"");
   lines.push("  ch goal \"wire up OAuth for the dashboard\" --max-steps=8");
   lines.push("  ch think high            # raise the thinking level");
+  lines.push("  ch verbose on            # print extra runtime details");
+  lines.push("  ch trace on              # print tool-call traces");
   lines.push("  ch loop 5 \"run the test suite until it passes\"");
   lines.push("  ch tree                  # inspect the active session tree");
   lines.push("  ch compact --preview     # preview a session compaction");
@@ -396,7 +410,11 @@ async function runSimpleRepl(runtime: HarnessRuntime, ctx: SubcommandContext & {
     const provider = runtime.providerId() ?? "(no provider)";
     const model = runtime.model() ?? "(no model)";
     const thinking = runtime.settings.thinking ?? "medium";
-    process.stdout.write(c.bold("CodingHarness") + c.gray(" · ") + c.cyan(provider) + c.gray(" · ") + c.gray(model) + c.gray(" · ") + c.dim("thinking " + thinking) + c.gray(" · ") + c.dim(ctx.cwd) + "\n");
+    const flags = [
+      runtime.settings.ui?.verbose ? "verbose" : "",
+      runtime.settings.ui?.trace ? "trace" : "",
+    ].filter(Boolean).join(" · ");
+    process.stdout.write(c.bold("CodingHarness") + c.gray(" · ") + c.cyan(provider) + c.gray(" · ") + c.gray(model) + c.gray(" · ") + c.dim("thinking " + thinking) + (flags ? c.gray(" · ") + c.dim(flags) : "") + c.gray(" · ") + c.dim(ctx.cwd) + "\n");
     process.stdout.write(c.dim('type /help for commands, ctrl+c to abort a turn, ctrl+d to exit') + "\n\n");
   }
 
@@ -503,6 +521,98 @@ async function runThinkCmd(ctx: SubcommandContext): Promise<number> {
   const arg = ctx.args.join(" ").trim();
   const out = await cmd.run(arg, { cwd: ctx.cwd, runtime: () => runtime });
   if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
+  return 0;
+}
+
+async function runVerboseCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const cmd = BUILTIN_REGISTRY.get("verbose");
+  if (!cmd) { process.stderr.write("error: /verbose command missing\n"); return 1; }
+  const arg = ctx.args.join(" ").trim();
+  const out = await cmd.run(arg, { cwd: ctx.cwd, runtime: () => runtime });
+  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
+  return 0;
+}
+
+async function runTraceCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const cmd = BUILTIN_REGISTRY.get("trace");
+  if (!cmd) { process.stderr.write("error: /trace command missing\n"); return 1; }
+  const arg = ctx.args.join(" ").trim();
+  const out = await cmd.run(arg, { cwd: ctx.cwd, runtime: () => runtime });
+  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
+  return 0;
+}
+
+/** `ch info` — print a structured snapshot of the running install so
+ *  the user can answer "where is my config?", "which provider is
+ *  default?", "what version is this?" in a single command. */
+async function runInfoCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const settings = loadSettings();
+  const { paths } = await import("./config/paths.js");
+  const { execSync } = await import("node:child_process");
+  let cliPath = "";
+  try {
+    cliPath = execSync("which ch", { encoding: "utf-8" }).trim();
+  } catch { /* not on PATH */ }
+  const info = {
+    version: VERSION,
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    cwd: ctx.cwd,
+    home: paths.home,
+    paths: {
+      settings: paths.settings,
+      sessions: paths.sessions,
+      logs: paths.logs,
+      memory: paths.memory,
+      skills: paths.skills,
+      agents: paths.agents,
+    },
+    cliPath: cliPath || "(not on PATH)",
+    defaultProvider: settings.defaultProvider ?? null,
+    defaultModel: settings.defaultModel ?? null,
+    thinking: settings.thinking ?? "medium",
+    approvalMode: settings.approval?.mode ?? "off",
+    providersConfigured: Object.keys(settings.providers ?? {}),
+  };
+  if (ctx.json) {
+    process.stdout.write(JSON.stringify(info, null, 2) + "\n");
+    return 0;
+  }
+  // Pretty-printed human view.
+  const lines: string[] = [];
+  lines.push("CodingHarness " + info.version);
+  lines.push("");
+  lines.push("  node:      " + info.node + " (" + info.platform + "/" + info.arch + ")");
+  lines.push("  cli:       " + info.cliPath);
+  lines.push("  cwd:       " + info.cwd);
+  lines.push("  home:      " + info.home);
+  lines.push("");
+  lines.push("Settings (" + info.paths.settings + "):");
+  lines.push("  provider:  " + (info.defaultProvider ?? "(unset)"));
+  lines.push("  model:     " + (info.defaultModel ?? "(unset)"));
+  lines.push("  thinking:  " + info.thinking);
+  lines.push("  approval:  " + info.approvalMode);
+  if (info.providersConfigured.length > 0) {
+    lines.push("  providers: " + info.providersConfigured.join(", "));
+  } else {
+    lines.push("  providers: (none — set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)");
+  }
+  lines.push("");
+  lines.push("Paths:");
+  lines.push("  sessions:  " + info.paths.sessions);
+  lines.push("  logs:      " + info.paths.logs);
+  lines.push("  memory:    " + info.paths.memory);
+  lines.push("  skills:    " + info.paths.skills);
+  lines.push("  agents:    " + info.paths.agents);
+  lines.push("");
+  lines.push("Run `ch doctor` for health checks, `ch help` for all commands.");
+  process.stdout.write(lines.join("\n") + "\n");
   return 0;
 }
 

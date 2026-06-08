@@ -43,7 +43,7 @@ test("tryParseSlash returns null for non-slash input", () => {
 
 test("builtin registry has all expected commands", () => {
   const names = BUILTIN_REGISTRY.names();
-  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "compact", "tree", "fork", "export", "cost", "approval"]) {
+  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "compact", "tree", "fork", "export", "cost", "approval", "think", "verbose", "trace"]) {
     assert.ok(names.includes(want), "missing /" + want);
   }
 });
@@ -280,6 +280,33 @@ test("/goal uses internal prompts instead of recursively invoking slash commands
   assert.equal(states[1]?.step, 1);
   assert.equal(states[0]?.maxSteps, 2);
   assert.equal(states.every((s) => s.mode === "goal" && s.objective === "ship it"), true);
+});
+
+test("/think, /verbose, and /trace report and toggle runtime flags", async () => {
+  const think = BUILTIN_REGISTRY.get("think");
+  const verbose = BUILTIN_REGISTRY.get("verbose");
+  const trace = BUILTIN_REGISTRY.get("trace");
+  assert.ok(think);
+  assert.ok(verbose);
+  assert.ok(trace);
+  const rt = {
+    settings: { thinking: "medium", ui: { verbose: false, trace: false } },
+    setThinking(level: string) { this.settings.thinking = level; },
+    setVerbose(enabled: boolean) { this.settings.ui.verbose = enabled; },
+    setTrace(enabled: boolean) { this.settings.ui.trace = enabled; },
+  };
+  const t1 = await think!.run("", { cwd: "/", runtime: () => rt as never });
+  assert.match(t1!, /thinking level: medium/);
+  await think!.run("high", { cwd: "/", runtime: () => rt as never });
+  assert.equal(rt.settings.thinking, "high");
+  const v1 = await verbose!.run("", { cwd: "/", runtime: () => rt as never });
+  assert.match(v1!, /verbose: off/);
+  await verbose!.run("on", { cwd: "/", runtime: () => rt as never });
+  assert.equal(rt.settings.ui.verbose, true);
+  const tr1 = await trace!.run("", { cwd: "/", runtime: () => rt as never });
+  assert.match(tr1!, /trace: off/);
+  await trace!.run("toggle", { cwd: "/", runtime: () => rt as never });
+  assert.equal(rt.settings.ui.trace, true);
 });
 
 test("/goal reports blocked state and max-step fallback", async () => {

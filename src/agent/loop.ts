@@ -178,26 +178,44 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
       // If no tool calls, we're done with this turn.
       if (toolCalls.length === 0) break;
 
-      // ---- Execute tools in order ----
+      // ---- Execute tools ----
+      // If every call in this step is to a "parallel-safe" tool (read-only,
+      // no shared state, no order-dependence), run them concurrently. Any
+      // step containing a mutating tool (write/edit/bash/etc.) runs
+      // sequentially to preserve ordering. This is a conservative
+      // heuristic — the model can always choose to put mutating calls
+      // in a separate step if it needs parallelism on reads.
+      const allSafe = toolCalls.every((tc) => PARALLEL_SAFE_TOOLS.has(tc.name));
       const toolResults: ChatMessage[] = [];
-      for (const tc of toolCalls) {
-        if (input.signal.aborted) break;
-        const result = await executeToolSafely(tc, input.tools, {
-          cwd: input.cwd,
-          signal: input.signal,
-          limits: input.limits,
-          log: (m) => log.debug(`tool ${tc.name}: ${m}`),
-        });
-        hooks.onToolCallEnd?.(tc, result);
-        // Cap tool result size to protect the context window.
-        const capped = capToolResult(result, input.limits.maxToolResultBytes);
-        toolResults.push({
-          role: "tool",
-          toolCallId: tc.id,
-          toolName: tc.name,
-          content: capped,
-          meta: { isError: result.isError, display: result.display },
-        });
+      if (allSafe && toolCalls.length > 1) {
+        const settled = await Promise.all(
+          toolCalls.map((tc) =>
+            executeToolSafely(tc, input.tools, {
+              cwd: input.cwd,
+              signal: input.signal,
+              limits: input.limits,
+              log: (m) => log.debug(`tool ${tc.name}: ${m}`),
+            })
+          )
+        );
+        for (let i = 0; i < toolCalls.length; i++) {
+          const tc = toolCalls[i]!;
+          const r = settled[i]!;
+          hooks.onToolCallEnd?.(tc, r);
+          toolResults.push(toResultMessage(tc, r, input.limits.maxToolResultBytes));
+        }
+      } else {
+        for (const tc of toolCalls) {
+          if (input.signal.aborted) break;
+          const result = await executeToolSafely(tc, input.tools, {
+            cwd: input.cwd,
+            signal: input.signal,
+            limits: input.limits,
+            log: (m) => log.debug(`tool ${tc.name}: ${m}`),
+          });
+          hooks.onToolCallEnd?.(tc, result);
+          toolResults.push(toResultMessage(tc, result, input.limits.maxToolResultBytes));
+        }
       }
       currentMessages = [...currentMessages, ...toolResults];
 
@@ -294,3 +312,31 @@ export const DEFAULT_LIMITS = {
   maxSteps: 32,
   requestTimeoutMs: 120_000,
 };
+
+/** Tools that are safe to run concurrently with each other. They are
+ *  read-only, side-effect-free, and do not depend on each other's
+ *  output. A step containing ANY tool NOT in this set runs
+ *  sequentially. */
+const PARALLEL_SAFE_TOOLS: ReadonlySet<string> = new Set([
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "web_search",
+  "http",
+  "list_skills",
+  "read_memory",
+  "search_memory",
+  "read_todo",
+]);
+
+function toResultMessage(tc: ToolCall, result: ToolResult, maxBytes: number): ChatMessage {
+  const capped = capToolResult(result, maxBytes);
+  return {
+    role: "tool",
+    toolCallId: tc.id,
+    toolName: tc.name,
+    content: capped,
+    meta: { isError: result.isError, display: result.display },
+  };
+}

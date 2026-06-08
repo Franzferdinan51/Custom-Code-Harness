@@ -115,6 +115,14 @@ All notable changes to CodingHarness are documented here. Format follows
   - Auto-compaction in `runUserTurn` now prints the diff before
     summarizing so users see what got thrown away.
   9 new tests.
+- **Parallel tool execution**: the agent loop now runs multiple
+  read-only tool calls in the same step concurrently. A
+  `PARALLEL_SAFE_TOOLS` set enumerates which tools are safe to
+  parallelize (read, grep, find, ls, web_search, http, list_skills,
+  read_memory, search_memory, read_todo). A step containing ANY tool
+  NOT in the set — bash, write, edit, spawn_subagent, todo, etc. —
+  runs sequentially to preserve ordering. Tests use timing
+  assertions to prove the 3-safe / 1-mutating partition. 4 new tests.
 
 ## [0.2.1] - 2026-06-07
 

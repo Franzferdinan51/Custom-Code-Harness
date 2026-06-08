@@ -1017,17 +1017,81 @@ async function resumeSession(id) {
 
 const settingsModal = $("settings-modal");
 const settingsProviderMeta = $("setting-provider-meta");
+const settingsAuthMeta = $("setting-auth-meta");
+
+function providerPresetById(id) {
+  return state.providerPresets.find((item) => item.id === id) || null;
+}
+
+function providerProfileById(id) {
+  return state.providerProfiles.find((item) => item.id === id) || null;
+}
+
+function labelForAuthMode(mode) {
+  switch (mode) {
+    case "oauth": return "OAuth";
+    case "optional": return "No auth / API key";
+    default: return "API key";
+  }
+}
+
+function setAuthButtonsForPreset(preset) {
+  const openButton = $("setting-auth-open");
+  const launchButton = $("setting-auth-launch");
+  const docsUrl = preset?.authDocsUrl || "";
+  const launchUrl = preset?.authLaunchUrl || docsUrl;
+  openButton.disabled = !docsUrl;
+  launchButton.disabled = !launchUrl;
+  openButton.dataset.url = docsUrl;
+  launchButton.dataset.url = launchUrl;
+}
+
+async function openProviderUrl(url) {
+  if (!url) return;
+  if (window.ch?.openExternal) {
+    await window.ch.openExternal(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
 
 function syncProviderSettingsForm() {
   const select = $("setting-provider");
   const selectedId = select.value;
-  const preset = state.providerPresets.find((item) => item.id === selectedId) || null;
-  const configured = state.providerProfiles.find((item) => item.id === selectedId) || null;
+  const preset = providerPresetById(selectedId);
+  const configured = providerProfileById(selectedId);
+  const previousProviderId = select.dataset.lastProviderId || "";
+  const preserveTypedSecrets = previousProviderId === selectedId;
+  const currentOauthValue = preserveTypedSecrets ? ($("setting-oauth-token")?.value || "") : "";
+  const currentApiKeyValue = preserveTypedSecrets ? ($("setting-apikey")?.value || "") : "";
+  const authModeSelect = $("setting-auth-mode");
+  const authModes = preset?.authModes?.length ? preset.authModes : ["apiKey"];
+  const selectedAuthMode = configured?.authMode || preset?.defaultAuthMode || authModes[0] || "apiKey";
+  authModeSelect.innerHTML = "";
+  for (const mode of authModes) {
+    authModeSelect.appendChild(el("option", { value: mode }, labelForAuthMode(mode)));
+  }
+  authModeSelect.value = selectedAuthMode;
   $("setting-model").value = configured?.model || preset?.defaultModel || "";
   if (configured?.baseUrl) $("setting-baseurl").value = configured.baseUrl;
   else $("setting-baseurl").value = preset?.defaultBaseUrl || "";
-  $("setting-apikey").value = "";
+  $("setting-oauth-token").value = currentOauthValue;
+  $("setting-apikey").value = currentApiKeyValue;
   settingsProviderMeta.textContent = preset?.description || "Custom provider profile.";
+  settingsAuthMeta.textContent = [
+    authModes.includes("oauth") ? "OAuth/session token supported." : null,
+    authModes.includes("apiKey") ? "API key supported." : null,
+    authModes.includes("optional") ? "Credential optional for local servers." : null,
+    configured?.hasOauthToken ? "OAuth token saved." : null,
+    configured?.hasApiKey ? "API key saved." : null,
+  ].filter(Boolean).join(" ");
+  $("setting-oauth-row").hidden = !authModes.includes("oauth");
+  $("setting-apikey-row").hidden = !(authModes.includes("apiKey") || authModes.includes("optional"));
+  $("setting-oauth-label").textContent = selectedAuthMode === "oauth" ? "OAuth token" : "OAuth token (fallback)";
+  $("setting-apikey-label").textContent = selectedAuthMode === "apiKey" || selectedAuthMode === "optional" ? "API key" : "API key (fallback)";
+  $("setting-apikey").placeholder = authModes.includes("optional") ? "optional for local providers" : "paste provider API key";
+  setAuthButtonsForPreset(preset);
+  select.dataset.lastProviderId = selectedId;
 }
 
 $("settings").addEventListener("click", async () => {
@@ -1063,7 +1127,7 @@ $("settings").addEventListener("click", async () => {
       // Keychain status
       const kc = info.keychain || {};
       $("setting-keychain").textContent = kc.available
-        ? `${kc.backend} · ${kc.entries.length} key${kc.entries.length === 1 ? "" : "s"}`
+        ? `${kc.backend} · ${kc.entries.length} credential${kc.entries.length === 1 ? "" : "s"}`
         : "unavailable on this platform";
       // Auto-launch
       const al = info.autoLaunch || {};
@@ -1149,27 +1213,42 @@ if (window.ch) {
   // Keychain save (uses the API key field in the same form)
   $("setting-keychain-save").addEventListener("click", async () => {
     const providerId = $("setting-provider").value;
-    const key = $("setting-apikey").value.trim();
-    if (!providerId || !key) {
-      showInfo("Pick a provider and enter an API key first.");
+    const authMode = $("setting-auth-mode").value;
+    const oauthToken = $("setting-oauth-token").value.trim();
+    const apiKey = $("setting-apikey").value.trim();
+    const credential = authMode === "oauth" ? oauthToken || apiKey : apiKey || oauthToken;
+    const suffix = authMode === "oauth" ? ".oauthToken" : ".apiKey";
+    if (!providerId || !credential) {
+      showInfo("Pick a provider and enter a credential first.");
       return;
     }
-    const ok = await window.ch.keychainSet(providerId + ".apiKey", key);
+    const ok = await window.ch.keychainSet(providerId + suffix, credential);
     showInfo(ok ? "Saved to Keychain." : "Keychain unavailable on this platform.");
     const info = await window.ch.info();
     $("setting-keychain").textContent = info.keychain.available
-      ? `${info.keychain.backend} · ${info.keychain.entries.length} key${info.keychain.entries.length === 1 ? "" : "s"}`
+      ? `${info.keychain.backend} · ${info.keychain.entries.length} credential${info.keychain.entries.length === 1 ? "" : "s"}`
       : "unavailable on this platform";
   });
 }
 $("setting-provider").addEventListener("change", () => syncProviderSettingsForm());
+$("setting-auth-mode").addEventListener("change", () => syncProviderSettingsForm());
+$("setting-auth-open").addEventListener("click", async () => {
+  const url = $("setting-auth-open").dataset.url;
+  await openProviderUrl(url);
+});
+$("setting-auth-launch").addEventListener("click", async () => {
+  const url = $("setting-auth-launch").dataset.url;
+  await openProviderUrl(url);
+});
 $("settings-cancel").addEventListener("click", () => { settingsModal.hidden = true; });
 $("settings-save").addEventListener("click", async () => {
   try {
     await api("/v1/settings", { method: "POST", body: {
       provider: $("setting-provider").value,
+      authMode: $("setting-auth-mode").value,
       model: $("setting-model").value,
       baseUrl: $("setting-baseurl").value,
+      oauthToken: $("setting-oauth-token").value,
       apiKey: $("setting-apikey").value,
       approval: $("setting-approval").value,
       thinking: $("setting-thinking").value,

@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "./paths.js";
-import { firstEnvValue, getProviderPreset, listProviderPresets } from "../providers/presets.js";
+import { firstEnvValue, getProviderPreset, listProviderPresets, type ProviderAuthMode } from "../providers/presets.js";
 
 export interface ProviderProfile {
   id: string;
@@ -11,6 +11,10 @@ export interface ProviderProfile {
   baseUrl?: string;
   /** API key. Optional; usually picked up from env. */
   apiKey?: string;
+  /** OAuth/session token for providers with vendor auth flows. */
+  oauthToken?: string;
+  /** Which stored credential the runtime should prefer. */
+  authMode?: ProviderAuthMode;
   /** Default model for this profile. */
   model?: string;
   /** Mark a profile as the default. Only one should have this. */
@@ -178,8 +182,9 @@ function mergeWithEnv(s: Settings): Settings {
     for (const id of presetOrder) {
       const preset = getProviderPreset(id);
       const apiKey = firstEnvValue(preset?.apiKeyEnv);
+      const oauthToken = firstEnvValue(preset?.oauthTokenEnv);
       const baseUrl = firstEnvValue(preset?.baseUrlEnv);
-      if (apiKey || (id === "lmstudio" && (baseUrl || process.env.LM_API_TOKEN || process.env.LMSTUDIO_BASE_URL))) {
+      if (apiKey || oauthToken || (id === "lmstudio" && (baseUrl || process.env.LM_API_TOKEN || process.env.LMSTUDIO_BASE_URL))) {
         out.defaultProvider = id;
         break;
       }
@@ -189,19 +194,22 @@ function mergeWithEnv(s: Settings): Settings {
   for (const preset of listProviderPresets()) {
     if (out.providers[preset.id]) continue;
     const apiKey = firstEnvValue(preset.apiKeyEnv);
+    const oauthToken = firstEnvValue(preset.oauthTokenEnv);
     const baseUrl = firstEnvValue(preset.baseUrlEnv) ?? preset.defaultBaseUrl;
     const model = firstEnvValue(preset.modelEnv) ?? preset.defaultModel;
     const aliasRequested =
       preset.id === "codex" ? Boolean(process.env.CODEX_API_KEY || process.env.CODEX_BASE_URL || process.env.CODEX_MODEL) :
-      preset.id === "grok" ? Boolean(process.env.GROK_API_KEY || process.env.GROK_BASE_URL || process.env.GROK_MODEL) :
+      preset.id === "grok" ? Boolean(process.env.GROK_API_KEY || process.env.GROK_CODE_XAI_API_KEY || process.env.GROK_BASE_URL || process.env.GROK_MODEL || process.env.GROK_OAUTH_TOKEN) :
       true;
-    const shouldInject = aliasRequested && (Boolean(apiKey) || (preset.id === "lmstudio" && Boolean(firstEnvValue(preset.baseUrlEnv) || process.env.LM_API_TOKEN)));
+    const shouldInject = aliasRequested && (Boolean(apiKey) || Boolean(oauthToken) || (preset.id === "lmstudio" && Boolean(firstEnvValue(preset.baseUrlEnv) || process.env.LM_API_TOKEN)));
     if (!shouldInject && preset.id !== "openai" && preset.id !== "anthropic") continue;
     if ((preset.id === "openai" || preset.id === "anthropic") && !apiKey) continue;
     out.providers[preset.id] = {
       id: preset.id,
       baseUrl,
       apiKey,
+      oauthToken,
+      authMode: oauthToken ? "oauth" : preset.defaultAuthMode,
       model,
       default: out.defaultProvider === preset.id,
     };

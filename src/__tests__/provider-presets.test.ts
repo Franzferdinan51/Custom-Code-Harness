@@ -36,6 +36,24 @@ test("settings inject xai and minimax presets from env", async () => {
   });
 });
 
+test("settings inject grok and minimax oauth-style credentials from env", async () => {
+  await withEnv({
+    OPENAI_API_KEY: undefined,
+    ANTHROPIC_API_KEY: undefined,
+    GROK_CODE_XAI_API_KEY: "xai-build-token",
+    GROK_API_KEY: undefined,
+    GROK_OAUTH_TOKEN: "grok-oauth-token",
+    MINIMAX_API_KEY: undefined,
+    MINIMAX_OAUTH_TOKEN: "minimax-oauth-token",
+  }, async () => {
+    const settings = loadSettings();
+    assert.equal(settings.providers.grok?.authMode, "oauth");
+    assert.equal(settings.providers.grok?.oauthToken, "grok-oauth-token");
+    assert.equal(settings.providers.minimax?.authMode, "oauth");
+    assert.equal(settings.providers.minimax?.oauthToken, "minimax-oauth-token");
+  });
+});
+
 test("settings only auto-inject alias providers when alias envs are set", async () => {
   await withEnv({
     OPENAI_API_KEY: "openai-test-key",
@@ -87,5 +105,26 @@ test("provider registry invalidates cached provider instances", async () => {
     const second = reg.get("minimax");
     assert.ok(second);
     assert.notEqual(first, second);
+  });
+});
+
+test("hosted provider accepts oauth token as bearer credential", async () => {
+  await withEnv({
+    OPENAI_API_KEY: undefined,
+    ANTHROPIC_API_KEY: undefined,
+  }, async () => {
+    const settings = loadSettings();
+    settings.providers.grok = {
+      id: "grok",
+      authMode: "oauth",
+      oauthToken: "oauth-session-token",
+      baseUrl: "https://api.x.ai/v1",
+      model: "grok-4.3",
+    };
+    const reg = new ProviderRegistry(settings);
+    const provider = reg.get("grok");
+    assert.ok(provider);
+    const check = await provider!.isConfigured();
+    assert.equal(check.ok, true);
   });
 });

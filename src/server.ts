@@ -228,7 +228,9 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
             id,
             model: p.model,
             baseUrl: p.baseUrl,
+            authMode: p.authMode,
             hasApiKey: Boolean(p.apiKey),
+            hasOauthToken: Boolean(p.oauthToken),
             label: getProviderPreset(id)?.label ?? id,
           })),
           presets: listProviderPresets().map((preset) => ({
@@ -237,13 +239,17 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
             protocol: preset.protocol,
             defaultBaseUrl: preset.defaultBaseUrl,
             defaultModel: preset.defaultModel,
+            authModes: preset.authModes,
+            defaultAuthMode: preset.defaultAuthMode,
+            authDocsUrl: preset.authDocsUrl,
+            authLaunchUrl: preset.authLaunchUrl,
             description: preset.description,
           })),
         });
         return;
       }
       if (req.method === "POST" && path === "/v1/settings") {
-        const body = await readJson<{ provider?: string; model?: string; baseUrl?: string; apiKey?: string; approval?: string; thinking?: string }>(req);
+        const body = await readJson<{ provider?: string; model?: string; baseUrl?: string; apiKey?: string; oauthToken?: string; authMode?: string; approval?: string; thinking?: string }>(req);
         const settings = runtime.settings;
         const providerId = body.provider?.trim() || settings.defaultProvider;
         if (providerId) {
@@ -252,6 +258,7 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
             id: providerId,
             baseUrl: preset?.defaultBaseUrl,
             model: preset?.defaultModel,
+            authMode: preset?.defaultAuthMode,
           };
           if (body.baseUrl !== undefined) {
             const value = body.baseUrl.trim();
@@ -263,6 +270,21 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
             const value = body.apiKey.trim();
             if (value) profile.apiKey = value;
             else delete profile.apiKey;
+          }
+          if (body.oauthToken !== undefined) {
+            const value = body.oauthToken.trim();
+            if (value) profile.oauthToken = value;
+            else delete profile.oauthToken;
+          }
+          if (body.authMode !== undefined) {
+            const value = body.authMode.trim();
+            if (value === "oauth" || value === "apiKey" || value === "optional") {
+              profile.authMode = value;
+            } else if (preset?.defaultAuthMode) {
+              profile.authMode = preset.defaultAuthMode;
+            } else {
+              delete profile.authMode;
+            }
           }
           if (body.model !== undefined) {
             const value = body.model.trim();

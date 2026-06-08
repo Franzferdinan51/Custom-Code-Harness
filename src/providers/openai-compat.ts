@@ -45,10 +45,11 @@ export class OpenAICompatProvider implements Provider {
 
   async isConfigured(): Promise<{ ok: boolean; reason?: string }> {
     if (!this.cfg.baseUrl) return { ok: false, reason: "missing baseUrl" };
-    // apiKey is required for hosted providers but optional for local (LM Studio, Ollama).
+    // A bearer credential is required for hosted providers but optional
+    // for local servers such as LM Studio or Ollama.
     const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(this.cfg.baseUrl);
     if (!this.cfg.apiKey && !isLocal) {
-      return { ok: false, reason: `missing API key for ${this.id} (set env or settings.json)` };
+      return { ok: false, reason: `missing auth token for ${this.id} (set env or settings.json)` };
     }
     return { ok: true };
   }

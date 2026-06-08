@@ -56,9 +56,9 @@ function buildProvider(id: string, profile: Settings["providers"][string], setti
   const preset = getProviderPreset(id);
   // Anthropic is the only non-OpenAI-compat provider we ship.
   if (preset?.protocol === "anthropic" || id === "anthropic" || id.startsWith("anthropic-")) {
-    const apiKey = profile.apiKey ?? firstEnvValue(preset?.apiKeyEnv) ?? process.env.ANTHROPIC_API_KEY;
+    const apiKey = resolveCredential(profile, preset);
     if (!apiKey) {
-      log.warn(`provider ${id}: missing apiKey (set ANTHROPIC_API_KEY or settings.json)`);
+      log.warn(`provider ${id}: missing credential (set ANTHROPIC_API_KEY or settings.json)`);
       return undefined;
     }
     return new AnthropicProvider({
@@ -68,9 +68,7 @@ function buildProvider(id: string, profile: Settings["providers"][string], setti
     });
   }
   // Everything else: openai-compat.
-  const apiKey =
-    profile.apiKey ??
-    firstEnvValue(preset?.apiKeyEnv) ??
+  const apiKey = resolveCredential(profile, preset) ??
     process.env.OPENAI_API_KEY ??
     process.env[envKeyFor(id)];
   const baseUrl =
@@ -88,6 +86,15 @@ function buildProvider(id: string, profile: Settings["providers"][string], setti
     apiKey,
     defaultModel: profile.model ?? settings.defaultModel ?? firstEnvValue(preset?.modelEnv) ?? preset?.defaultModel ?? "gpt-4o",
   });
+}
+
+function resolveCredential(profile: Settings["providers"][string], preset: ReturnType<typeof getProviderPreset>): string | undefined {
+  const configuredMode = profile.authMode ?? preset?.defaultAuthMode ?? "apiKey";
+  const oauthToken = profile.oauthToken ?? firstEnvValue(preset?.oauthTokenEnv);
+  const apiKey = profile.apiKey ?? firstEnvValue(preset?.apiKeyEnv);
+  if (configuredMode === "oauth") return oauthToken ?? apiKey;
+  if (configuredMode === "optional") return apiKey ?? oauthToken;
+  return apiKey ?? oauthToken;
 }
 
 function envKeyFor(id: string): string {

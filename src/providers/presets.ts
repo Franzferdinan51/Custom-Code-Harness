@@ -1,3 +1,5 @@
+export type ProviderAuthMode = "apiKey" | "oauth" | "optional";
+
 export interface ProviderPreset {
   id: string;
   label: string;
@@ -5,8 +7,13 @@ export interface ProviderPreset {
   defaultBaseUrl?: string;
   defaultModel: string;
   apiKeyEnv: string[];
+  oauthTokenEnv?: string[];
   baseUrlEnv?: string[];
   modelEnv?: string[];
+  authModes: ProviderAuthMode[];
+  defaultAuthMode: ProviderAuthMode;
+  authDocsUrl?: string;
+  authLaunchUrl?: string;
   description?: string;
 }
 
@@ -20,6 +27,9 @@ const PRESETS: Record<string, ProviderPreset> = {
     apiKeyEnv: ["OPENAI_API_KEY"],
     baseUrlEnv: ["OPENAI_BASE_URL"],
     modelEnv: ["OPENAI_MODEL"],
+    authModes: ["apiKey"],
+    defaultAuthMode: "apiKey",
+    authDocsUrl: "https://developers.openai.com/api-reference/authentication",
     description: "Hosted OpenAI API. Uses Bearer API keys.",
   },
   codex: {
@@ -31,6 +41,9 @@ const PRESETS: Record<string, ProviderPreset> = {
     apiKeyEnv: ["CODEX_API_KEY", "OPENAI_API_KEY"],
     baseUrlEnv: ["CODEX_BASE_URL", "OPENAI_BASE_URL"],
     modelEnv: ["CODEX_MODEL", "OPENAI_MODEL"],
+    authModes: ["apiKey"],
+    defaultAuthMode: "apiKey",
+    authDocsUrl: "https://developers.openai.com/api-reference/authentication",
     description: "OpenAI-backed coding profile for Codex-style use.",
   },
   anthropic: {
@@ -42,6 +55,8 @@ const PRESETS: Record<string, ProviderPreset> = {
     apiKeyEnv: ["ANTHROPIC_API_KEY"],
     baseUrlEnv: ["ANTHROPIC_BASE_URL"],
     modelEnv: ["ANTHROPIC_MODEL"],
+    authModes: ["apiKey"],
+    defaultAuthMode: "apiKey",
     description: "Hosted Anthropic API.",
   },
   xai: {
@@ -51,9 +66,14 @@ const PRESETS: Record<string, ProviderPreset> = {
     defaultBaseUrl: "https://api.x.ai/v1",
     defaultModel: "grok-4.3",
     apiKeyEnv: ["XAI_API_KEY"],
+    oauthTokenEnv: ["XAI_OAUTH_TOKEN"],
     baseUrlEnv: ["XAI_BASE_URL"],
     modelEnv: ["XAI_MODEL"],
-    description: "xAI Grok API via OpenAI-compatible endpoints.",
+    authModes: ["oauth", "apiKey"],
+    defaultAuthMode: "oauth",
+    authDocsUrl: "https://docs.x.ai/build/overview",
+    authLaunchUrl: "https://x.ai",
+    description: "xAI Grok API. Supports vendor auth flows or direct API keys.",
   },
   grok: {
     id: "grok",
@@ -61,10 +81,15 @@ const PRESETS: Record<string, ProviderPreset> = {
     protocol: "openai",
     defaultBaseUrl: "https://api.x.ai/v1",
     defaultModel: "grok-4.3",
-    apiKeyEnv: ["GROK_API_KEY", "XAI_API_KEY"],
+    apiKeyEnv: ["GROK_API_KEY", "XAI_API_KEY", "GROK_CODE_XAI_API_KEY"],
+    oauthTokenEnv: ["GROK_OAUTH_TOKEN", "XAI_OAUTH_TOKEN"],
     baseUrlEnv: ["GROK_BASE_URL", "XAI_BASE_URL"],
     modelEnv: ["GROK_MODEL", "XAI_MODEL"],
-    description: "Friendly alias for the xAI Grok API.",
+    authModes: ["oauth", "apiKey"],
+    defaultAuthMode: "oauth",
+    authDocsUrl: "https://docs.x.ai/build/overview",
+    authLaunchUrl: "https://x.ai",
+    description: "Friendly Grok profile. Supports xAI browser auth or direct API keys.",
   },
   minimax: {
     id: "minimax",
@@ -73,9 +98,14 @@ const PRESETS: Record<string, ProviderPreset> = {
     defaultBaseUrl: "https://api.minimax.io/v1",
     defaultModel: "MiniMax-M2.7",
     apiKeyEnv: ["MINIMAX_API_KEY"],
+    oauthTokenEnv: ["MINIMAX_OAUTH_TOKEN", "MINIMAX_AUTH_TOKEN"],
     baseUrlEnv: ["MINIMAX_BASE_URL"],
     modelEnv: ["MINIMAX_MODEL"],
-    description: "MiniMax OpenAI-compatible API. Default model M2.7 — override with MINIMAX_MODEL (e.g. MiniMax-M3).",
+    authModes: ["oauth", "apiKey"],
+    defaultAuthMode: "oauth",
+    authDocsUrl: "https://platform.minimax.io/docs/token-plan/openclaw",
+    authLaunchUrl: "https://platform.minimax.io/docs/token-plan/openclaw",
+    description: "MiniMax OpenAI-compatible API. Supports Token Plan OAuth-style flows or direct API keys.",
   },
   lmstudio: {
     id: "lmstudio",
@@ -86,6 +116,9 @@ const PRESETS: Record<string, ProviderPreset> = {
     apiKeyEnv: ["LMSTUDIO_API_KEY", "LM_API_TOKEN"],
     baseUrlEnv: ["LMSTUDIO_BASE_URL"],
     modelEnv: ["LMSTUDIO_MODEL"],
+    authModes: ["optional", "apiKey"],
+    defaultAuthMode: "optional",
+    authDocsUrl: "https://lmstudio.ai/docs/developer/rest/quickstart",
     description: "Local LM Studio server. API key is optional unless auth is enabled.",
   },
 };

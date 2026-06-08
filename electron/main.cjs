@@ -360,6 +360,17 @@ function buildAppMenu() {
           click: () => { sendMenuCommand("new-session"); },
         },
         {
+          label: "Plan Mode",
+          accelerator: "CmdOrCtrl+Shift+P",
+          click: () => { sendMenuCommand("plan"); },
+        },
+        {
+          label: "Build Mode",
+          accelerator: "CmdOrCtrl+Shift+B",
+          click: () => { sendMenuCommand("build"); },
+        },
+        { type: "separator" },
+        {
           label: "Goal Mode",
           accelerator: "CmdOrCtrl+Shift+G",
           click: () => { sendMenuCommand("goal"); },
@@ -393,7 +404,7 @@ function buildAppMenu() {
       submenu: [
         {
           label: "Open in Browser",
-          accelerator: "CmdOrCtrl+Shift+B",
+          accelerator: "CmdOrCtrl+Shift+O",
           click: () => { shell.openExternal(chUrl + "/"); },
         },
         {
@@ -644,6 +655,12 @@ ipcMain.on("ch:show-logs", () => {
 
 ipcMain.on("ch:reveal-appdata", () => {
   shell.openPath(app.getPath("userData"));
+});
+
+ipcMain.handle("ch:open-external", (_e, url) => {
+  if (typeof url !== "string" || !url.trim()) return false;
+  shell.openExternal(url);
+  return true;
 });
 
 // --- safeStorage / keychain IPC ---

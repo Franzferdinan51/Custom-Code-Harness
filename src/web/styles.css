@@ -1128,6 +1128,16 @@ html, body {
 }
 .settings-btn:hover { background: var(--accent-strong); }
 
+.settings-auth-actions {
+  gap: 8px;
+}
+
+.settings-auth-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .settings-list {
   display: flex;
   flex-direction: column;

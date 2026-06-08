@@ -153,6 +153,11 @@
       </div>
       <div class="settings-meta" id="setting-provider-meta"></div>
       <div class="settings-row">
+        <label>Auth method</label>
+        <select id="setting-auth-mode"></select>
+      </div>
+      <div class="settings-meta" id="setting-auth-meta"></div>
+      <div class="settings-row">
         <label>Model</label>
         <input type="text" id="setting-model" />
       </div>
@@ -160,9 +165,20 @@
         <label>Base URL</label>
         <input type="text" id="setting-baseurl" placeholder="https://api.example.com/v1" />
       </div>
-      <div class="settings-row">
-        <label>API key</label>
+      <div class="settings-row" id="setting-oauth-row">
+        <label id="setting-oauth-label">OAuth token</label>
+        <input type="password" id="setting-oauth-token" placeholder="paste provider session or OAuth token" />
+      </div>
+      <div class="settings-row" id="setting-apikey-row">
+        <label id="setting-apikey-label">API key</label>
         <input type="password" id="setting-apikey" placeholder="optional for local providers" />
+      </div>
+      <div class="settings-row settings-auth-actions">
+        <label>Provider auth docs</label>
+        <div class="settings-auth-buttons">
+          <button class="settings-btn" id="setting-auth-open" type="button">open auth guide</button>
+          <button class="settings-btn" id="setting-auth-launch" type="button">open provider site</button>
+        </div>
       </div>
       <div class="settings-row">
         <label>Approval mode</label>
@@ -190,11 +206,11 @@
       <div class="settings-section desktop-only" hidden>
         <div class="settings-section-title">🖥 Desktop</div>
         <div class="settings-row">
-          <label>API key in Keychain</label>
+          <label>Credentials in Keychain</label>
           <span class="settings-readonly" id="setting-keychain">—</span>
         </div>
         <div class="settings-row desktop-only" hidden>
-          <label>Save API key to Keychain</label>
+          <label>Save credential to Keychain</label>
           <button class="settings-btn" id="setting-keychain-save">Encrypt &amp; Save</button>
         </div>
         <div class="settings-row">

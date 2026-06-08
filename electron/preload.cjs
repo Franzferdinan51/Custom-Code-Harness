@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("ch", {
   info: () => ipcRenderer.invoke("ch:info"),
   showLogs: () => ipcRenderer.send("ch:show-logs"),
   revealAppData: () => ipcRenderer.send("ch:reveal-appdata"),
+  openExternal: (url) => ipcRenderer.invoke("ch:open-external", url),
   // Listen for native menu commands (new session, goal, command palette).
   onMenuCommand: (cb) => on("menu:command", cb),
   // Listen for ch:// deep links.

@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,14 +31,16 @@ test("findProjectRoot: returns the directory containing a package.json with name
 });
 
 test("ch desktop: appears in the subcommand list", () => {
-  // Spot-check the README/help order. The runtime check is that
-  // `ch help` lists "desktop" — we don't run the full CLI here.
-  // This test exists so a future refactor that drops the entry
-  // from the help list is caught.
-  const order = ["chat", "repl", "tui", "run", "agent", "code", "goal", "loop", "doctor", "skills", "agents", "skill", "memory", "cron", "sessions", "init", "serve", "web", "desktop", "update", "export"];
-  assert.ok(order.includes("desktop"));
-  assert.ok(order.indexOf("desktop") < order.indexOf("update"));
-  assert.ok(order.indexOf("desktop") > order.indexOf("web"));
+  const r = spawnSync("bun", ["src/cli.ts", "help"], {
+    cwd: process.cwd(),
+    encoding: "utf-8",
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /desktop/);
+  assert.match(r.stdout, /tree/);
+  assert.match(r.stdout, /fork/);
+  assert.match(r.stdout, /compact/);
 });
 
 test("ALL OK", () => {});

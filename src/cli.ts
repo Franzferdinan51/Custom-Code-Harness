@@ -122,6 +122,18 @@ registerSubcommand("sessions", "List, show, fork, or send to a session.",
   "ch sessions [list|show <id>|fork <id>|send <id> <text>]",
   async (ctx) => { return runSessionsCmd(ctx); });
 
+registerSubcommand("tree", "Show the active session tree (or the session selected with --session/--resume).",
+  "ch tree [--session <id>|--resume <id>|-c]",
+  async (ctx) => { return runTreeCmd(ctx); });
+
+registerSubcommand("fork", "Fork the active session from a previous user message.",
+  "ch fork [--session <id>|--resume <id>|-c] [user-message-id]",
+  async (ctx) => { return runForkCmd(ctx); });
+
+registerSubcommand("compact", "Compact the active session and print the outcome.",
+  "ch compact [--preview|--dry-run] [--session <id>|--resume <id>|-c] [instructions]",
+  async (ctx) => { return runCompactCmd(ctx); });
+
 registerSubcommand("init", "Generate a starter .codingharness/AGENTS.md in the current directory.",
   "ch init",
   async (ctx) => { return runInitCmd(ctx); });
@@ -168,7 +180,7 @@ function showHelp(cmd?: string): number {
     { title: "Run a prompt", blurb: "One-shot, autonomous, or multi-step.",
       names: ["run", "agent", "code", "goal", "loop"] },
     { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling.",
-      names: ["sessions", "memory", "skills", "agents", "skill", "cron", "init", "export"] },
+      names: ["sessions", "tree", "fork", "compact", "memory", "skills", "agents", "skill", "cron", "init", "export"] },
     { title: "Health",         blurb: "Connectivity and diagnostics.",
       names: ["doctor", "diag", "tokens"] },
     { title: "Integrate",      blurb: "MCP server, updates.",
@@ -228,6 +240,8 @@ function showHelp(cmd?: string): number {
   lines.push("  ch code \"explain src/cli.ts\"");
   lines.push("  ch goal \"wire up OAuth for the dashboard\" --max-steps=8");
   lines.push("  ch loop 5 \"run the test suite until it passes\"");
+  lines.push("  ch tree                  # inspect the active session tree");
+  lines.push("  ch compact --preview     # preview a session compaction");
   lines.push("  ch doctor");
   lines.push("  ch sessions");
   lines.push("  ch update");
@@ -320,6 +334,22 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
 }
 
 // ---------- Subcommand handlers ----------
+
+async function hydrateRuntimeSession(runtime: HarnessRuntime, ctx: SubcommandContext): Promise<void> {
+  if (ctx.sessionId) {
+    await runtime.setSession(ctx.sessionId);
+    return;
+  }
+  if (ctx.resume) {
+    await runtime.setSession(ctx.resume);
+    return;
+  }
+  if (ctx.cont) {
+    const { Session } = await import("./agent/session.js");
+    const list = await Session.list(1);
+    if (list[0]) await runtime.setSession(list[0].id);
+  }
+}
 
 async function startReplSession(ctx: SubcommandContext & { initialPrompt?: string }): Promise<number> {
   ensurePaths();
@@ -901,6 +931,63 @@ async function runExportCmd(ctx: SubcommandContext): Promise<number> {
     process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
     return 1;
   }
+}
+
+async function runTreeCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const settings = loadSettings();
+  if (ctx.provider) settings.defaultProvider = ctx.provider;
+  if (ctx.model) settings.defaultModel = ctx.model;
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  try {
+    await hydrateRuntimeSession(runtime, ctx);
+  } catch (e) {
+    process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+    return 1;
+  }
+  const cmd = BUILTIN_REGISTRY.get("tree");
+  if (!cmd) { process.stderr.write("error: /tree command missing\n"); return 1; }
+  const out = await cmd.run("", { cwd: ctx.cwd, runtime: () => runtime });
+  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
+  return 0;
+}
+
+async function runForkCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const settings = loadSettings();
+  if (ctx.provider) settings.defaultProvider = ctx.provider;
+  if (ctx.model) settings.defaultModel = ctx.model;
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  try {
+    await hydrateRuntimeSession(runtime, ctx);
+  } catch (e) {
+    process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+    return 1;
+  }
+  const cmd = BUILTIN_REGISTRY.get("fork");
+  if (!cmd) { process.stderr.write("error: /fork command missing\n"); return 1; }
+  const out = await cmd.run(ctx.args.join(" "), { cwd: ctx.cwd, runtime: () => runtime });
+  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
+  return 0;
+}
+
+async function runCompactCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const settings = loadSettings();
+  if (ctx.provider) settings.defaultProvider = ctx.provider;
+  if (ctx.model) settings.defaultModel = ctx.model;
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  try {
+    await hydrateRuntimeSession(runtime, ctx);
+  } catch (e) {
+    process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+    return 1;
+  }
+  const cmd = BUILTIN_REGISTRY.get("compact");
+  if (!cmd) { process.stderr.write("error: /compact command missing\n"); return 1; }
+  const out = await cmd.run(ctx.args.join(" "), { cwd: ctx.cwd, runtime: () => runtime });
+  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
+  return 0;
 }
 
 function makeLightRuntime(ctx: SubcommandContext): import("./runtime.js").HarnessRuntime {

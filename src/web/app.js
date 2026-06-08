@@ -653,6 +653,15 @@ function primeGoalInput() {
   inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
 }
 
+function exportActiveSession() {
+  const sessionId = state.session || "latest";
+  const prompt = "/export " + sessionId + " --format share";
+  if (state.streaming) return;
+  if (prompt.trim()) {
+    void sendPrompt(prompt, { displayText: "export session " + sessionId });
+  }
+}
+
 function handleDesktopCommand(command) {
   switch (command) {
     case "new-session":
@@ -929,6 +938,7 @@ inputEl.addEventListener("keydown", (e) => {
 $("command-palette-button").addEventListener("click", () => openCommandPalette(""));
 $("goal-button").addEventListener("click", () => primeGoalInput());
 $("quick-goal").addEventListener("click", () => primeGoalInput());
+$("quick-export").addEventListener("click", () => exportActiveSession());
 $("composer-goal")?.addEventListener("click", () => primeGoalInput());
 $("composer-commands")?.addEventListener("click", () => openCommandPalette(""));
 $("composer-new-session")?.addEventListener("click", () => $("new-session").click());

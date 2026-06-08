@@ -135,7 +135,7 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         serveStatic(res, "index.html");
         return;
       }
-      if (req.method === "GET" && (path === "/styles.css" || path === "/app.js" || path === "/favicon.ico")) {
+      if (req.method === "GET" && (path === "/styles.css" || path === "/app.js" || path === "/favicon.ico" || path === "/favicon.svg")) {
         serveStatic(res, path.slice(1));
         return;
       }

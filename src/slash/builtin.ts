@@ -982,7 +982,7 @@ const promptsCommand: SlashCommand = {
   },
 };
 
-// ---------- /mcp (stub) ----------
+// ---------- /mcp ----------
 
 const mcpCommand: SlashCommand = {
   name: "mcp",

@@ -409,6 +409,39 @@ test("/sessions search finds transcript content", async () => {
   assert.match(out!, /search-fixture/);
 });
 
+test("/sessions with no args defaults to list (not the usage string)", async () => {
+  const sessions = BUILTIN_REGISTRY.get("sessions");
+  assert.ok(sessions);
+  // Even with no sessions, the output should be the empty-state
+  // marker or a list, NOT the usage error.
+  const out = await sessions!.run("", { cwd: "/" });
+  assert.ok(typeof out === "string");
+  assert.doesNotMatch(out!, /^usage:/);
+  assert.match(out!, /\(no sessions\)|Recent sessions:/);
+});
+
+test("/memory with no args defaults to read", async () => {
+  const memory = BUILTIN_REGISTRY.get("memory");
+  assert.ok(memory);
+  // /memory with no runtime means "memory not available", which is
+  // a different early-return — but with a runtime that has memory,
+  // the no-arg call should call read() and print the buffer.
+  const buf: string[] = [];
+  const rt = {
+    memory: {
+      read() { return buf.join(""); },
+      async append(_t: string) { /* noop */ },
+      async search(_q: string) { return ""; },
+      readUser() { return ""; },
+      async appendUser(_t: string) { /* noop */ },
+    },
+  };
+  buf.push("test memory entry\n");
+  const out = await memory!.run("", { cwd: "/", runtime: () => rt as never });
+  assert.ok(typeof out === "string");
+  assert.match(out!, /test memory entry/);
+});
+
 test("/info renders the runtime snapshot", async () => {
   const info = BUILTIN_REGISTRY.get("info");
   assert.ok(info);

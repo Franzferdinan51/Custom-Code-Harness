@@ -256,7 +256,7 @@ const sessionsCommand: SlashCommand = {
   group: "session",
   usage: "/sessions [list|show <id>|send <id> <text>|fork <id>]",
   async run(args, ctx) {
-    const parts = args.trim().split(/\s+/);
+    const parts = args.trim().split(/\s+/).filter((s) => s.length > 0);
     const sub = parts[0] ?? "list";
     if (sub === "list") {
       const list = await Session.list(20);
@@ -712,7 +712,7 @@ const memoryCommand: SlashCommand = {
   async run(args, ctx) {
     const rt = ctx.runtime?.() as { memory?: { read(): string; append(t: string): Promise<void>; search(q: string): Promise<string>; readUser(): string; appendUser(t: string): Promise<void> } } | undefined;
     if (!rt?.memory) return "(memory store not available)";
-    const parts = args.trim().split(/\s+/);
+    const parts = args.trim().split(/\s+/).filter((s) => s.length > 0);
     const sub = parts[0] ?? "read";
     if (sub === "read") return rt.memory.read() || "(empty)";
     if (sub === "user") return rt.memory.readUser() || "(empty)";

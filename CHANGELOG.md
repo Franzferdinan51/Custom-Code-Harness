@@ -796,3 +796,38 @@ All notable changes to CodingHarness are documented here. Format follows
 
 [0.2.0]: https://github.com/Franzferdinan51/CodingHarness/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Franzferdinan51/CodingHarness/releases/tag/v0.1.0
+
+- **Codex OAuth device-flow end-to-end test suite**
+  (`src/__tests__/codex-oauth.test.ts`,
+  `src/providers/oauth/codex.ts`): round-3 follow-up to the codex
+  ChatGPT OAuth device flow. The runtime layer was already shipped
+  in round 2; this round pins the full happy / denied / refresh
+  flow with mocked auth.openai.com endpoints, plus a small fix to
+  the poll handler so RFC 8628 §3.5 terminal errors surface
+  cleanly.
+  - **New file `src/__tests__/codex-oauth.test.ts`** (6 tests, all
+    pass; whole file runs in <2s). Spins up a real
+    `http.createServer` on `127.0.0.1:<random-port>` and routes the
+    real `https://auth.openai.com/...` URLs through it via the
+    public `fetchFn` hook on `CodexOAuthLoginHooks` — NO
+    `globalThis.fetch` monkey-patching. Each test isolates the
+    `~/.codingharness/` dir to a fresh `mkdtempSync` tmp home
+    and ALSO clears every hosted-credential env var
+    (`OPENAI_API_KEY`, `MINIMAX_API_KEY`, etc.) so `mergeWithEnv`
+    doesn't override the test's own `defaultProvider = "codex"`
+    assertion. Tests cover: happy path (device code → poll → exchange
+    → CodexProvider picks up tokens, all URLs routed through the
+    mock), denied path (poll returns 403 access_denied → runtime
+    returns `{ok:false, reason:denied}`, no exchange), refresh
+    path (seed an expired token, run `ensureFreshCodexTokens`,
+    confirm new tokens persisted), unit path (every low-level
+    helper hits the mock).
+  - **codex.ts fix**: `pollCodexDeviceAuthorization` now parses
+    403 response bodies per RFC 8628 §3.5 — `access_denied` throws
+    `Error("denied")` and `expired_token` throws `Error("expired")`
+    (so the runtime surfaces the matching `reason`). The 15-min
+    client deadline also now throws `Error("expired")` (was
+    previously a less-actionable message).
+  - Test count: 213 → 230 (in the worktree). All new codex tests
+    pass; pre-existing 11 failures (MCP stdio, on-disk
+    settings.json injection) unchanged.

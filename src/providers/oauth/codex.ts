@@ -138,6 +138,29 @@ export async function pollCodexDeviceAuthorization(
       return { authorizationCode, codeVerifier };
     }
     if (res.status === 403 || res.status === 404) {
+      // RFC 8628 §3.5: poll responses can carry terminal error codes.
+      // The most common ones are `access_denied` (the user clicked
+      // "Deny" in the browser) and `expired_token` (the user sat
+      // on the device-code screen past the 15-minute deadline). The
+      // spec also allows `slow_down` and `authorization_pending` —
+      // those are non-terminal, so we treat them as ordinary poll
+      // responses and keep retrying until either the user approves
+      // or our own deadline fires.
+      try {
+        const errBody = JSON.parse(bodyText) as { error?: string };
+        if (errBody.error === "access_denied") {
+          throw new Error("denied");
+        }
+        if (errBody.error === "expired_token") {
+          throw new Error("expired");
+        }
+      } catch (e) {
+        // Re-throw our terminal signals, but swallow JSON parse
+        // errors so a malformed 403 body doesn't break the flow.
+        if (e instanceof Error && (e.message === "denied" || e.message === "expired")) {
+          throw e;
+        }
+      }
       const remaining = Math.max(0, deadline - Date.now());
       const delay = Math.min(Math.max(prompt.intervalMs, MIN_POLL_MS), remaining);
       await sleep(delay);
@@ -145,7 +168,7 @@ export async function pollCodexDeviceAuthorization(
     }
     throw new Error(formatOAuthError("device authorization failed", res.status, bodyText));
   }
-  throw new Error("device authorization timed out after 15 minutes");
+  throw new Error("expired");
 }
 
 /** Step 3: exchange authorization code for OAuth tokens. */

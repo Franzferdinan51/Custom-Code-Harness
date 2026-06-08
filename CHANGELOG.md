@@ -7,6 +7,28 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **`/v1/todo` HTTP endpoints + web todo sidebar** (`src/server.ts`,
+  `src/web/index.html`, `src/web/styles.css`, `src/web/app.js`,
+  `src/__tests__/info-endpoints.test.ts`): round 2 of the
+  `/todo` work. The slash + CLI surfaces were shipped in the
+  previous commit; this round exposes the in-session todo
+  list over HTTP and surfaces it in the web sidebar so the
+  user can see what the agent is working on and add/remove
+  items without typing a command.
+  - `GET /v1/todo` — returns the current list
+  - `POST /v1/todo` — `{ items }` replaces, `{ action: add,
+    item }` appends, `{ action: clear }` empties
+  - The endpoints share `HarnessRuntime.readTodo()` /
+    `writeTodo()` with the slash + CLI surfaces, so all
+    three read from the same backing array.
+  - The web sidebar renders the list with × buttons to
+    remove items and an inline input that adds a new item
+    on Enter. Refreshes every 10s and immediately after
+    add/remove. Mirrors the slash + CLI behavior.
+  - 5 new tests cover: GET empty, POST with items replaces,
+    POST `action=add` appends, POST `action=clear` empties,
+    POST missing fields returns 400.
+
 - **`/todo` slash command + `ch todo` CLI subcommand**
   (`src/slash/builtin.ts`, `src/cli.ts`, `src/runtime.ts`,
   `src/slash/registry.ts`, `src/__tests__/slash.test.ts`):

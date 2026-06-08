@@ -43,6 +43,11 @@ interface SubcommandContext {
   stdio?: boolean;
   approveBash?: boolean;
   allowRemote?: boolean;
+  lint?: boolean;
+  fix?: boolean;
+  oauth?: boolean;
+  authChoice?: string;
+  apiKey?: string;
 }
 
 const SUBCOMMANDS = new Map<string, { description: string; usage: string; run: SubcommandHandler }>();
@@ -98,20 +103,20 @@ registerSubcommand("loop", "Re-send the previous (or new) prompt N times, with o
   "ch loop [N] [sentinel] <prompt>  (or: ch loop N)",
   async (ctx) => { return runLoopCmd(ctx); });
 
-registerSubcommand("doctor", "Run diagnostics and print the report.",
-  "ch doctor",
+registerSubcommand("doctor", "Run diagnostics (OpenClaw-style: --lint --json --fix).",
+  "ch doctor [--lint] [--json] [--fix]",
   async (ctx) => { return runDoctorCmd(ctx); });
 
 registerSubcommand("welcome", "Print the quick-start card (4 commands to get going).",
   "ch welcome",
   async (_ctx) => { return runWelcomeCmd(); });
 
-registerSubcommand("onboard", "First-run setup wizard: pick a provider, save a key, test it.",
-  "ch onboard",
+registerSubcommand("onboard", "First-run setup wizard (OpenClaw-style auth choices).",
+  "ch onboard [--provider <id>] [--oauth | --api-key <key>]",
   async (ctx) => { return runOnboardCmd(ctx); });
 
 registerSubcommand("provider", "Show, switch, or set up a provider (interactive on first run).",
-  "ch provider [list|setup <id> [key]|set-key <id> <key>|<id> [model]]",
+  "ch provider [list|setup <id> [key]|set-key <id> <key>|models [id]|<id> [model]]",
   async (ctx) => { return runProviderCmd(ctx); });
 
 registerSubcommand("diag", "Run a connectivity / latency check against the current provider + model.",
@@ -166,9 +171,13 @@ registerSubcommand("init", "Generate a starter .codingharness/AGENTS.md in the c
   "ch init",
   async (ctx) => { return runInitCmd(ctx); });
 
-registerSubcommand("serve", "Run a headless HTTP server that exposes the agent over an API + web UI.",
+registerSubcommand("serve", "Run a headless HTTP server that exposes the agent over an API + web UI (OpenCode-style sidecar).",
   "ch serve [--port <n>] [--host <addr>] [--no-open]",
   async (ctx) => { return runServeCmd(ctx); });
+
+registerSubcommand("attach", "Attach a terminal REPL to a running ch serve instance (OpenCode attach).",
+  "ch attach <url>   e.g. ch attach http://127.0.0.1:7777",
+  async (ctx) => { return runAttachCmd(ctx); });
 
 registerSubcommand("web", "Start the server AND open the web UI in your default browser.",
   "ch web [--port <n>] [--host <addr>]",
@@ -203,8 +212,8 @@ function showHelp(cmd?: string): number {
   // Grouped subcommand layout. Easy to scan; new users see "Get started"
   // first, then categories. Mirrors the desktop app's Quick Actions row.
   const groups: Array<{ title: string; blurb: string; names: string[] }> = [
-    { title: "Get started", blurb: "Open the harness.",
-      names: ["chat", "tui", "repl", "web", "desktop", "welcome", "onboard", "provider"] },
+    { title: "Get started", blurb: "Open the harness (OpenCode: serve + attach + web + desktop).",
+      names: ["chat", "tui", "repl", "serve", "attach", "web", "desktop", "welcome", "onboard", "provider"] },
     { title: "Run a prompt", blurb: "One-shot, autonomous, or multi-step.",
       names: ["run", "agent", "code", "goal", "loop"] },
     { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling.",
@@ -221,11 +230,13 @@ function showHelp(cmd?: string): number {
     "",
     "Usage: ch <subcommand> [args...]",
     "",
-    "Quick start:",
-    "  ch                        # open the TUI (or `ch web` for the browser UI)",
-    "  ch agent \"fix the login bug\"  # one-shot autonomous run",
-    "  ch goal \"wire OAuth\"      # multi-step plan-and-execute",
-    "  ch doctor                 # verify provider + env",
+    "Quick start (OpenCode server-first + OpenClaw onboarding):",
+    "  ch                        # open the TUI",
+    "  ch serve                  # start the shared HTTP sidecar",
+    "  ch attach http://127.0.0.1:7777   # terminal client to that server",
+    "  ch web / ch desktop       # browser or Electron shell (same backend)",
+    "  ch onboard --provider minimax --oauth   # OpenClaw-style provider auth",
+    "  ch doctor --lint --json   # CI-friendly health check",
     "",
   ];
   for (const g of groups) {
@@ -242,7 +253,7 @@ function showHelp(cmd?: string): number {
   lines.push("");
   lines.push("Common options (work with most subcommands):");
   lines.push("  --cwd <path>          Working directory (default: process.cwd)");
-  lines.push("  --provider <id>       Provider id (openai, anthropic, openrouter, ...)");
+  lines.push("  --provider <id>       Provider id (default: lmstudio — openai, anthropic, ...)");
   lines.push("  --model <name>        Model name (e.g. gpt-4o, claude-sonnet-4-5)");
   lines.push("  -c, --continue        Continue the most recent session");
   lines.push("  -r, --resume [id]     Resume a session (lists if no id)");
@@ -336,6 +347,11 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
         stdio: { type: "boolean" },
         "approve-bash": { type: "boolean" },
         "allow-remote": { type: "boolean" },
+        lint: { type: "boolean" },
+        fix: { type: "boolean" },
+        oauth: { type: "boolean" },
+        "auth-choice": { type: "string" },
+        "api-key": { type: "string" },
       },
       allowPositionals: true,
       strict: false,
@@ -363,6 +379,11 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
     stdio: !!parsed.values.stdio,
     approveBash: !!parsed.values["approve-bash"],
     allowRemote: !!parsed.values["allow-remote"],
+    lint: !!parsed.values.lint,
+    fix: !!parsed.values.fix,
+    oauth: !!parsed.values.oauth,
+    authChoice: parsed.values["auth-choice"] ? String(parsed.values["auth-choice"]) : undefined,
+    apiKey: parsed.values["api-key"] ? String(parsed.values["api-key"]) : undefined,
   };
 }
 
@@ -600,10 +621,30 @@ async function runLoopCmd(ctx: SubcommandContext): Promise<number> {
 }
 
 async function runDoctorCmd(ctx: SubcommandContext): Promise<number> {
-  const { runDiagnostics, renderDiagnostics } = await import("./doctor.js");
-  const items = await runDiagnostics({ cwd: ctx.cwd });
-  process.stdout.write(renderDiagnostics(items) + "\n");
-  return 0;
+  const {
+    runDiagnostics,
+    renderDiagnostics,
+    renderDiagnosticsJson,
+    summarizeDiagnostics,
+    applyDoctorFixes,
+  } = await import("./doctor.js");
+  let items = await runDiagnostics({ cwd: ctx.cwd });
+  if (ctx.fix) {
+    const applied = applyDoctorFixes(items);
+    if (applied.length > 0) {
+      for (const line of applied) process.stdout.write("fixed: " + line + "\n");
+      items = await runDiagnostics({ cwd: ctx.cwd });
+    }
+  }
+  if (ctx.json) {
+    process.stdout.write(renderDiagnosticsJson(items) + "\n");
+  } else {
+    process.stdout.write(renderDiagnostics(items) + "\n");
+  }
+  const summary = summarizeDiagnostics(items);
+  if (ctx.lint && !summary.ok) return 1;
+  if (ctx.lint && summary.warnings > 0) return 2;
+  return summary.errors > 0 ? 1 : 0;
 }
 
 /** Print the same quick-start card the TUI shows on launch. Shared
@@ -624,11 +665,88 @@ async function runOnboardCmd(ctx: SubcommandContext): Promise<number> {
   ensurePaths();
   const { HarnessRuntime } = await import("./runtime.js");
   const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const providerId = ctx.provider ?? ctx.authChoice;
+  const useOauth = !!ctx.oauth || (ctx.authChoice?.includes("oauth") ?? false);
+
+  if (providerId) {
+    const { getProviderPreset } = await import("./providers/presets.js");
+    const preset = getProviderPreset(providerId);
+    if (!preset) {
+      process.stderr.write("unknown provider: " + providerId + "\n");
+      return 2;
+    }
+    if (providerId === "codex" && (useOauth || preset.defaultAuthMode === "oauth")) {
+      return runProviderCmd({ ...ctx, args: ["login", "codex"] });
+    }
+    if (useOauth && preset.authModes.includes("oauth")) {
+      const { createInterface } = await import("node:readline");
+      const { execFile } = await import("node:child_process");
+      process.stdout.write("OpenClaw-style OAuth setup for " + preset.label + "\n");
+      if (preset.authLaunchUrl) {
+        process.stdout.write("  1. Sign in: " + preset.authLaunchUrl + "\n");
+        const cmd = process.platform === "darwin" ? "open" :
+                    process.platform === "win32" ? "start" : "xdg-open";
+        const args = process.platform === "win32" ? ["", preset.authLaunchUrl] : [preset.authLaunchUrl];
+        await new Promise<void>((resolve) => {
+          execFile(cmd, args, () => resolve());
+        }).catch(() => { /* browser open is best-effort */ });
+      }
+      process.stdout.write("  2. Paste the OAuth/session token below.\n");
+      const token = await new Promise<string>((resolve) => {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        rl.question("OAuth token: ", (answer) => { rl.close(); resolve(answer.trim()); });
+      });
+      if (!token || token.length < 8) {
+        process.stderr.write("token too short (≥8 chars)\n");
+        return 2;
+      }
+      runtime.settings.providers[providerId] = {
+        id: providerId,
+        authMode: "oauth",
+        oauthToken: token,
+        baseUrl: preset.defaultBaseUrl,
+        model: preset.defaultModel,
+      };
+      runtime.settings.defaultProvider = providerId;
+      runtime.settings.defaultModel = preset.defaultModel;
+      const { saveSettings } = await import("./config/settings.js");
+      saveSettings(runtime.settings);
+      process.stdout.write("✓ saved OAuth token for " + preset.label + "\n");
+      return 0;
+    }
+    if (ctx.apiKey) {
+      const save = await runtime.saveProviderApiKey(providerId, ctx.apiKey);
+      if (!save.ok) {
+        process.stderr.write("could not save key: " + (save.reason ?? "unknown") + "\n");
+        return 1;
+      }
+      process.stdout.write("✓ saved API key for " + preset.label + "\n");
+      return 0;
+    }
+    const { renderProviderSetup } = await import("./provider/setup.js");
+    process.stdout.write(renderProviderSetup(preset) + "\n");
+    process.stdout.write("\nTip: ch onboard --provider " + providerId + " --oauth\n");
+    process.stdout.write("     ch onboard --provider " + providerId + " --api-key <key>\n");
+    return 0;
+  }
+
   const cmd = BUILTIN_REGISTRY.get("onboard");
   if (!cmd) { process.stderr.write("error: /onboard command missing\n"); return 1; }
   const out = await cmd.run("", { cwd: ctx.cwd, runtime: () => runtime });
   if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
   return 0;
+}
+
+async function runAttachCmd(ctx: SubcommandContext): Promise<number> {
+  const url = ctx.args[0];
+  if (!url) {
+    process.stderr.write("usage: ch attach <url>\n");
+    process.stderr.write("example: ch attach http://127.0.0.1:7777\n");
+    process.stderr.write("\nStart a server first:  ch serve --port 7777\n");
+    return 2;
+  }
+  const { runAttachClient } = await import("./attach-client.js");
+  return runAttachClient({ baseUrl: url });
 }
 
 /** `ch provider` — list, set up, set a key, or fast-switch.
@@ -703,6 +821,74 @@ async function runProviderCmd(ctx: SubcommandContext): Promise<number> {
     }
     process.stdout.write("✓ saved API key for " + id + "\n");
     return 0;
+  }
+
+  // `ch provider login codex` — Codex device-code OAuth.
+  if (sub === "login") {
+    const target = ctx.args[1];
+    if (target !== "codex") {
+      process.stderr.write("usage: ch provider login codex\n");
+      return 2;
+    }
+    const { buildCodexBrowserAuthUrl } = await import("./providers/oauth/codex.js");
+    const { execFile } = await import("node:child_process");
+    process.stdout.write("Starting Codex (ChatGPT) device-code login…\n");
+    const login = await runtime.loginCodexOAuth({
+      onProgress: (m) => { process.stdout.write(m + "\n"); },
+      onDeviceCode: async (prompt) => {
+        process.stdout.write("\nSign in with ChatGPT:\n");
+        process.stdout.write("  URL:  " + buildCodexBrowserAuthUrl(prompt) + "\n");
+        process.stdout.write("  Code: " + prompt.userCode + "\n\n");
+      },
+      openBrowser: async (url) => {
+        const cmd = process.platform === "darwin" ? "open" :
+                    process.platform === "win32" ? "start" : "xdg-open";
+        const args = process.platform === "win32" ? ["", url] : [url];
+        await new Promise<void>((resolve, reject) => {
+          execFile(cmd, args, (err) => err ? reject(err) : resolve());
+        }).catch(() => {
+          process.stdout.write("(could not open browser — copy the URL above)\n");
+        });
+      },
+    });
+    if (!login.ok) {
+      process.stderr.write("✗ login failed: " + (login.reason ?? "unknown") + "\n");
+      return 1;
+    }
+    process.stdout.write("✓ Codex OAuth saved\n");
+    process.stdout.write("  model: " + (runtime.model() ?? "(unset)") + "\n");
+    return 0;
+  }
+
+  // `ch provider models [id]` — live /v1/models discovery.
+  if (sub === "models") {
+    const targetId = ctx.args[1] ?? runtime.providerId();
+    if (!targetId) {
+      process.stderr.write("usage: ch provider models [id]\n");
+      return 2;
+    }
+    const provider = runtime.providerRegistry.get(targetId);
+    if (!provider) {
+      process.stderr.write("provider not configured: " + targetId + "\n");
+      return 1;
+    }
+    if (typeof provider.listModels !== "function") {
+      process.stderr.write("provider " + targetId + " does not support model discovery\n");
+      return 1;
+    }
+    try {
+      const models = await provider.listModels();
+      if (models.length === 0) {
+        process.stdout.write("(no models returned from " + targetId + " — server may be offline)\n");
+        return 0;
+      }
+      process.stdout.write("Models served by " + targetId + " (" + models.length + "):\n");
+      for (const m of models) process.stdout.write("  " + m + "\n");
+      return 0;
+    } catch (e) {
+      process.stderr.write("listModels failed: " + (e as Error).message + "\n");
+      return 1;
+    }
   }
 
   // `ch provider` (no args) or `ch provider <id> [model]` — fast switch.

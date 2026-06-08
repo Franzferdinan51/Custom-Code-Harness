@@ -2,6 +2,8 @@
 
 A versatile terminal coding harness — multi-provider, extensible, crash-resistant. Web UI + native desktop app.
 
+**Design influences (primary):** [OpenCode](https://opencode.ai) (server-first CLI/desktop — `ch serve` + `ch attach` + shared web UI, OpenTUI, `@file` / `!shell` input prefixes, Build/Plan modes) and [OpenClaw](https://openclaw.ai) (onboard auth choices, doctor `--lint --json`, SOUL.md/TOOLS.md workspace context, `/think`/`/verbose`/`/trace` directives, multi-agent routing).
+
 ## Setup commands
 
 - Install deps: `npm install`

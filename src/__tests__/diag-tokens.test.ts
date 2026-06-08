@@ -51,21 +51,30 @@ test("buildSystemPrompt is public and returns a non-empty system prompt", async 
   }
 });
 
-test("runDiag() reports a clear error when no provider is configured", async () => {
+test("runDiag() defaults to lmstudio when no hosted credentials are set", async () => {
   const home = makeHome();
   const previousHome = process.env.CODINGHARNESS_HOME;
+  const prevKeys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY", "MINIMAX_API_KEY"] as const;
+  const saved = new Map<string, string | undefined>();
+  for (const key of prevKeys) saved.set(key, process.env[key]);
+  for (const key of prevKeys) delete process.env[key];
   process.env.CODINGHARNESS_HOME = home;
   try {
+    const { resetSettingsCache } = await import("../config/settings.js");
+    resetSettingsCache();
     const rt = new HarnessRuntime({ cwd: home, ephemeral: true });
-    // No OPENAI_API_KEY, etc. — the registry will be empty.
+    assert.equal(rt.providerId(), "lmstudio");
     const r = await rt.runDiag();
-    assert.equal(r.ok, false);
-    assert.ok(r.error, "expected an error message");
+    // LM Studio may not be running in CI — either succeeds or fails with a
+    // connection error, but never "no provider configured".
+    if (!r.ok) assert.notEqual(r.error, "no provider configured");
     assert.equal(typeof r.firstByteMs, "number");
     assert.equal(typeof r.totalMs, "number");
-    assert.equal(r.inputTokens, 0);
-    assert.equal(r.outputTokens, 0);
   } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     if (previousHome === undefined) delete process.env.CODINGHARNESS_HOME;
     else process.env.CODINGHARNESS_HOME = previousHome;
     rmSync(home, { recursive: true, force: true });

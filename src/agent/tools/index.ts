@@ -14,6 +14,7 @@ import { memoryTool } from "./memory.js";
 import { httpTool } from "./http.js";
 import { webSearchTool } from "./web-search.js";
 import { todoTool } from "./todo.js";
+import { generateImageTool } from "./generate-image.js";
 
 export { ToolRegistry } from "./registry.js";
 export type { Tool, ToolContext } from "./registry.js";
@@ -30,6 +31,8 @@ export function defaultToolRegistry(): ToolRegistry {
   r.register(httpTool);
   r.register(webSearchTool);
   r.register(todoTool);
+  // Always registered; returns a helpful error when the active provider lacks image output.
+  r.register(generateImageTool);
   // The two tool-of-tools (spawn_subagent, skill) are registered
   // by the runtime after SubAgentManager / SkillRegistry are wired.
   r._registerRaw(spawnSubagentTool);

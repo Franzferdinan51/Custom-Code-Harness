@@ -15,7 +15,8 @@ export interface ContextFile {
   body: string;
 }
 
-const FILE_NAMES = ["AGENTS.md", "CLAUDE.md"];
+/** Project + workspace context files (OpenClaw SOUL/TOOLS + OpenCode AGENTS.md). */
+const FILE_NAMES = ["AGENTS.md", "CLAUDE.md", "SOUL.md", "TOOLS.md"];
 
 export async function loadContextFiles(cwd: string, opts: { includeUserCodingharness?: boolean } = {}): Promise<ContextFile[]> {
   const out: ContextFile[] = [];

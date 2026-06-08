@@ -28,6 +28,9 @@ const state = {
   composerMode: "build",
   providerPresets: [],
   providerProfiles: [],
+  attachments: [],
+  reasoningBuffer: "",
+  currentReasoningEl: null,
 };
 
 // ---------- DOM helpers ----------
@@ -244,15 +247,17 @@ function addMessage({ kind, text, meta }) {
 }
 
 function appendToStream(text) {
+  if (!text) return;
+  state.streamBuffer += text;
   if (!state.currentStreamEl) {
     state.currentStreamEl = addMessage({ kind: "assistant", text: "" });
     state.currentStreamEl.classList.add("streaming");
   }
-  // Append to the body — for streaming, simplest: re-render. For better perf, use a text node.
   const body = state.currentStreamEl.querySelector(".message-body");
-  // Clear and re-render (cheap for our sizes).
+  const reasoning = body.querySelector(".message-reasoning");
   body.innerHTML = "";
-  body.appendChild(renderText(state.streamBuffer + text));
+  if (reasoning) body.appendChild(reasoning);
+  body.appendChild(renderText(state.streamBuffer));
   scrollToBottom();
 }
 
@@ -262,6 +267,81 @@ function endStream() {
     state.currentStreamEl = null;
   }
   state.streamBuffer = "";
+  state.reasoningBuffer = "";
+  state.currentReasoningEl = null;
+}
+
+function ensureReasoningBlock() {
+  if (!state.currentStreamEl) {
+    state.currentStreamEl = addMessage({ kind: "assistant", text: "" });
+    state.currentStreamEl.classList.add("streaming");
+  }
+  if (!state.currentReasoningEl) {
+    const details = el("details", { class: "message-reasoning" });
+    const summary = el("summary", {}, "Thinking…");
+    const body = el("div", { class: "message-reasoning-body" });
+    details.appendChild(summary);
+    details.appendChild(body);
+    const bodyHost = state.currentStreamEl.querySelector(".message-body");
+    bodyHost.insertBefore(details, bodyHost.firstChild);
+    state.currentReasoningEl = body;
+  }
+  return state.currentReasoningEl;
+}
+
+function appendReasoning(text) {
+  if (!text) return;
+  state.reasoningBuffer += text;
+  const block = ensureReasoningBlock();
+  block.textContent = state.reasoningBuffer;
+  scrollToBottom();
+}
+
+function addImageMessage(url, mimeType) {
+  const m = el("div", { class: "message message-assistant message-image" });
+  m.appendChild(el("div", { class: "message-prefix" }, ["🖼"]));
+  const body = el("div", { class: "message-body" });
+  const img = el("img", { src: url, alt: "generated image" });
+  if (mimeType) img.dataset.mime = mimeType;
+  body.appendChild(img);
+  m.appendChild(body);
+  messagesEl.appendChild(m);
+  scrollToBottom();
+  return m;
+}
+
+function renderAttachmentPreview() {
+  const host = $("attachment-preview");
+  if (!host) return;
+  host.innerHTML = "";
+  if (state.attachments.length === 0) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  state.attachments.forEach((att, index) => {
+    const chip = el("div", { class: "attachment-chip" });
+    if (att.mimeType?.startsWith("image/") || att.url.startsWith("data:image/")) {
+      chip.appendChild(el("img", { src: att.url, alt: att.name || "attachment" }));
+    }
+    chip.appendChild(document.createTextNode(att.name || "image"));
+    const remove = el("button", { type: "button", title: "Remove attachment" }, "×");
+    remove.addEventListener("click", () => {
+      state.attachments.splice(index, 1);
+      renderAttachmentPreview();
+    });
+    chip.appendChild(remove);
+    host.appendChild(chip);
+  });
+}
+
+async function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("could not read file"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function addToolCall({ name, status, detail }) {
@@ -806,16 +886,33 @@ async function sendPrompt(prompt, opts = {}) {
   $("send-button").disabled = true;
   $("send-button").textContent = "running…";
   state.streamBuffer = "";
+  state.reasoningBuffer = "";
+  state.currentReasoningEl = null;
+
+  const attachments = (opts.attachments ?? state.attachments).map((att) => ({
+    type: att.type || "image",
+    url: att.url,
+    mimeType: att.mimeType,
+  }));
 
   // Echo user message.
-  addMessage({ kind: "user", text: opts.displayText || prompt });
+  const userText = opts.displayText || prompt;
+  const userMsg = addMessage({ kind: "user", text: userText });
+  if (attachments.length > 0) {
+    const body = userMsg.querySelector(".message-body");
+    for (const att of attachments) {
+      if (att.mimeType?.startsWith("image/") || att.url.startsWith("data:image/")) {
+        body.appendChild(el("div", { class: "message-image" }, [el("img", { src: att.url, alt: "attachment" })]));
+      }
+    }
+  }
 
   try {
     await refreshStatus();
     const res = await fetch("/v1/chat/stream", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, attachments: attachments.length > 0 ? attachments : undefined }),
     });
     if (!res.ok) {
       let detail = res.statusText;
@@ -864,6 +961,8 @@ async function sendPrompt(prompt, opts = {}) {
     state.streaming = false;
     $("send-button").disabled = false;
     $("send-button").textContent = "send";
+    state.attachments = [];
+    renderAttachmentPreview();
     refreshUsage();
     refreshSessions();
   }
@@ -872,6 +971,8 @@ async function sendPrompt(prompt, opts = {}) {
 async function handleEvent(event, p, _resolveApproval) {
   switch (event) {
     case "text":       appendToStream(p.text || ""); break;
+    case "reasoning":  appendReasoning(p.text || ""); break;
+    case "image":      addImageMessage(p.url || "", p.mimeType); break;
     case "tool_start": addToolCall({ name: p.name, status: "run" }); break;
     case "tool_end":
       // Find the last "run" tool call with this name and update its status.
@@ -1111,6 +1212,61 @@ async function resumeSession(id) {
   } catch (e) { addMessage({ kind: "error", text: "resume: " + e.message }); }
 }
 
+// ---------- Provider select (grouped catalog) ----------
+
+const PROVIDER_GROUP_LABELS = {
+  primary: "Default (local)",
+  hosted: "Hosted (OpenAI, Grok, MiniMax, Codex, …)",
+  local: "Local alternatives",
+};
+const PROVIDER_TIER_ORDER = ["primary", "hosted", "local"];
+
+function labelForProviderOption(preset, profiles, labelMode) {
+  if (labelMode === "defaultModel") {
+    return preset.label + (preset.defaultModel ? "  (" + preset.defaultModel + ")" : "");
+  }
+  const configured = profiles?.find((item) => item.id === preset.id);
+  return preset.label + (configured?.model ? " (" + configured.model + ")" : "");
+}
+
+/** Populate a provider <select> with tiered <optgroup>s so hosted APIs stay prominent. */
+function fillProviderSelect(select, presets, profiles, options = {}) {
+  const { labelMode = "configured", groupOrder = null } = options;
+  select.innerHTML = "";
+  const seen = new Set();
+  const byTier = { primary: [], hosted: [], local: [] };
+  for (const preset of presets) {
+    const tier = preset.tier && byTier[preset.tier] ? preset.tier : "hosted";
+    byTier[tier].push(preset);
+  }
+  for (const tier of PROVIDER_TIER_ORDER) {
+    let items = byTier[tier];
+    if (!items.length) continue;
+    const order = groupOrder?.[tier];
+    if (order?.length) {
+      items = [...items].sort((a, b) => {
+        const ia = order.indexOf(a.id);
+        const ib = order.indexOf(b.id);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      });
+    }
+    const optgroup = el("optgroup", { label: PROVIDER_GROUP_LABELS[tier] });
+    for (const preset of items) {
+      seen.add(preset.id);
+      optgroup.appendChild(
+        el("option", { value: preset.id }, labelForProviderOption(preset, profiles, labelMode))
+      );
+    }
+    select.appendChild(optgroup);
+  }
+  for (const provider of profiles || []) {
+    if (seen.has(provider.id)) continue;
+    const suffix = provider.model ? " (" + provider.model + ")" : "";
+    const text = provider.label || provider.id + suffix;
+    select.appendChild(el("option", { value: provider.id }, text));
+  }
+}
+
 // ---------- Settings ----------
 
 const settingsModal = $("settings-modal");
@@ -1186,6 +1342,9 @@ function syncProviderSettingsForm() {
   ].filter(Boolean).join(" ");
   $("setting-oauth-row").hidden = !authModes.includes("oauth");
   $("setting-apikey-row").hidden = !(authModes.includes("apiKey") || authModes.includes("optional"));
+  const showCodexLogin = selectedId === "codex" && authModes.includes("oauth") && selectedAuthMode === "oauth";
+  $("setting-codex-login-row").hidden = !showCodexLogin;
+  $("setting-codex-login-meta").hidden = !showCodexLogin;
   $("setting-oauth-label").textContent = selectedAuthMode === "oauth" ? "OAuth token" : "OAuth token (fallback)";
   $("setting-apikey-label").textContent = selectedAuthMode === "apiKey" || selectedAuthMode === "optional" ? "API key" : "API key (fallback)";
   $("setting-apikey").placeholder = authModes.includes("optional") ? "optional for local providers" : "paste provider API key";
@@ -1204,18 +1363,7 @@ $("settings").addEventListener("click", async () => {
     $("setting-approval").value = s.approval || "on-mutation";
     $("setting-thinking").value = s.thinking || "medium";
     const provSel = $("setting-provider");
-    provSel.innerHTML = "";
-    const seen = new Set();
-    for (const preset of state.providerPresets) {
-      seen.add(preset.id);
-      const configured = state.providerProfiles.find((item) => item.id === preset.id);
-      const label = preset.label + (configured?.model ? " (" + configured.model + ")" : "");
-      provSel.appendChild(el("option", { value: preset.id }, label));
-    }
-    for (const provider of state.providerProfiles) {
-      if (seen.has(provider.id)) continue;
-      provSel.appendChild(el("option", { value: provider.id }, provider.id + (provider.model ? " (" + provider.model + ")" : "")));
-    }
+    fillProviderSelect(provSel, state.providerPresets, state.providerProfiles);
     provSel.value = s.provider || state.providerPresets[0]?.id || "";
     syncProviderSettingsForm();
   } catch (e) { /* ignore */ }
@@ -1359,6 +1507,57 @@ $("setting-auth-launch").addEventListener("click", async () => {
   const url = $("setting-auth-launch").dataset.url;
   await openProviderUrl(url);
 });
+
+// Fetch the running server's /v1/models and let the user pick one.
+async function discoverProviderModels() {
+  const providerId = $("setting-provider").value;
+  const meta = $("setting-models-meta");
+  const sel = $("setting-discovered-models");
+  if (meta) meta.textContent = "Querying " + providerId + " /v1/models...";
+  if (sel) { sel.hidden = true; sel.innerHTML = ""; }
+  try {
+    const r = await api("/v1/provider/models?id=" + encodeURIComponent(providerId));
+    if (r.error) {
+      if (meta) meta.textContent = "could not list models: " + r.error;
+      return;
+    }
+    const models = r.models || [];
+    if (models.length === 0) {
+      if (meta) meta.textContent = "no models returned (server may be offline or /v1/models not exposed)";
+      return;
+    }
+    if (!sel) return;
+    sel.innerHTML = "";
+    sel.appendChild(el("option", { value: "" }, "(pick a model — current is " + ($("setting-model").value || "(unset)") + ")"));
+    for (const m of models) sel.appendChild(el("option", { value: m }, m));
+    sel.hidden = false;
+    if (meta) meta.textContent = models.length + " model(s) available from " + providerId;
+    sel.onchange = () => {
+      if (sel.value) {
+        $("setting-model").value = sel.value;
+        if (meta) meta.textContent = "set model = " + sel.value;
+      }
+    };
+  } catch (e) {
+    if (meta) meta.textContent = "request failed: " + e.message;
+  }
+}
+$("setting-discover-models")?.addEventListener("click", discoverProviderModels);
+$("setting-codex-login")?.addEventListener("click", async () => {
+  const meta = $("setting-codex-login-meta");
+  if (meta) meta.textContent = "Opening ChatGPT sign-in…";
+  try {
+    const r = await api("/v1/provider/login/codex", { method: "POST", body: { openBrowser: true } });
+    if (meta) meta.textContent = (r.messages || []).join(" · ") || "Signed in with ChatGPT.";
+    $("setting-auth-mode").value = "oauth";
+    $("setting-oauth-token").value = "(saved via OAuth)";
+    await refreshAll();
+    showInfo("Codex OAuth saved.");
+  } catch (e) {
+    if (meta) meta.textContent = "Login failed: " + e.message;
+    addMessage({ kind: "error", text: "Codex login: " + e.message });
+  }
+});
 window.ch?.onMcpStatus?.((info) => {
   if (!settingsMcpStatus) return;
   const url = info?.url || "";
@@ -1400,28 +1599,27 @@ const onboardTestBtn = $("onboard-test");
 const onboardResult = $("onboard-result");
 const onboardSkipBtn = $("onboard-skip");
 let onboardCatalog = null;
+let onboardCatalogGroups = null;
 
 async function loadOnboardCatalog() {
   try {
     const r = await api("/v1/provider/catalog");
     onboardCatalog = r.providers || [];
+    onboardCatalogGroups = r.groups || null;
   } catch (e) {
     onboardCatalog = [];
+    onboardCatalogGroups = null;
   }
 }
 
 function populateOnboardProviderSelect() {
   if (!onboardCatalog) return;
-  onboardProviderSel.innerHTML = "";
-  for (const p of onboardCatalog) {
-    const opt = el("option", { value: p.id }, p.label + (p.defaultModel ? "  (" + p.defaultModel + ")" : ""));
-    onboardProviderSel.appendChild(opt);
-  }
-  // Default to openai if available, else first option.
-  onboardProviderSel.value = "openai";
-  if (!onboardCatalog.find((p) => p.id === "openai")) {
-    onboardProviderSel.value = onboardCatalog[0]?.id || "";
-  }
+  fillProviderSelect(onboardProviderSel, onboardCatalog, [], {
+    labelMode: "defaultModel",
+    groupOrder: onboardCatalogGroups,
+  });
+  // Default to LM Studio — primary local provider.
+  onboardProviderSel.value = onboardCatalog.find((p) => p.id === "lmstudio")?.id || onboardCatalog[0]?.id || "";
   syncOnboardMeta();
 }
 
@@ -1443,6 +1641,15 @@ function syncOnboardMeta() {
   onboardEnvHint.textContent = envVar
     ? "Or set " + envVar + " in your shell and restart — whichever is easier."
     : "Stored locally in settings.json — never sent anywhere except this provider.";
+  const codexOAuth = id === "codex" && (p.authModes || []).includes("oauth");
+  const optionalAuth = (p.authModes || []).includes("optional");
+  const loginBtn = $("onboard-codex-login");
+  if (loginBtn) loginBtn.hidden = !codexOAuth;
+  if (onboardApiKey) {
+    onboardApiKey.hidden = codexOAuth;
+    onboardApiKey.placeholder = optionalAuth ? "API key (optional for LM Studio)" : "paste API key";
+  }
+  if (onboardTestBtn) onboardTestBtn.hidden = codexOAuth;
 }
 
 function showOnboard() {
@@ -1462,13 +1669,43 @@ function closeOnboard() {
 
 onboardSkipBtn?.addEventListener("click", closeOnboard);
 onboardProviderSel?.addEventListener("change", syncOnboardMeta);
+$("onboard-codex-login")?.addEventListener("click", async () => {
+  onboardResult.className = "onboard-result";
+  onboardResult.textContent = "Starting ChatGPT sign-in…";
+  try {
+    const r = await api("/v1/provider/login/codex", { method: "POST", body: { openBrowser: true } });
+    showOnboardOk("✓ signed in with ChatGPT. model: " + (r.model || "(default)"));
+    await refreshAll();
+    setTimeout(closeOnboard, 1800);
+  } catch (e) {
+    showOnboardError("Codex login failed: " + (e.message || "unknown error"));
+  }
+});
+$("attach-button")?.addEventListener("click", () => $("attach-input")?.click());
+$("attach-input")?.addEventListener("change", async (e) => {
+  const files = [...(e.target.files || [])];
+  e.target.value = "";
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) continue;
+    try {
+      const url = await readFileAsDataUrl(file);
+      state.attachments.push({ type: "image", url, mimeType: file.type, name: file.name });
+    } catch (err) {
+      showInfo("Could not read attachment: " + err.message);
+    }
+  }
+  renderAttachmentPreview();
+});
 
 onboardTestBtn?.addEventListener("click", async () => {
   const provider = onboardProviderSel.value;
   const apiKey = onboardApiKey.value;
   const model = onboardModel.value.trim();
   if (!provider) { showOnboardError("pick a provider first"); return; }
-  if (!apiKey || apiKey.length < 8) { showOnboardError("paste a key (≥8 chars)"); return; }
+  const preset = onboardCatalog?.find((p) => p.id === provider);
+  const optionalAuth = (preset?.authModes || []).includes("optional");
+  if (!optionalAuth && (!apiKey || apiKey.length < 8)) { showOnboardError("paste a key (≥8 chars)"); return; }
+  if (apiKey && apiKey.length > 0 && apiKey.length < 8) { showOnboardError("key is too short (≥8 chars)"); return; }
   onboardTestBtn.disabled = true;
   onboardTestBtn.textContent = "saving & testing…";
   onboardResult.className = "onboard-result";

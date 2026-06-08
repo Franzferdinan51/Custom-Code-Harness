@@ -1,8 +1,9 @@
-// All built-in slash commands. Heavily inspired by Hermes (`/new`,
-// `/reset`, `/retry`, `/undo`, `/compress`, `/usage`, `/insights`),
-// pi (`/tree`, `/fork`, `/clone`, `/compact`, `/export`, `/reload`),
-// openclaude (`/provider`, `/onboard-github`), goose (recipes via
-// `/goal`), and OpenClaw (`/status`, `/think`, `/verbose`, `/trace`).
+// All built-in slash commands. Primary CLI/desktop influences:
+//   OpenCode — server-first (`ch serve` + `ch attach`), @file / !shell
+//              prefixes, Build/Plan modes, desktop sidecar shell.
+//   OpenClaw — `/status`, `/think`, `/verbose`, `/trace`, doctor --lint,
+//              onboard auth choices, SOUL.md/TOOLS.md workspace context.
+// Also borrowed from Hermes, pi, openclaude, and goose.
 
 import type { SlashCommand, SlashContext, SlashRuntime } from "./registry.js";
 import { SlashRegistry, tryParseSlash } from "./registry.js";
@@ -129,6 +130,12 @@ export function renderQuickStart(opts: { title?: string; showHeader?: boolean } 
   lines.push("  /compact       Summarize older context.");
   lines.push("  /export        Export the current session.");
   lines.push("");
+  lines.push("OpenCode-style server workflow:");
+  lines.push("  ch serve                  Start the shared HTTP sidecar");
+  lines.push("  ch attach http://127.0.0.1:7777   Terminal client to that server");
+  lines.push("  ch web / ch desktop       Browser or Electron (same backend)");
+  lines.push("");
+  lines.push("Input prefixes:  @src/cli.ts  (attach file)   !git status  (run shell)");
   lines.push("Type any prompt to start. Inside the TUI, /help shows every command.");
   return lines.join("\n");
 }
@@ -157,9 +164,9 @@ const onboardCommand: SlashCommand = {
     if (rt.isFirstRun?.()) {
       lines.push("Welcome to CodingHarness!");
       lines.push("");
-      lines.push("Looks like this is your first run. Let's set up a provider so the agent can actually do things.");
+      lines.push("LM Studio is the default (http://127.0.0.1:1234/v1). OpenAI, Grok, MiniMax, and Codex are first-class hosted providers.");
       lines.push("");
-      lines.push("Step 1:  pick a provider.");
+      lines.push("Step 1:  start LM Studio locally, or pick a hosted provider below.");
       const { renderProviderList } = await import("../provider/setup.js");
       lines.push(renderProviderList());
       lines.push("");
@@ -414,7 +421,7 @@ const providerCommand: SlashCommand = {
   name: "provider",
   description: "Show, switch, or set up a provider (interactive on first run).",
   group: "model",
-  usage: "/provider [id] [model] | /provider setup [id [key]] | /provider list",
+  usage: "/provider [id] [model] | /provider setup [id [key]] | /provider login codex | /provider list | /provider models [id]",
   async run(args, ctx) {
     const rt = ctx.runtime?.();
     if (!rt) return "(no runtime)";
@@ -438,13 +445,71 @@ const providerCommand: SlashCommand = {
         lines.push("Switch:  /provider <id> [model]   (e.g. /provider openai gpt-4o)");
         lines.push("Setup:   /provider setup           (interactive)");
         lines.push("List:    /provider list            (all providers)");
+        lines.push("Models:  /provider models [id]     (live /v1/models)");
+        lines.push("OAuth:   /provider login codex    (ChatGPT device-code sign-in)");
       }
+      return lines.join("\n");
+    }
+    // `/provider login codex` — device-code OAuth for ChatGPT/Codex.
+    if (trimmed === "login codex" || trimmed.startsWith("login codex ")) {
+      const { buildCodexBrowserAuthUrl } = await import("../providers/oauth/codex.js");
+      const { execFile } = await import("node:child_process");
+      const lines: string[] = [];
+      const login = await rt.loginCodexOAuth?.({
+        onProgress: (m) => { lines.push(m); },
+        onDeviceCode: async (prompt) => {
+          lines.push("");
+          lines.push("Sign in with ChatGPT:");
+          lines.push("  1. Open: " + buildCodexBrowserAuthUrl(prompt));
+          lines.push("  2. Enter code: " + prompt.userCode);
+          lines.push("");
+        },
+        openBrowser: async (url) => {
+          const cmd = process.platform === "darwin" ? "open" :
+                      process.platform === "win32" ? "start" : "xdg-open";
+          const args = process.platform === "win32" ? ["", url] : [url];
+          await new Promise<void>((resolve, reject) => {
+            execFile(cmd, args, (err) => err ? reject(err) : resolve());
+          }).catch(() => { lines.push("(could not open browser — copy the URL above)"); });
+        },
+      });
+      if (!login?.ok) {
+        return "✗ Codex login failed: " + (login?.reason ?? "unknown error");
+      }
+      lines.push("✓ Codex OAuth saved");
+      lines.push("  provider: codex");
+      lines.push("  model:    " + (rt.model() ?? "(unset)"));
       return lines.join("\n");
     }
     // `/provider list` — show the catalog.
     if (trimmed === "list") {
       const { renderProviderList } = await import("../provider/setup.js");
       return renderProviderList();
+    }
+    // `/provider models [id]` — list models advertised by a running
+    // provider's /v1/models endpoint. Defaults to the current provider.
+    if (trimmed === "models" || trimmed.startsWith("models ")) {
+      const targetId = trimmed.startsWith("models ") ? trimmed.slice("models ".length).trim() : rt.providerId();
+      if (!targetId) return "no current provider. use: /provider models <id>";
+      if (!rt.providerRegistry) return "this runtime does not expose a provider registry";
+      const provider = rt.providerRegistry.get(targetId);
+      if (!provider) return "provider not configured: " + targetId;
+      if (typeof provider.listModels !== "function") {
+        return "provider " + targetId + " does not support model discovery";
+      }
+      try {
+        const models = await provider.listModels();
+        if (models.length === 0) {
+          return "no models returned from " + targetId + " (server may be offline or /v1/models not exposed)";
+        }
+        const lines = [
+          "Models served by " + targetId + " (" + models.length + "):",
+          ...models.map((m: string) => "  " + m),
+        ];
+        return lines.join("\n");
+      } catch (e) {
+        return "listModels failed for " + targetId + ": " + (e as Error).message;
+      }
     }
     // `/provider setup ...` — interactive setup wizard.
     if (trimmed.startsWith("setup")) {

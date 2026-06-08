@@ -18,7 +18,9 @@
 //   GET  /v1/settings               — current settings
 //   POST /v1/settings               — { provider, model, baseUrl, apiKey, approval, thinking } update
 //   GET  /v1/provider/catalog       — provider catalog with auth modes (mirrors /provider list)
+//   GET  /v1/provider/models        — { id, models[] } live /v1/models for a provider (?id=<id>)
 //   POST /v1/provider/set-key       — { provider, apiKey, model? } non-interactive save + diag
+//   POST /v1/provider/login/codex   — start Codex device-code OAuth (returns prompt or completes)
 //   POST /v1/chat                   — { prompt, agent? } one-shot JSON
 //   POST /v1/chat/stream            — SSE: text, tool_start, tool_end, info, error, approval_required, usage, done
 //   POST /v1/spawn                  — { agent, prompt } — synchronous sub-agent run
@@ -44,7 +46,7 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { Session, sessionToMessages } from "./agent/session.js";
 import { loadSettings, saveSettings, type Settings } from "./config/settings.js";
-import { getProviderPreset, listProviderPresets } from "./providers/presets.js";
+import { getProviderPreset, listProviderPresets, presetToCatalogEntry, providerCatalogGroups } from "./providers/presets.js";
 import { BUILTIN_REGISTRY, tryParseSlash } from "./slash/index.js";
 import { runAgent, DEFAULT_LIMITS } from "./agent/loop.js";
 import { log } from "./util/logger.js";
@@ -238,20 +240,74 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         // Provider catalog for HTTP consumers. Mirrors
         // `ch provider list` and `/provider list`. The web UI
         // uses this to populate the setup wizard dropdowns.
+        const groups = providerCatalogGroups();
         sendJson(res, 200, {
-          providers: listProviderPresets().map((p) => ({
-            id: p.id,
-            label: p.label,
-            description: p.description ?? "",
-            protocol: p.protocol,
-            defaultBaseUrl: p.defaultBaseUrl,
-            defaultModel: p.defaultModel,
-            authModes: p.authModes,
-            defaultAuthMode: p.defaultAuthMode,
-            apiKeyEnv: p.apiKeyEnv,
-            authDocsUrl: p.authDocsUrl,
-            authLaunchUrl: p.authLaunchUrl,
-          })),
+          providers: listProviderPresets().map((p) => presetToCatalogEntry(p)),
+          groups: {
+            primary: groups.primary.map((p) => p.id),
+            hosted: groups.hosted.map((p) => p.id),
+            local: groups.local.map((p) => p.id),
+          },
+        });
+        return;
+      }
+      if (req.method === "GET" && path === "/v1/provider/models") {
+        // Live model discovery for a provider. Proxies the
+        // provider's /v1/models endpoint and returns just the
+        // id list. Defaults to the current defaultProvider.
+        // Query string: ?id=<providerId>
+        const urlObj = new URL(req.url ?? "", "http://localhost");
+        const targetId = (urlObj.searchParams.get("id") ?? runtime.providerId() ?? "").trim();
+        if (!targetId) {
+          sendJson(res, 200, { id: "", models: [], error: "no provider id supplied" });
+          return;
+        }
+        const provider = runtime.providerRegistry.get(targetId);
+        if (!provider) {
+          sendJson(res, 200, { id: targetId, models: [], error: "provider not configured" });
+          return;
+        }
+        if (typeof provider.listModels !== "function") {
+          sendJson(res, 200, { id: targetId, models: [], error: "provider does not support model discovery" });
+          return;
+        }
+        try {
+          const models = await provider.listModels();
+          sendJson(res, 200, { id: targetId, models });
+        } catch (e) {
+          sendJson(res, 200, { id: targetId, models: [], error: (e as Error).message });
+        }
+        return;
+      }
+      if (req.method === "POST" && path === "/v1/provider/login/codex") {
+        const body = await readJson<{ openBrowser?: boolean }>(req).catch(() => ({} as { openBrowser?: boolean }));
+        const messages: string[] = [];
+        const result = await runtime.loginCodexOAuth({
+          onProgress: (m) => { messages.push(m); },
+          onDeviceCode: async (prompt) => {
+            messages.push(`Visit ${prompt.verificationUrl} and enter code ${prompt.userCode}`);
+          },
+          openBrowser: body.openBrowser === false
+            ? undefined
+            : async (url) => {
+                const { execFile } = await import("node:child_process");
+                const cmd = process.platform === "darwin" ? "open" :
+                            process.platform === "win32" ? "start" : "xdg-open";
+                const args = process.platform === "win32" ? ["", url] : [url];
+                await new Promise<void>((resolve, reject) => {
+                  execFile(cmd, args, (err) => err ? reject(err) : resolve());
+                }).catch(() => { /* browser open is best-effort */ });
+              },
+        });
+        if (!result.ok) {
+          sendJson(res, 400, { ok: false, error: result.reason ?? "login failed", messages });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          provider: "codex",
+          model: runtime.model(),
+          messages,
         });
         return;
       }
@@ -264,14 +320,20 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         // on the next call. Returns the diag result so the web
         // UI can show a green/red indicator without a follow-up
         // request.
-        const body = await readJson<{ provider?: string; apiKey?: string; model?: string }>(req);
+        const body = await readJson<{ provider?: string; apiKey?: string; model?: string; baseUrl?: string }>(req);
         const provider = (body.provider ?? "").trim();
         const apiKey = (body.apiKey ?? "").trim();
-        if (!provider || !apiKey) {
-          sendError(res, 400, "missing provider or apiKey");
+        if (!provider) {
+          sendError(res, 400, "missing provider");
           return;
         }
-        const save = await runtime.saveProviderApiKey(provider, apiKey, { model: body.model });
+        const preset = getProviderPreset(provider);
+        const optionalAuth = preset?.authModes.includes("optional") ?? false;
+        if (!apiKey && !optionalAuth) {
+          sendError(res, 400, "missing apiKey");
+          return;
+        }
+        const save = await runtime.saveProviderApiKey(provider, apiKey, { model: body.model, baseUrl: body.baseUrl });
         if (!save.ok) {
           sendError(res, 400, save.reason ?? "could not save key");
           return;
@@ -334,18 +396,7 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
             hasOauthToken: Boolean(p.oauthToken),
             label: getProviderPreset(id)?.label ?? id,
           })),
-          presets: listProviderPresets().map((preset) => ({
-            id: preset.id,
-            label: preset.label,
-            protocol: preset.protocol,
-            defaultBaseUrl: preset.defaultBaseUrl,
-            defaultModel: preset.defaultModel,
-            authModes: preset.authModes,
-            defaultAuthMode: preset.defaultAuthMode,
-            authDocsUrl: preset.authDocsUrl,
-            authLaunchUrl: preset.authLaunchUrl,
-            description: preset.description,
-          })),
+          presets: listProviderPresets().map((preset) => presetToCatalogEntry(preset)),
         });
         return;
       }
@@ -426,9 +477,12 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         return;
       }
       if (req.method === "POST" && path === "/v1/chat/stream") {
-        const body = await readJson<{ prompt: string }>(req);
+        const body = await readJson<{
+          prompt: string;
+          attachments?: Array<{ type?: string; url: string; mimeType?: string }>;
+        }>(req);
         if (!body.prompt) { sendError(res, 400, "missing prompt"); return; }
-        await streamChat(runtime, body.prompt, res);
+        await streamChat(runtime, body.prompt, res, { attachments: body.attachments });
         return;
       }
       if (req.method === "POST" && path === "/v1/spawn") {
@@ -482,6 +536,7 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
     process.stdout.write("  JSON API:  " + apiUrl + "\n");
     process.stdout.write("  SSE chat:  POST " + apiUrl + "chat/stream\n");
     process.stdout.write("  sub-agent: POST " + apiUrl + "spawn\n");
+    process.stdout.write("  attach:    ch attach " + uiUrl.replace(/\/$/, "") + "\n");
   });
   await new Promise(() => { /* run until killed */ });
 }
@@ -533,7 +588,12 @@ async function runOneChat(runtime: HarnessRuntime, prompt: string) {
   return { text: result.final.content, usage: result.usage, steps: result.steps };
 }
 
-async function streamChat(runtime: HarnessRuntime, prompt: string, res: ServerResponse) {
+async function streamChat(
+  runtime: HarnessRuntime,
+  prompt: string,
+  res: ServerResponse,
+  opts: { attachments?: Array<{ type?: string; url: string; mimeType?: string }> } = {},
+) {
   setCors(res);
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
@@ -542,6 +602,10 @@ async function streamChat(runtime: HarnessRuntime, prompt: string, res: ServerRe
   });
   res.write(": stream start\n\n");
 
+  const { expandInputPrefixes } = await import("./util/input-prefixes.js");
+  const expanded = await expandInputPrefixes(prompt, runtime.cwd);
+  prompt = expanded.prompt;
+
   // Slash command?
   const slash = tryParseSlash(prompt);
   if (slash) {
@@ -549,6 +613,8 @@ async function streamChat(runtime: HarnessRuntime, prompt: string, res: ServerRe
     if (cmd) {
       const clearOutput = runtime.setOutputHandler({
         onTextDelta: (text) => { res.write(sse("text", { text })); },
+        onReasoningDelta: (text) => { res.write(sse("reasoning", { text })); },
+        onImageDelta: (image) => { res.write(sse("image", image)); },
         onToolCallStart: (tc) => { res.write(sse("tool_start", { name: tc.name, args: tc.argsJson })); },
         onToolCallEnd: (tc, r) => { res.write(sse("tool_end", { name: tc.name, isError: r.isError, display: r.display, detail: r.display })); },
         onUsage: (u) => { res.write(sse("usage", u)); },
@@ -579,8 +645,17 @@ async function streamChat(runtime: HarnessRuntime, prompt: string, res: ServerRe
     return;
   }
   const model = runtime.model() ?? "default";
+  const { buildUserContentParts } = await import("./providers/omni.js");
+  const contentParts = buildUserContentParts(prompt, opts.attachments);
   const session = await runtime.ensureSession();
-  await session.append({ kind: "message", message: { role: "user", content: prompt } });
+  await session.append({
+    kind: "message",
+    message: {
+      role: "user",
+      content: prompt,
+      ...(contentParts ? { contentParts } : {}),
+    },
+  });
   const messages = sessionToMessages(session);
 
   let lastText = "";
@@ -597,6 +672,7 @@ async function streamChat(runtime: HarnessRuntime, prompt: string, res: ServerRe
       failoverChain: runtime.buildFailoverChain(),
       hooks: {
         onTextDelta: (t: string) => { lastText += t; res.write(sse("text", { text: t })); },
+        onReasoningDelta: (t: string) => { res.write(sse("reasoning", { text: t })); },
         onToolCallStart: (tc: { name: string; argsJson: string }) => { res.write(sse("tool_start", { name: tc.name, args: tc.argsJson })); },
         onToolCallEnd: (tc: { name: string }, r: { isError: boolean; display: string }) => { res.write(sse("tool_end", { name: tc.name, isError: r.isError, display: r.display, detail: r.display })); },
         onUsage: (u: { inputTokens: number; outputTokens: number }) => { usage = u; res.write(sse("usage", u)); },

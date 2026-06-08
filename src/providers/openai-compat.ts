@@ -5,14 +5,16 @@
 
 import type {
   ChatMessage,
+  ImageGenerationRequest,
+  ImageGenerationResult,
   Provider,
+  ProviderCapabilities,
   ProviderRequest,
   ProviderResponse,
   ProviderStreamEvent,
-  Role,
   ToolCall,
-  ToolSpec,
 } from "../types.js";
+import { generateImageViaOpenAICompat, supportsImageOutput, toOpenAIMessages, toOpenAITool } from "./omni.js";
 import { retry } from "../util/retry.js";
 import { withTimeout } from "../util/errors.js";
 import { log } from "../util/logger.js";
@@ -28,6 +30,8 @@ export interface OpenAICompatConfig {
   path?: string;
   /** Extra headers to send with every request. */
   extraHeaders?: Record<string, string>;
+  /** Optional capability flags (omni, image output, etc). */
+  capabilities?: ProviderCapabilities;
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -35,12 +39,14 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 export class OpenAICompatProvider implements Provider {
   readonly id: string;
   readonly displayName: string;
+  readonly capabilities?: ProviderCapabilities;
   private readonly cfg: OpenAICompatConfig;
 
   constructor(cfg: OpenAICompatConfig) {
     this.cfg = cfg;
     this.id = cfg.id;
     this.displayName = cfg.id;
+    this.capabilities = cfg.capabilities;
   }
 
   async isConfigured(): Promise<{ ok: boolean; reason?: string }> {
@@ -77,6 +83,18 @@ export class OpenAICompatProvider implements Provider {
     if (!res.body) throw new Error(`provider ${this.id}: empty response body`);
 
     yield* parseSSE(res.body, req.signal);
+  }
+
+  async generateImage(req: ImageGenerationRequest): Promise<ImageGenerationResult> {
+    if (!supportsImageOutput(this.capabilities)) {
+      throw new Error(`provider ${this.id} does not support image generation`);
+    }
+    return generateImageViaOpenAICompat({
+      baseUrl: this.cfg.baseUrl,
+      apiKey: this.cfg.apiKey,
+      defaultModel: this.cfg.defaultModel,
+      req,
+    });
   }
 
   async listModels(): Promise<string[]> {
@@ -140,42 +158,6 @@ function toOpenAIBody(req: ProviderRequest, defaultModel: string): unknown {
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     stream: true,
     stream_options: { include_usage: true },
-  };
-}
-
-function toOpenAIMessages(req: ProviderRequest): unknown[] {
-  const out: unknown[] = [];
-  if (req.system) out.push({ role: "system", content: req.system });
-  for (const m of req.messages) {
-    if (m.role === "tool") {
-      out.push({
-        role: "tool",
-        tool_call_id: m.toolCallId,
-        content: m.content,
-      });
-      continue;
-    }
-    if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
-      out.push({
-        role: "assistant",
-        content: m.content || null,
-        tool_calls: m.toolCalls.map((tc) => ({
-          id: tc.id,
-          type: "function",
-          function: { name: tc.name, arguments: tc.argsJson },
-        })),
-      });
-      continue;
-    }
-    out.push({ role: m.role as Role, content: m.content });
-  }
-  return out;
-}
-
-function toOpenAITool(t: ToolSpec): unknown {
-  return {
-    type: "function",
-    function: { name: t.name, description: t.description, parameters: t.parameters },
   };
 }
 

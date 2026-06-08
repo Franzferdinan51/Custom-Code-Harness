@@ -110,16 +110,49 @@ test("/v1/provider/catalog lists all built-in providers with auth modes", async 
   try {
     const { port, kill } = await startServer(home);
     try {
-      const r = await getJson<{ providers: Array<{ id: string; label: string; authModes: string[]; defaultAuthMode: string; defaultModel: string; apiKeyEnv: string[] }> }>(`http://127.0.0.1:${port}/v1/provider/catalog`);
+      const r = await getJson<{
+        providers: Array<{ id: string; tier: string; label: string; authModes: string[]; defaultAuthMode: string; defaultModel: string; apiKeyEnv: string[] }>;
+        groups: { primary: string[]; hosted: string[]; local: string[] };
+      }>(`http://127.0.0.1:${port}/v1/provider/catalog`);
       assert.equal(r.status, 200);
+      assert.equal(r.body.providers[0]?.id, "lmstudio");
+      assert.equal(r.body.providers[0]?.tier, "primary");
+      assert.deepEqual(r.body.groups.primary, ["lmstudio"]);
+      assert.deepEqual(r.body.groups.hosted, ["openai", "grok", "minimax", "codex", "anthropic", "xai"]);
+      assert.deepEqual(r.body.groups.local, ["vllm", "vllm-omni"]);
       const ids = r.body.providers.map((p) => p.id);
-      for (const want of ["openai", "anthropic", "minimax", "lmstudio"]) {
+      for (const want of ["openai", "grok", "minimax", "anthropic", "xai", "lmstudio", "vllm", "vllm-omni", "codex"]) {
         assert.ok(ids.includes(want), "catalog missing " + want);
       }
       const openai = r.body.providers.find((p) => p.id === "openai");
       assert.ok(openai);
       assert.ok(openai.authModes.includes("apiKey"));
       assert.ok(openai.apiKeyEnv.includes("OPENAI_API_KEY"));
+      // codex now also supports oauth (token-paste) and vllm/vllm-omni
+      // use optional auth (no key required for local servers).
+      const codex = r.body.providers.find((p) => p.id === "codex");
+      assert.ok(codex);
+      assert.ok(codex.authModes.includes("oauth"));
+      const omni = r.body.providers.find((p) => p.id === "vllm-omni");
+      assert.ok(omni);
+      assert.ok(omni.authModes.includes("optional"));
+    } finally { kill(); }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("/v1/provider/models returns an empty list when the server is unreachable", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-models-"));
+  try {
+    const { port, kill } = await startServer(home);
+    try {
+      // No provider configured; default provider is undefined.
+      const r = await getJson<{ id: string; models: string[]; error?: string }>(
+        `http://127.0.0.1:${port}/v1/provider/models`
+      );
+      assert.equal(r.status, 200);
+      // Either no default provider (id="") or an error string — never a
+      // thrown 500. The listModels path swallows network errors.
+      assert.ok(Array.isArray(r.body.models));
     } finally { kill(); }
   } finally { rmSync(home, { recursive: true, force: true }); }
 });

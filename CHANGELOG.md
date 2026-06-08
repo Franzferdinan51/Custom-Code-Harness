@@ -7,6 +7,62 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **First-class vllm + vllm-omni providers + live `/v1/models`
+  discovery across all surfaces**
+  (`src/providers/presets.ts`, `src/providers/registry.ts`,
+  `src/types.ts`, `src/server.ts`, `src/cli.ts`,
+  `src/slash/builtin.ts`, `src/slash/registry.ts`,
+  `src/web/index.html`, `src/web/styles.css`, `src/web/app.js`,
+  `src/__tests__/provider-presets.test.ts`,
+  `src/__tests__/info-endpoints.test.ts`): ships the
+  vllm-omni / vllm / LM Studio / codex OAuth direction end-to-end.
+  - **`vllm` preset** (`http://127.0.0.1:8000/v1`,
+    `optional` auth): the canonical local vLLM
+    OpenAI-compatible server. API key only required when the
+    server was started with `--api-key`.
+  - **`vllm-omni` preset** (`http://127.0.0.1:8090/v1`,
+    `optional` auth): vLLM-Omni is the vllm-project
+    omni-modality framework (text/image/audio/video +
+    diffusion). vllm-omni already speaks OpenAI-compat at
+    `/v1/chat/completions` and exposes a `/v1/models`
+    discovery endpoint, so the harness treats it as a
+    first-class local server — no Python sidecar needed for
+    chat. Default model hint is
+    `Qwen/Qwen3-Omni-30B-A3B-Instruct`. Omni-specific
+    endpoints (`/v1/image/`, `/v1/audio/`, `/v1/video/`,
+    `/v1/tts/`) are documented in the preset description;
+    native TS provider classes for those are deferred to a
+    follow-up since they require non-OpenAI-compat wire
+    formats.
+  - **`codex` now accepts `oauth` auth mode** in addition
+    to `apiKey`: paste a session token from a prior
+    OpenAI Codex device-code flow via `CODEX_OAUTH_TOKEN` /
+    `OPENAI_OAUTH_TOKEN` / `CODEX_TOKEN` (or `settings.json`
+    `oauthToken` field). The full device-code flow itself
+    remains a follow-up — this round just makes the
+    token-accepting path first-class so users with an
+    already-acquired token aren't stuck.
+  - **`/provider models [id]`** slash command, **`ch
+    provider models [id]`** CLI subcommand, and
+    **`GET /v1/provider/models?id=<id>`** HTTP endpoint:
+    all three call the provider's `listModels()` (which
+    hits `/v1/models`) and render the discovered list.
+    Defaults to the current default provider when no id is
+    given. The web UI Settings panel gains a **"fetch
+    /v1/models"** button that calls the same endpoint and
+    lets the user pick a model from a dropdown that
+    populates the model field.
+  - **SlashRuntime now exposes `providerRegistry`**
+    (`src/slash/registry.ts`) so non-default provider
+    lookups work from `/provider models <id>` without
+    instantiating a fresh `HarnessRuntime`.
+  - 4 new tests cover: vllm + vllm-omni presets exist with
+    openai protocol + optional auth; codex preset supports
+    oauth; vllm provider configures from a base URL with
+    no API key; `/v1/provider/models` returns 200 with an
+    array even when the server is unreachable (network
+    errors are swallowed, same as the slash path).
+
 - **`/v1/todo` HTTP endpoints + web todo sidebar** (`src/server.ts`,
   `src/web/index.html`, `src/web/styles.css`, `src/web/app.js`,
   `src/__tests__/info-endpoints.test.ts`): round 2 of the

@@ -1,9 +1,9 @@
 // Doctor — diagnostics that surface common issues. Borrowed from
-// Hermes (`hermes doctor`) and OpenClaw (`openclaw doctor`).
+// Hermes (`hermes doctor`) and OpenClaw (`openclaw doctor --lint --json`).
 
 import { existsSync, statSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { paths } from "./config/paths.js";
+import { paths, ensurePaths } from "./config/paths.js";
 import { loadSettings } from "./config/settings.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { execFileSync } from "node:child_process";
@@ -90,6 +90,34 @@ export async function runDiagnostics(opts: { cwd: string } = { cwd: process.cwd(
   return out;
 }
 
+export interface DoctorSummary {
+  errors: number;
+  warnings: number;
+  ok: boolean;
+}
+
+export function summarizeDiagnostics(items: DiagnosticItem[]): DoctorSummary {
+  const errors = items.filter((i) => i.status === "error").length;
+  const warnings = items.filter((i) => i.status === "warn").length;
+  return { errors, warnings, ok: errors === 0 };
+}
+
+/** OpenClaw-style auto-repair: create missing home dirs. */
+export function applyDoctorFixes(items: DiagnosticItem[]): string[] {
+  const applied: string[] = [];
+  const homeMissing = items.some((i) => i.name === "Home dir" && i.status === "warn");
+  if (homeMissing) {
+    ensurePaths();
+    applied.push("created " + paths.home);
+  }
+  return applied;
+}
+
+export function renderDiagnosticsJson(items: DiagnosticItem[]): string {
+  const summary = summarizeDiagnostics(items);
+  return JSON.stringify({ items, summary }, null, 2);
+}
+
 export function renderDiagnostics(items: DiagnosticItem[]): string {
   const icon = (s: DiagnosticItem["status"]): string => {
     switch (s) {
@@ -104,9 +132,8 @@ export function renderDiagnostics(items: DiagnosticItem[]): string {
     lines.push("  " + icon(i.status) + " " + i.name + ": " + i.message);
     if (i.fix) lines.push("      fix: " + i.fix);
   }
-  const errs = items.filter((i) => i.status === "error").length;
-  const warns = items.filter((i) => i.status === "warn").length;
+  const summary = summarizeDiagnostics(items);
   lines.push("");
-  lines.push("Summary: " + errs + " error(s), " + warns + " warning(s).");
+  lines.push("Summary: " + summary.errors + " error(s), " + summary.warnings + " warning(s).");
   return lines.join("\n");
 }

@@ -32,6 +32,8 @@ export interface RuntimeOptions {
 
 export interface RuntimeOutputHandler {
   onTextDelta?: (text: string) => void;
+  onReasoningDelta?: (text: string) => void;
+  onImageDelta?: (image: { url: string; mimeType?: string }) => void;
   onToolCallStart?: (toolCall: ToolCall) => void;
   onToolCallEnd?: (toolCall: ToolCall, result: ToolResult) => void;
   onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
@@ -175,26 +177,33 @@ export class HarnessRuntime implements SlashRuntime {
    * user — we surface only "saved" / "looks invalid" so the secret
    * doesn't leak through scrollback or `ch info` output.
    */
-  async saveProviderApiKey(providerId: string, apiKey: string, opts?: { makeDefault?: boolean; model?: string }): Promise<{ ok: boolean; reason?: string }> {
+  async saveProviderApiKey(
+    providerId: string,
+    apiKey: string,
+    opts?: { makeDefault?: boolean; model?: string; baseUrl?: string },
+  ): Promise<{ ok: boolean; reason?: string }> {
+    const { getProviderPreset } = await import("./providers/presets.js");
+    const preset = getProviderPreset(providerId);
+    const optionalAuth = preset?.authModes.includes("optional") ?? false;
     const trimmed = apiKey.trim();
-    if (trimmed.length === 0) return { ok: false, reason: "empty key" };
-    if (trimmed.length < 8) return { ok: false, reason: "key is too short to be a real API key" };
+    if (trimmed.length === 0 && !optionalAuth) return { ok: false, reason: "empty key" };
+    if (trimmed.length > 0 && trimmed.length < 8) return { ok: false, reason: "key is too short to be a real API key" };
     if (!this.settings.providers[providerId]) {
-      // The provider isn't even registered yet — try the preset defaults.
-      const { getProviderPreset } = await import("./providers/presets.js");
-      const preset = getProviderPreset(providerId);
       if (preset) {
         this.settings.providers[providerId] = {
           id: preset.id,
           baseUrl: preset.defaultBaseUrl,
           model: preset.defaultModel,
+          authMode: preset.defaultAuthMode,
         };
       } else {
         return { ok: false, reason: "unknown provider: " + providerId };
       }
     }
     const p = this.settings.providers[providerId]!;
-    p.apiKey = trimmed;
+    if (trimmed.length > 0) p.apiKey = trimmed;
+    else delete p.apiKey;
+    if (opts?.baseUrl) p.baseUrl = opts.baseUrl.trim();
     if (opts?.model) p.model = opts.model;
     if (opts?.makeDefault !== false) {
       this.settings.defaultProvider = providerId;
@@ -205,14 +214,39 @@ export class HarnessRuntime implements SlashRuntime {
     return { ok: true };
   }
 
+  /** Save Codex OAuth tokens from a device-code login flow. */
+  async saveCodexOAuthTokens(tokens: import("./providers/oauth/codex.js").CodexOAuthTokens, opts?: { makeDefault?: boolean; model?: string }): Promise<{ ok: boolean; reason?: string }> {
+    const { saveCodexOAuthTokens: persist } = await import("./providers/oauth/codex.js");
+    if (!tokens.accessToken || !tokens.refreshToken) {
+      return { ok: false, reason: "missing OAuth tokens" };
+    }
+    persist(this.settings, tokens, opts);
+    this.providerRegistry.invalidate("codex");
+    return { ok: true };
+  }
+
+  /** Run the Codex device-code OAuth login flow (CLI / slash / web). */
+  async loginCodexOAuth(hooks?: import("./providers/oauth/codex.js").CodexOAuthLoginHooks): Promise<{ ok: boolean; reason?: string }> {
+    const { loginCodexOAuth } = await import("./providers/oauth/codex.js");
+    try {
+      const tokens = await loginCodexOAuth(hooks);
+      await this.saveCodexOAuthTokens(tokens, { makeDefault: true });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message };
+    }
+  }
+
   /** True when no provider is configured at all (no env vars, no
    *  settings.json, no default). Used to trigger the onboarding
    *  prompt on first launch. */
   isFirstRun(): boolean {
-    if (Object.keys(this.settings.providers ?? {}).length > 0) return false;
-    const envHasKey = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MINIMAX_API_KEY", "XAI_API_KEY", "LM_API_TOKEN"]
+    // LM Studio is pre-configured as the primary local provider — only
+    // prompt onboarding when no default provider/model is usable.
+    if (this.settings.defaultProvider && this.settings.defaultModel) return false;
+    const envHasHostedKey = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MINIMAX_API_KEY", "XAI_API_KEY", "CODEX_OAUTH_TOKEN"]
       .some((name) => !!process.env[name] && process.env[name]!.length > 0);
-    return !envHasKey;
+    return !envHasHostedKey;
   }
 
   /**
@@ -350,7 +384,13 @@ export class HarnessRuntime implements SlashRuntime {
 
   // ---- The real work ----
 
-  async runUserTurn(userInput: string, opts: { captureText?: (s: string) => void } = {}): Promise<void> {
+  async runUserTurn(
+    userInput: string,
+    opts: {
+      captureText?: (s: string) => void;
+      attachments?: Array<{ type?: string; url: string; mimeType?: string }>;
+    } = {},
+  ): Promise<void> {
     // 1) Slash command?
     const parsed = tryParseSlash(userInput);
     if (parsed) {
@@ -368,10 +408,23 @@ export class HarnessRuntime implements SlashRuntime {
       return;
     }
 
-    this.lastUserPrompt = userInput;
+    const { expandInputPrefixes } = await import("./util/input-prefixes.js");
+    const expanded = await expandInputPrefixes(userInput, this.cwd);
+    const effectiveInput = expanded.prompt;
+
+    this.lastUserPrompt = effectiveInput;
     const session = await this.ensureSession();
     if (!this.ephemeral) {
-      await session.append({ kind: "message", message: { role: "user", content: userInput } });
+      const { buildUserContentParts } = await import("./providers/omni.js");
+      const contentParts = buildUserContentParts(effectiveInput, opts.attachments);
+      await session.append({
+        kind: "message",
+        message: {
+          role: "user",
+          content: effectiveInput,
+          ...(contentParts ? { contentParts } : {}),
+        },
+      });
     }
     const messages = sessionToMessages(session);
 
@@ -425,6 +478,12 @@ export class HarnessRuntime implements SlashRuntime {
             }
             if (!sawAnyText) { process.stdout.write("\n"); sawAnyText = true; }
             process.stdout.write(t);
+          },
+          onReasoningDelta: (t) => {
+            outputHandler?.onReasoningDelta?.(t);
+            if (!outputHandler?.onReasoningDelta && this.settings.ui?.showReasoning !== false) {
+              process.stdout.write(c.dim(t));
+            }
           },
           onToolCallStart: (tc) => {
             if (outputHandler?.onToolCallStart) {
@@ -581,6 +640,7 @@ export class HarnessRuntime implements SlashRuntime {
         }
         return decision;
       },
+      provider,
     };
   }
   private todoItems: string[] = [];

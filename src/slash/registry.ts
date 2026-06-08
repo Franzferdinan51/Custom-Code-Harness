@@ -84,6 +84,8 @@ export interface SlashRuntime {
   /** Save an API key for a provider. Returns `{ok, reason?}`. Used
    *  by `/provider setup <id> <key>` and the onboarding wizard. */
   saveProviderApiKey?(providerId: string, apiKey: string, opts?: { makeDefault?: boolean; model?: string }): Promise<{ ok: boolean; reason?: string }>;
+  /** Run Codex device-code OAuth login. */
+  loginCodexOAuth?(hooks?: import("../providers/oauth/codex.js").CodexOAuthLoginHooks): Promise<{ ok: boolean; reason?: string }>;
   /** True when no provider is configured at all. The TUI uses this
    *  on launch to print an onboarding hint instead of a generic welcome. */
   isFirstRun?(): boolean;
@@ -93,6 +95,9 @@ export interface SlashRuntime {
   /** Replace the in-session todo list. Persists to the session
    *  JSONL via the runtime's todo service so reloads see it. */
   writeTodo?(items: string[]): Promise<void>;
+  /** Provider registry, for `/provider models [id]` and similar
+   *  lookups that need to resolve a non-default provider by id. */
+  providerRegistry?: import("../providers/registry.js").ProviderRegistry;
 }
 
 export interface SlashCommand {

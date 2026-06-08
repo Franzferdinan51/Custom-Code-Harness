@@ -5,7 +5,10 @@ import type { Provider } from "../types.js";
 import type { Settings } from "../config/settings.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
 import { AnthropicProvider } from "./anthropic.js";
+import { CodexProvider } from "./codex.js";
 import { firstEnvValue, getProviderPreset } from "./presets.js";
+import { resolveProviderCapabilities } from "./omni.js";
+import { ensureFreshCodexTokens, loadCodexRefreshToken } from "./oauth/codex.js";
 import { log } from "../util/logger.js";
 
 export class ProviderRegistry {
@@ -54,6 +57,8 @@ export class ProviderRegistry {
 
 function buildProvider(id: string, profile: Settings["providers"][string], settings: Settings): Provider | undefined {
   const preset = getProviderPreset(id);
+  const capabilities = resolveProviderCapabilities(preset);
+
   // Anthropic is the only non-OpenAI-compat provider we ship.
   if (preset?.protocol === "anthropic" || id === "anthropic" || id.startsWith("anthropic-")) {
     const apiKey = resolveCredential(profile, preset);
@@ -67,10 +72,28 @@ function buildProvider(id: string, profile: Settings["providers"][string], setti
       baseUrl: profile.baseUrl ?? preset?.defaultBaseUrl,
     });
   }
-  // Everything else: openai-compat.
+
+  const authMode = profile.authMode ?? preset?.defaultAuthMode ?? "apiKey";
+  const oauthToken = profile.oauthToken ?? firstEnvValue(preset?.oauthTokenEnv);
   const apiKey = resolveCredential(profile, preset) ??
     process.env.OPENAI_API_KEY ??
     process.env[envKeyFor(id)];
+
+  // Codex OAuth → Responses API provider.
+  if ((id === "codex" || preset?.capabilities?.responsesApi) && authMode === "oauth" && oauthToken) {
+    void ensureFreshCodexTokens(settings).catch(() => { /* best-effort refresh */ });
+    const refreshed = settings.providers[id] ?? profile;
+    const token = refreshed.oauthToken ?? oauthToken;
+    return new CodexProvider({
+      id,
+      accessToken: token,
+      defaultModel: profile.model ?? settings.defaultModel ?? firstEnvValue(preset?.modelEnv) ?? preset?.defaultModel ?? "gpt-5.1",
+      baseUrl: profile.baseUrl ?? preset?.defaultBaseUrl,
+      capabilities,
+    });
+  }
+
+  // Everything else: openai-compat.
   const baseUrl =
     profile.baseUrl ??
     firstEnvValue(preset?.baseUrlEnv) ??
@@ -85,6 +108,7 @@ function buildProvider(id: string, profile: Settings["providers"][string], setti
     baseUrl,
     apiKey,
     defaultModel: profile.model ?? settings.defaultModel ?? firstEnvValue(preset?.modelEnv) ?? preset?.defaultModel ?? "gpt-4o",
+    capabilities,
   });
 }
 
@@ -100,3 +124,13 @@ function resolveCredential(profile: Settings["providers"][string], preset: Retur
 function envKeyFor(id: string): string {
   return `${id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
 }
+
+/** Exported for tests: whether a profile should use CodexProvider. */
+export function shouldUseCodexProvider(id: string, profile: Settings["providers"][string]): boolean {
+  const preset = getProviderPreset(id);
+  const authMode = profile.authMode ?? preset?.defaultAuthMode ?? "apiKey";
+  const oauthToken = profile.oauthToken ?? firstEnvValue(preset?.oauthTokenEnv);
+  return (id === "codex" || Boolean(preset?.capabilities?.responsesApi)) && authMode === "oauth" && Boolean(oauthToken);
+}
+
+export { loadCodexRefreshToken };

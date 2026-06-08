@@ -11,17 +11,31 @@
 // inside the TUI, the simple REPL, and the headless CLI.
 
 import type { ProviderPreset } from "../providers/presets.js";
-import { getProviderPreset, listProviderPresets } from "../providers/presets.js";
+import { getProviderPreset, listProviderPresets, providerCatalogGroups } from "../providers/presets.js";
+
+function renderProviderGroup(title: string, presets: ReturnType<typeof listProviderPresets>): string[] {
+  const lines: string[] = [title];
+  for (const p of presets) {
+    const auth = p.authModes.join("/");
+    const desc = p.description ?? "";
+    lines.push("  /" + p.id.padEnd(12) + " — " + p.label + " (" + auth + ")");
+    if (desc) lines.push("               " + desc);
+  }
+  return lines;
+}
 
 /** Render the master "pick a provider" card. */
 export function renderProviderList(): string {
-  const lines: string[] = ["Provider setup — pick one:"];
-  for (const p of listProviderPresets()) {
-    const auth = p.authModes.join("/");
-    const desc = p.description ?? "";
-    lines.push("  /" + p.id.padEnd(10) + " — " + p.label + " (" + auth + ")");
-    if (desc) lines.push("               " + desc);
-  }
+  const groups = providerCatalogGroups();
+  const lines: string[] = [
+    "Provider setup — LM Studio is the default; hosted providers are first-class:",
+    "",
+    ...renderProviderGroup("Default (local):", groups.primary),
+    "",
+    ...renderProviderGroup("Hosted (OpenAI, Grok, MiniMax, Codex, …):", groups.hosted),
+    "",
+    ...renderProviderGroup("Local alternatives:", groups.local),
+  ];
   lines.push("");
   lines.push("Then run:");
   lines.push("  /provider setup <id>           # guided setup");

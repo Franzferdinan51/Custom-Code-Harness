@@ -597,7 +597,7 @@ test("/onboard first run shows the wizard", async () => {
   };
   const out = await onboard!.run("", { cwd: "/", runtime: () => rt as never });
   assert.match(String(out), /Welcome to CodingHarness/);
-  assert.match(String(out), /first run/i);
+  assert.match(String(out), /LM Studio/i);
   assert.match(String(out), /Step 1/);
   assert.match(String(out), /Step 2/);
   assert.match(String(out), /Step 3/);

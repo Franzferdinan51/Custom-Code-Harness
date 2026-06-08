@@ -172,8 +172,12 @@ async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd:
     return;
   }
 
+  const { expandInputPrefixes } = await import("../util/input-prefixes.js");
+  const expanded = await expandInputPrefixes(prompt, cwd);
+  const effectivePrompt = expanded.prompt;
+
   // Persist user message.
-  const framedPrompt = framePromptForComposerMode(prompt, runtime.getComposerMode?.() ?? "build");
+  const framedPrompt = framePromptForComposerMode(effectivePrompt, runtime.getComposerMode?.() ?? "build");
   await session.append({ kind: "message", message: { role: "user", content: framedPrompt } });
   const messages = sessionToMessages(session);
 

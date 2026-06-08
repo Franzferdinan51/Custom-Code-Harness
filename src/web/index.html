@@ -129,9 +129,12 @@
               <button class="composer-chip" id="composer-commands" type="button">slash commands</button>
               <button class="composer-chip" id="composer-new-session" type="button">new session</button>
             </div>
+            <div class="attachment-preview" id="attachment-preview" hidden></div>
             <div class="input-toolbar">
               <div class="input-hint" id="input-hint">⌘/Ctrl+K commands · ⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear</div>
               <div class="input-meta" id="input-meta">Mode: build</div>
+              <input type="file" id="attach-input" accept="image/*" hidden multiple />
+              <button type="button" class="attach-button" id="attach-button" title="Attach images">📎</button>
               <button type="submit" class="send-button" id="send-button">send</button>
             </div>
           </div>
@@ -171,6 +174,14 @@
         <label>Model</label>
         <input type="text" id="setting-model" />
       </div>
+      <div class="settings-row" id="setting-models-row">
+        <label>Discovered</label>
+        <div class="settings-discover">
+          <button class="settings-btn" id="setting-discover-models" type="button">fetch /v1/models</button>
+          <select id="setting-discovered-models" hidden></select>
+        </div>
+      </div>
+      <div class="settings-meta" id="setting-models-meta"></div>
       <div class="settings-row">
         <label>Base URL</label>
         <input type="text" id="setting-baseurl" placeholder="https://api.example.com/v1" />
@@ -179,6 +190,11 @@
         <label id="setting-oauth-label">OAuth token</label>
         <input type="password" id="setting-oauth-token" placeholder="paste provider session or OAuth token" />
       </div>
+      <div class="settings-row" id="setting-codex-login-row" hidden>
+        <label>ChatGPT sign-in</label>
+        <button class="settings-btn settings-btn-primary" id="setting-codex-login" type="button">Sign in with ChatGPT</button>
+      </div>
+      <div class="settings-meta" id="setting-codex-login-meta" hidden></div>
       <div class="settings-row" id="setting-apikey-row">
         <label id="setting-apikey-label">API key</label>
         <input type="password" id="setting-apikey" placeholder="optional for local providers" />
@@ -289,7 +305,7 @@
           <div class="onboard-step-num">1</div>
           <div class="onboard-step-body">
             <div class="onboard-step-title">Pick a provider</div>
-            <div class="onboard-step-hint">Where your model API lives. OpenAI and Anthropic are hosted; LM Studio is local.</div>
+            <div class="onboard-step-hint">LM Studio is the default local server. OpenAI, Grok, MiniMax, Codex, and Anthropic are first-class hosted providers — pick any below.</div>
             <select id="onboard-provider" class="onboard-select"></select>
             <div class="onboard-provider-meta" id="onboard-provider-meta"></div>
           </div>
@@ -299,6 +315,7 @@
           <div class="onboard-step-body">
             <div class="onboard-step-title">Save your key</div>
             <div class="onboard-step-hint">Stored locally in <code>~/.codingharness/settings.json</code>. Never sent anywhere except to the provider.</div>
+            <button id="onboard-codex-login" class="onboard-btn onboard-btn-primary" type="button" hidden>Sign in with ChatGPT</button>
             <input id="onboard-apikey" type="password" class="onboard-input" placeholder="paste API key" autocomplete="off" />
             <div class="onboard-model-row">
               <label>Model</label>

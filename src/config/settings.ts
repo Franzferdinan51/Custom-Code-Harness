@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "./paths.js";
-import { firstEnvValue, getProviderPreset, listProviderPresets, type ProviderAuthMode } from "../providers/presets.js";
+import { firstEnvValue, getProviderPreset, listProviderPresets, PRIMARY_PROVIDER_ID, type ProviderAuthMode } from "../providers/presets.js";
 
 export interface ProviderProfile {
   id: string;
@@ -114,7 +114,17 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  providers: {},
+  defaultProvider: PRIMARY_PROVIDER_ID,
+  defaultModel: "openai/gpt-oss-20b",
+  providers: {
+    [PRIMARY_PROVIDER_ID]: {
+      id: PRIMARY_PROVIDER_ID,
+      baseUrl: "http://127.0.0.1:1234/v1",
+      model: "openai/gpt-oss-20b",
+      authMode: "optional",
+      default: true,
+    },
+  },
   tools: {
     bashTimeoutMs: 30_000,
     readMaxBytes: 200_000,
@@ -179,35 +189,60 @@ function merge<T>(base: T, override: Partial<T> | undefined): T {
 
 /** Apply env-var fallbacks for the most common settings. */
 function mergeWithEnv(s: Settings): Settings {
-  const out: Settings = { ...s };
-  const presetOrder = ["anthropic", "openai", "codex", "xai", "grok", "minimax", "lmstudio"];
-  // Default provider: prefer env-inferred if no settings.json entry.
-  if (!out.defaultProvider) {
-    for (const id of presetOrder) {
-      const preset = getProviderPreset(id);
-      const apiKey = firstEnvValue(preset?.apiKeyEnv);
-      const oauthToken = firstEnvValue(preset?.oauthTokenEnv);
-      const baseUrl = firstEnvValue(preset?.baseUrlEnv);
-      if (apiKey || oauthToken || (id === "lmstudio" && (baseUrl || process.env.LM_API_TOKEN || process.env.LMSTUDIO_BASE_URL))) {
-        out.defaultProvider = id;
-        break;
-      }
+  const out: Settings = structuredClone(s);
+  const hostedOrder = ["anthropic", "openai", "codex", "xai", "grok", "minimax"];
+  // Hosted credentials override the LM Studio factory default. User-picked
+  // defaults from settings.json are kept when no hosted env vars are set.
+  let hostedDefault: string | undefined;
+  for (const id of hostedOrder) {
+    const preset = getProviderPreset(id);
+    const apiKey = firstEnvValue(preset?.apiKeyEnv);
+    const oauthToken = firstEnvValue(preset?.oauthTokenEnv);
+    if (apiKey || oauthToken) {
+      hostedDefault = id;
+      break;
     }
   }
+  if (hostedDefault) {
+    out.defaultProvider = hostedDefault;
+  } else if (!out.defaultProvider || out.defaultProvider === PRIMARY_PROVIDER_ID) {
+    out.defaultProvider = PRIMARY_PROVIDER_ID;
+  }
+
+  // LM Studio is always available with local defaults.
+  const lmPreset = getProviderPreset(PRIMARY_PROVIDER_ID);
+  if (lmPreset) {
+    const existing = out.providers[PRIMARY_PROVIDER_ID];
+    out.providers[PRIMARY_PROVIDER_ID] = {
+      id: PRIMARY_PROVIDER_ID,
+      baseUrl: existing?.baseUrl ?? firstEnvValue(lmPreset.baseUrlEnv) ?? lmPreset.defaultBaseUrl,
+      apiKey: existing?.apiKey ?? firstEnvValue(lmPreset.apiKeyEnv),
+      authMode: existing?.authMode ?? lmPreset.defaultAuthMode,
+      model: existing?.model ?? firstEnvValue(lmPreset.modelEnv) ?? lmPreset.defaultModel,
+      default: out.defaultProvider === PRIMARY_PROVIDER_ID,
+      ...(existing?.options ? { options: existing.options } : {}),
+    };
+  }
+
   // Inject env-backed provider profiles when the user has none for them.
   for (const preset of listProviderPresets()) {
+    if (preset.id === PRIMARY_PROVIDER_ID) continue;
     if (out.providers[preset.id]) continue;
     const apiKey = firstEnvValue(preset.apiKeyEnv);
     const oauthToken = firstEnvValue(preset.oauthTokenEnv);
     const baseUrl = firstEnvValue(preset.baseUrlEnv) ?? preset.defaultBaseUrl;
     const model = firstEnvValue(preset.modelEnv) ?? preset.defaultModel;
     const aliasRequested =
-      preset.id === "codex" ? Boolean(process.env.CODEX_API_KEY || process.env.CODEX_BASE_URL || process.env.CODEX_MODEL) :
+      preset.id === "codex" ? Boolean(process.env.CODEX_API_KEY || process.env.CODEX_BASE_URL || process.env.CODEX_MODEL || process.env.CODEX_OAUTH_TOKEN || process.env.OPENAI_OAUTH_TOKEN) :
       preset.id === "grok" ? Boolean(process.env.GROK_API_KEY || process.env.GROK_CODE_XAI_API_KEY || process.env.GROK_BASE_URL || process.env.GROK_MODEL || process.env.GROK_OAUTH_TOKEN) :
+      preset.id === "vllm" ? Boolean(firstEnvValue(preset.baseUrlEnv)) :
+      preset.id === "vllm-omni" ? Boolean(firstEnvValue(preset.baseUrlEnv)) :
       true;
-    const shouldInject = aliasRequested && (Boolean(apiKey) || Boolean(oauthToken) || (preset.id === "lmstudio" && Boolean(firstEnvValue(preset.baseUrlEnv) || process.env.LM_API_TOKEN)));
-    if (!shouldInject && preset.id !== "openai" && preset.id !== "anthropic") continue;
-    if ((preset.id === "openai" || preset.id === "anthropic") && !apiKey) continue;
+    const isCoreHosted = preset.id === "openai" || preset.id === "anthropic";
+    const shouldInject = isCoreHosted
+      ? Boolean(apiKey)
+      : aliasRequested && (Boolean(apiKey) || Boolean(oauthToken));
+    if (!shouldInject) continue;
     out.providers[preset.id] = {
       id: preset.id,
       baseUrl,
@@ -217,6 +252,26 @@ function mergeWithEnv(s: Settings): Settings {
       model,
       default: out.defaultProvider === preset.id,
     };
+  }
+  // Refresh env-backed credentials on profiles that already exist (e.g. from
+  // settings.json) so oauth tokens and keys picked up from the shell win.
+  for (const id of hostedOrder) {
+    const preset = getProviderPreset(id);
+    const profile = out.providers[id];
+    if (!preset || !profile) continue;
+    const aliasRequested =
+      id === "codex" ? Boolean(process.env.CODEX_API_KEY || process.env.CODEX_BASE_URL || process.env.CODEX_MODEL || process.env.CODEX_OAUTH_TOKEN || process.env.OPENAI_OAUTH_TOKEN) :
+      id === "grok" ? Boolean(process.env.GROK_API_KEY || process.env.GROK_CODE_XAI_API_KEY || process.env.GROK_BASE_URL || process.env.GROK_MODEL || process.env.GROK_OAUTH_TOKEN) :
+      true;
+    if (id !== "openai" && id !== "anthropic" && !aliasRequested) continue;
+    const apiKey = firstEnvValue(preset.apiKeyEnv);
+    const oauthToken = firstEnvValue(preset.oauthTokenEnv);
+    if (apiKey) profile.apiKey = apiKey;
+    if (oauthToken) {
+      profile.oauthToken = oauthToken;
+      profile.authMode = "oauth";
+    }
+    profile.default = out.defaultProvider === id;
   }
   if (out.defaultProvider && !out.defaultModel) {
     const def = out.providers[out.defaultProvider];

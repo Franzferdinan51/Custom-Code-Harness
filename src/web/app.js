@@ -1224,6 +1224,21 @@ if (window.ch) {
     }
     const ok = await window.ch.keychainSet(providerId + suffix, credential);
     showInfo(ok ? "Saved to Keychain." : "Keychain unavailable on this platform.");
+    try {
+      await api("/v1/settings", { method: "POST", body: {
+        provider: providerId,
+        authMode,
+        model: $("setting-model").value,
+        baseUrl: $("setting-baseurl").value,
+        oauthToken,
+        apiKey,
+        persistSecret: false,
+        approval: $("setting-approval").value,
+        thinking: $("setting-thinking").value,
+      }});
+    } catch (e) {
+      addMessage({ kind: "error", text: "keychain sync: " + e.message });
+    }
     const info = await window.ch.info();
     $("setting-keychain").textContent = info.keychain.available
       ? `${info.keychain.backend} · ${info.keychain.entries.length} credential${info.keychain.entries.length === 1 ? "" : "s"}`

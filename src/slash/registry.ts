@@ -26,7 +26,7 @@ export interface SlashRuntime {
   /** Current model. */
   model(): string | undefined;
   /** Switch provider/model. */
-  setProviderAndModel(providerId: string, model?: string): Promise<void>;
+  setProviderAndModel(providerId: string, model?: string, opts?: { persistSettings?: boolean }): Promise<void>;
   /** Replace the active session. */
   setSession(id: string): Promise<void>;
   /** Get the active session id (or undefined if no session). */

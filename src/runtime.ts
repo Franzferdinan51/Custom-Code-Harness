@@ -149,7 +149,7 @@ export class HarnessRuntime implements SlashRuntime {
   // ---- SlashRuntime ----
   providerId(): string | undefined { return this.settings.defaultProvider; }
   model(): string | undefined { return this.settings.defaultModel; }
-  async   setProviderAndModel(providerId: string, model?: string): Promise<void> {
+  async setProviderAndModel(providerId: string, model?: string, opts?: { persistSettings?: boolean }): Promise<void> {
     this.settings.defaultProvider = providerId;
     if (model) this.settings.defaultModel = model;
     else {
@@ -157,7 +157,9 @@ export class HarnessRuntime implements SlashRuntime {
       if (p?.model) this.settings.defaultModel = p.model;
     }
     this.providerRegistry.invalidate(providerId);
-    try { saveSettings(this.settings); } catch { /* best-effort */ }
+    if (opts?.persistSettings !== false) {
+      try { saveSettings(this.settings); } catch { /* best-effort */ }
+    }
   }
 
   /**

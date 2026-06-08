@@ -249,7 +249,8 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         return;
       }
       if (req.method === "POST" && path === "/v1/settings") {
-        const body = await readJson<{ provider?: string; model?: string; baseUrl?: string; apiKey?: string; oauthToken?: string; authMode?: string; approval?: string; thinking?: string }>(req);
+        const body = await readJson<{ provider?: string; model?: string; baseUrl?: string; apiKey?: string; oauthToken?: string; authMode?: string; persistSecret?: boolean; approval?: string; thinking?: string }>(req);
+        const persistSecret = body.persistSecret !== false;
         const settings = runtime.settings;
         const providerId = body.provider?.trim() || settings.defaultProvider;
         if (providerId) {
@@ -295,7 +296,7 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
           settings.defaultProvider = providerId;
           settings.defaultModel = profile.model ?? settings.defaultModel;
           runtime.providerRegistry.invalidate(providerId);
-          await runtime.setProviderAndModel(providerId, settings.defaultModel);
+          await runtime.setProviderAndModel(providerId, settings.defaultModel, { persistSettings: persistSecret });
         } else if (body.model) {
           settings.defaultModel = body.model.trim();
         }
@@ -307,7 +308,12 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
           settings.thinking = body.thinking as Settings["thinking"];
           runtime.setThinking(body.thinking);
         }
-        saveSettings(settings);
+        if (!persistSecret) {
+          const persisted = scrubSensitiveSettings(settings);
+          saveSettings(persisted);
+        } else {
+          saveSettings(settings);
+        }
         sendJson(res, 200, { ok: true });
         return;
       }
@@ -377,6 +383,15 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
     process.stdout.write("  sub-agent: POST " + apiUrl + "spawn\n");
   });
   await new Promise(() => { /* run until killed */ });
+}
+
+function scrubSensitiveSettings(settings: Settings): Settings {
+  const clone = JSON.parse(JSON.stringify(settings)) as Settings;
+  for (const profile of Object.values(clone.providers ?? {})) {
+    delete profile.apiKey;
+    delete profile.oauthToken;
+  }
+  return clone;
 }
 
 function serveStatic(res: ServerResponse, file: string): void {

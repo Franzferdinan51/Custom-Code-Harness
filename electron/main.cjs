@@ -106,6 +106,30 @@ let windowState = null; // electron-window-state
 let serverReady = false;
 let serverError = null;
 
+const KEYCHAIN_ENV_MAP = {
+  "openai.apiKey": ["OPENAI_API_KEY"],
+  "codex.apiKey": ["CODEX_API_KEY", "OPENAI_API_KEY"],
+  "anthropic.apiKey": ["ANTHROPIC_API_KEY"],
+  "xai.apiKey": ["XAI_API_KEY", "GROK_API_KEY"],
+  "xai.oauthToken": ["XAI_OAUTH_TOKEN", "GROK_OAUTH_TOKEN"],
+  "grok.apiKey": ["GROK_API_KEY", "XAI_API_KEY"],
+  "grok.oauthToken": ["GROK_OAUTH_TOKEN", "XAI_OAUTH_TOKEN"],
+  "minimax.apiKey": ["MINIMAX_API_KEY"],
+  "minimax.oauthToken": ["MINIMAX_OAUTH_TOKEN", "MINIMAX_AUTH_TOKEN"],
+  "lmstudio.apiKey": ["LMSTUDIO_API_KEY", "LM_API_TOKEN"],
+  "lmstudio.oauthToken": ["LM_API_TOKEN"],
+};
+
+function buildCredentialEnv() {
+  const env = {};
+  for (const [entry, names] of Object.entries(KEYCHAIN_ENV_MAP)) {
+    const value = features.getKeychainEntry(entry);
+    if (!value) continue;
+    for (const name of names) env[name] = value;
+  }
+  return env;
+}
+
 function sendMenuCommand(command) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("menu:command", command);
@@ -151,7 +175,7 @@ function startChServer() {
         CH_BIN,
         ["serve", "--port", String(port), "--host", "127.0.0.1"],
         {
-          env: Object.assign({}, process.env, { CH_WEB_DIR: WEB_DIR, ELECTRON_RUN_AS_NODE: undefined }),
+          env: Object.assign({}, process.env, buildCredentialEnv(), { CH_WEB_DIR: WEB_DIR, ELECTRON_RUN_AS_NODE: undefined }),
           stdio: ["ignore", "pipe", "pipe"],
         }
       );
@@ -235,7 +259,7 @@ function startChMcpServer() {
       chMcpPort = port;
       chMcpUrl = "http://127.0.0.1:" + port;
       const child = spawn(CH_BIN, ["mcp", "--port", String(port), "--host", "127.0.0.1"], {
-        env: Object.assign({}, process.env, { CH_WEB_DIR: WEB_DIR }),
+        env: Object.assign({}, process.env, buildCredentialEnv(), { CH_WEB_DIR: WEB_DIR }),
         stdio: ["ignore", "pipe", "pipe"],
       });
       chMcpProcess = child;

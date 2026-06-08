@@ -7,6 +7,36 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **Stack-aware `/init`** (`src/project/init.ts`, `src/slash/builtin.ts`,
+  `src/__tests__/init.test.ts`, `src/__tests__/slash.test.ts`):
+  detects the project's ecosystem from the manifest and writes a
+  real first draft of `.codingharness/AGENTS.md` with build/test
+  commands pre-filled.
+  - **Node.js / TypeScript**: pulls `name`, `description`, `license`,
+    and the `build` / `test` / `lint` / `typecheck` scripts straight
+    from `package.json`. Falls back to `npm run build` / `npm test`
+    when the manifest doesn't define them. Echoes are filtered out
+    so the template doesn't tell the agent to run a no-op.
+  - **Rust**: reads `[package]` from `Cargo.toml`. Always suggests
+    `cargo build` / `cargo test` / `cargo clippy` / `cargo check`.
+  - **Python**: parses `pyproject.toml`, infers `pytest` vs
+    `unittest`, suggests `ruff` + `mypy`.
+  - **Go**: reads `go.mod`, derives the project name from the
+    module path, suggests `go build ./...` / `go test ./...`.
+  - **Ruby / Java / .NET / Elixir**: lightweight detection from
+    `Gemfile`, `pom.xml` / `build.gradle[.kts]`, `*.csproj` /
+    `*.sln`, `mix.exs`.
+  - **README fallthrough**: if the manifest doesn't have a
+    description, the first `# Heading` of `README.md` is used.
+  - **Source roots + tests**: the `Stack` section lists `src/`,
+    `lib/`, `packages/`, `app/`, etc., when present, and mentions
+    whether a top-level `test*` directory (or `src/__tests__/`)
+    exists.
+  - **Flags**: `/init --force` overwrites an existing file;
+    `/init --no-detect` writes the legacy blank template.
+  - 13 unit tests in `init.test.ts` cover each stack and the
+    template renderer; 3 slash-level tests cover end-to-end init,
+    refuse-to-overwrite, and `--force`.
 - **Easy-to-use TUI + CLI first-run experience** (`src/slash/builtin.ts`,
   `src/ui/tui.ts`, `src/cli.ts`, `src/__tests__/slash.test.ts`):
   everything a brand-new user needs to know in one place.

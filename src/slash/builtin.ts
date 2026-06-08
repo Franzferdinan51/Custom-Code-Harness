@@ -586,11 +586,15 @@ const thinkCommand: SlashCommand = {
   group: "settings",
   usage: "/think <level>",
   async run(args, ctx) {
+    const rt = ctx.runtime?.() as { settings?: { thinking?: string }; setThinking?: (l: string) => void } | undefined;
     const level = args.trim();
     const valid = ["off", "minimal", "low", "medium", "high", "xhigh"];
+    if (!level) {
+      return "thinking level: " + (rt?.settings?.thinking ?? "medium") + "\n(use /think <level>)";
+    }
     if (!valid.includes(level)) return "valid levels: " + valid.join(", ");
-    // Persist in settings via the runtime's settings (we expose this through SlashRuntime).
-    (ctx.runtime as { setThinking?: (l: string) => void } | undefined)?.setThinking?.(level);
+    // Persist in settings via the runtime so CLI, slash, and desktop stay aligned.
+    rt?.setThinking?.(level);
     return "thinking level set to " + level;
   },
 };
@@ -856,31 +860,57 @@ const diagCommand: SlashCommand = {
 
 // ---------- /init ----------
 
+/** Write a starter `.codingharness/AGENTS.md`. The body is generated
+ *  from the project layout (package.json, Cargo.toml, go.mod, etc.),
+ *  so the user gets a real first draft with build/test commands
+ *  pre-filled — not a blank template. If a file already exists, we
+ *  refuse to overwrite (the user has to delete it or move it). */
 const initCommand: SlashCommand = {
   name: "init",
   description: "Generate a starter .codingharness/AGENTS.md in the current directory.",
   group: "tools",
-  run(_a, ctx) {
+  usage: "/init [--force] [--no-detect]",
+  async run(args, ctx) {
     const path = ctx.cwd + "/.codingharness/AGENTS.md";
-    if (existsSync(path)) return path + " already exists";
+    const flags = new Set(args.split(/\s+/).filter((s) => s.startsWith("-")));
+    const force = flags.has("--force") || flags.has("-f");
+    if (existsSync(path) && !force) {
+      return path + " already exists — re-run with --force to overwrite.";
+    }
     mkdirSync(ctx.cwd + "/.codingharness", { recursive: true });
-    writeFileSync(path, [
-      "# Project Agent Instructions",
-      "",
-      "This file is automatically loaded into every CodingHarness session started in this directory.",
-      "Add project-specific conventions, common commands, and gotchas here.",
-      "",
-      "## Build / test commands",
-      "",
-      "- (add your build command here, e.g. `npm run build`)",
-      "- (add your test command here, e.g. `npm test`)",
-      "",
-      "## Conventions",
-      "",
-      "- (add your style/conventions here)",
-      "",
-    ].join("\n"));
-    return "wrote " + path;
+
+    let body: string;
+    let detected: string;
+    if (flags.has("--no-detect")) {
+      // Bypass detection and write the legacy blank template. Useful
+      // for tests and for users who want a pristine doc.
+      body = [
+        "# Project Agent Instructions",
+        "",
+        "This file is automatically loaded into every CodingHarness session started in this directory.",
+        "Add project-specific conventions, common commands, and gotchas here.",
+        "",
+        "## Build / test commands",
+        "",
+        "- (add your build command here, e.g. `npm run build`)",
+        "- (add your test command here, e.g. `npm test`)",
+        "",
+        "## Conventions",
+        "",
+        "- (add your style/conventions here)",
+        "",
+      ].join("\n");
+      detected = "blank template (--no-detect)";
+    } else {
+      const { detectProject, renderAgentsTemplate } = await import("../project/init.js");
+      const facts = detectProject(ctx.cwd);
+      body = renderAgentsTemplate(facts);
+      detected = facts.stack === "unknown"
+        ? "no manifest found — wrote a minimal starter"
+        : "detected " + facts.stack + " project";
+    }
+    writeFileSync(path, body);
+    return "wrote " + path + " (" + detected + ")";
   },
 };
 

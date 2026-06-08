@@ -25,6 +25,7 @@ const state = {
   recentSessions: [],
   sessionQuery: "",
   goalActivity: null,
+  composerMode: "build",
   providerPresets: [],
   providerProfiles: [],
 };
@@ -40,6 +41,29 @@ const slashPanel = $("slash-panel");
 const commandPaletteEl = $("command-palette");
 const commandPaletteInput = $("command-palette-input");
 const commandPaletteList = $("command-palette-list");
+let composerHintEl = null;
+let composerBuildButton = null;
+let composerPlanButton = null;
+
+const COMPOSER_MODE_STORAGE_KEY = "codingharness.composerMode";
+const COMPOSER_MODE_HELP = {
+  build: "plain prompts become implementation requests",
+  plan: "plain prompts become planning requests",
+};
+const COMPOSER_MODE_FRAME = {
+  build: [
+    "Build mode:",
+    "Treat the user's request as an implementation task in the current repository.",
+    "Prefer concrete edits, clear next steps, and concise explanations.",
+    "If details are missing, make sensible assumptions and state them briefly.",
+  ].join("\n"),
+  plan: [
+    "Plan mode:",
+    "Treat the user's request as a planning task in the current repository.",
+    "Do not propose file edits unless the user explicitly asks for implementation.",
+    "Return a concise plan, key files or areas to inspect, and any risks or unknowns.",
+  ].join("\n"),
+};
 
 function el(tag, props = {}, children = []) {
   const e = document.createElement(tag);
@@ -103,6 +127,76 @@ function copyText(text) {
   document.execCommand("copy");
   ta.remove();
   return Promise.resolve();
+}
+
+function normalizeComposerMode(mode) {
+  return mode === "plan" ? "plan" : "build";
+}
+
+function loadComposerMode() {
+  try {
+    return normalizeComposerMode(localStorage.getItem(COMPOSER_MODE_STORAGE_KEY));
+  } catch {
+    return "build";
+  }
+}
+
+function saveComposerMode(mode) {
+  try {
+    localStorage.setItem(COMPOSER_MODE_STORAGE_KEY, normalizeComposerMode(mode));
+  } catch {
+    /* ignore persistence failures */
+  }
+}
+
+function composerPromptFrame(mode) {
+  return COMPOSER_MODE_FRAME[normalizeComposerMode(mode)];
+}
+
+function composeComposerPrompt(text, mode) {
+  if (text.startsWith("/")) return text;
+  return composerPromptFrame(mode) + "\n\nUser request:\n" + text;
+}
+
+function updateComposerHint() {
+  if (!composerHintEl) return;
+  composerHintEl.textContent =
+    state.composerMode + " mode · " +
+    COMPOSER_MODE_HELP[state.composerMode] +
+    " · ⌘/Ctrl+K commands · ⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear";
+}
+
+function renderComposerModeButtons() {
+  const buttons = [
+    [composerBuildButton, "build"],
+    [composerPlanButton, "plan"],
+  ];
+  for (const [button, mode] of buttons) {
+    if (!button) continue;
+    const active = state.composerMode === mode;
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.style.opacity = active ? "1" : "0.72";
+    button.style.borderColor = active
+      ? (mode === "plan" ? "rgba(126, 212, 163, 0.42)" : "rgba(94, 209, 255, 0.42)")
+      : "rgba(94, 209, 255, 0.22)";
+    button.style.background = active
+      ? (mode === "plan"
+        ? "linear-gradient(135deg, rgba(126, 212, 163, 0.22), rgba(94, 209, 255, 0.16))"
+        : "linear-gradient(135deg, rgba(94, 209, 255, 0.24), rgba(108, 140, 255, 0.20))")
+      : "";
+  }
+}
+
+function setComposerMode(mode, { focusInput = false } = {}) {
+  const next = normalizeComposerMode(mode);
+  if (state.composerMode !== next) {
+    state.composerMode = next;
+    saveComposerMode(next);
+  }
+  updateComposerHint();
+  renderComposerModeButtons();
+  renderGoalActivity();
+  if (focusInput) inputEl.focus();
 }
 
 // ---------- Messages ----------
@@ -228,11 +322,51 @@ function renderGoalActivity() {
   actionRow.appendChild(goalButton);
   actionRow.appendChild(commandsButton);
 
-  const phaseLabel = activity ? (activity.phase === "executing" ? "running" : activity.phase) : "idle";
-  const stepLabel = activity ? (activity.step > 0 ? "step " + activity.step + "/" + activity.maxSteps : "plan") : "ready";
+  const modeRow = el("div", { class: "sidebar-run-actions" }, []);
+  const buildButton = el("button", {
+    class: "sidebar-run-action",
+    type: "button",
+    "aria-pressed": state.composerMode === "build" ? "true" : "false",
+  }, "build");
+  const planButton = el("button", {
+    class: "sidebar-run-action",
+    type: "button",
+    "aria-pressed": state.composerMode === "plan" ? "true" : "false",
+  }, "plan");
+  const paintComposerButton = (button, mode) => {
+    const active = state.composerMode === mode;
+    button.style.opacity = active ? "1" : "0.72";
+    button.style.borderColor = active
+      ? (mode === "plan" ? "rgba(126, 212, 163, 0.42)" : "rgba(94, 209, 255, 0.42)")
+      : "";
+    button.style.background = active
+      ? (mode === "plan"
+        ? "linear-gradient(135deg, rgba(126, 212, 163, 0.22), rgba(94, 209, 255, 0.16))"
+        : "linear-gradient(135deg, rgba(94, 209, 255, 0.24), rgba(108, 140, 255, 0.20))")
+      : "";
+  };
+  paintComposerButton(buildButton, "build");
+  paintComposerButton(planButton, "plan");
+  buildButton.addEventListener("click", () => setComposerMode("build", { focusInput: true }));
+  planButton.addEventListener("click", () => setComposerMode("plan", { focusInput: true }));
+  modeRow.appendChild(buildButton);
+  modeRow.appendChild(planButton);
+
+  const phaseLabel = activity ? (activity.phase === "executing" ? "running" : activity.phase) : state.composerMode;
+  const stepLabel = activity
+    ? (activity.step > 0 ? "step " + activity.step + "/" + activity.maxSteps : "plan")
+    : (state.composerMode === "plan" ? "plan first" : "build direct");
   const progress = activity && activity.maxSteps > 0 ? Math.max(0, Math.min(100, Math.round((activity.step / activity.maxSteps) * 100))) : 0;
-  const objective = activity ? activity.objective : "Use /goal to plan, execute, and track a structured task.";
-  const status = activity ? (activity.statusText || "Working through the goal.") : "No goal is running yet.";
+  const objective = activity
+    ? activity.objective
+    : (state.composerMode === "plan"
+      ? "Plan mode frames plain prompts as planning requests."
+      : "Build mode frames plain prompts as implementation requests.");
+  const status = activity
+    ? (activity.statusText || "Working through the goal.")
+    : (state.composerMode === "plan"
+      ? "Plain prompts will be framed as planning requests."
+      : "Plain prompts will be framed as implementation requests.");
 
   root.appendChild(el("div", { class: "sidebar-goal-card" }, [
     el("div", { class: "sidebar-goal-top" }, [
@@ -246,12 +380,13 @@ function renderGoalActivity() {
     el("div", { class: "sidebar-goal-objective" }, objective),
     el("div", { class: "sidebar-goal-meta" }, [
       el("span", {}, stepLabel),
-      el("span", {}, activity ? activity.mode : "session"),
+      el("span", {}, activity ? activity.mode : state.composerMode),
     ]),
     el("div", { class: "sidebar-run-progress", "aria-hidden": "true" }, [
       el("span", { style: { width: progress + "%" } }),
     ]),
     el("div", { class: "sidebar-goal-status" }, status),
+    modeRow,
     actionRow,
   ]));
 }
@@ -463,7 +598,54 @@ function closeCommandPalette() {
   commandPaletteInput.value = "";
 }
 
+function setComposerMode(mode) {
+  state.composerMode = mode === "plan" ? "plan" : "build";
+  const isPlan = state.composerMode === "plan";
+  $("mode-plan")?.classList.toggle("is-active", isPlan);
+  $("mode-build")?.classList.toggle("is-active", !isPlan);
+  $("mode-plan")?.setAttribute("aria-pressed", String(isPlan));
+  $("mode-build")?.setAttribute("aria-pressed", String(!isPlan));
+  $("composer-metric-plan")?.classList.toggle("is-active", isPlan);
+  $("composer-metric-build")?.classList.toggle("is-active", !isPlan);
+  $("composer-copy").textContent = isPlan
+    ? "Stay in analysis mode: clarify scope, assumptions, and next steps before changing code."
+    : "Execute directly in the repo: use tools, commands, and edits to ship the task.";
+  $("composer-status").textContent = isPlan
+    ? "Plan mode · reasoning first"
+    : "Build mode · direct execution";
+  $("composer-plan-copy").textContent = isPlan
+    ? "active · scope, assumptions, next steps"
+    : "scope, assumptions, next steps";
+  $("composer-build-copy").textContent = isPlan
+    ? "tools stay parked until you switch"
+    : "active · tools, commands, and edits";
+  $("input-hint").textContent = isPlan
+    ? "Plan mode avoids repo changes by default · ⌘/Ctrl+K commands · ⇧⏎ newline"
+    : "⌘/Ctrl+K commands · ⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear";
+  $("input-meta").textContent = "Mode: " + state.composerMode;
+  inputEl.placeholder = isPlan
+    ? "Describe the outcome and constraints. I’ll plan it before building."
+    : "Ask something, or start with /goal...";
+}
+
+function preparePromptForComposerMode(text) {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.startsWith("/")) return trimmed;
+  if (state.composerMode === "plan") {
+    return [
+      "Planning mode:",
+      "Analyze the task, call out assumptions, and produce a concise implementation plan.",
+      "Do not make repository changes or run tools unless the user explicitly asks you to execute.",
+      "",
+      "User request:",
+      trimmed,
+    ].join("\n");
+  }
+  return trimmed;
+}
+
 function primeGoalInput() {
+  setComposerMode("build");
   inputEl.value = "/goal ";
   autoResize();
   renderSlashPanel(inputEl.value);
@@ -526,7 +708,7 @@ function handleDeepLink(url) {
 
 // ---------- Streaming chat ----------
 
-async function sendPrompt(prompt) {
+async function sendPrompt(prompt, opts = {}) {
   if (state.streaming) return;
   state.streaming = true;
   $("send-button").disabled = true;
@@ -534,7 +716,7 @@ async function sendPrompt(prompt) {
   state.streamBuffer = "";
 
   // Echo user message.
-  addMessage({ kind: "user", text: prompt });
+  addMessage({ kind: "user", text: opts.displayText || prompt });
 
   try {
     await refreshStatus();
@@ -727,6 +909,11 @@ inputEl.addEventListener("keydown", (e) => {
 $("command-palette-button").addEventListener("click", () => openCommandPalette(""));
 $("goal-button").addEventListener("click", () => primeGoalInput());
 $("quick-goal").addEventListener("click", () => primeGoalInput());
+$("composer-goal")?.addEventListener("click", () => primeGoalInput());
+$("composer-commands")?.addEventListener("click", () => openCommandPalette(""));
+$("composer-new-session")?.addEventListener("click", () => $("new-session").click());
+$("mode-plan")?.addEventListener("click", () => setComposerMode("plan"));
+$("mode-build")?.addEventListener("click", () => setComposerMode("build"));
 $("command-palette-backdrop").addEventListener("click", closeCommandPalette);
 commandPaletteInput.addEventListener("input", () => renderCommandPalette(commandPaletteInput.value));
 commandPaletteInput.addEventListener("keydown", (e) => {
@@ -774,10 +961,11 @@ inputForm.addEventListener("submit", (e) => {
   }
   if (state.history[state.history.length - 1] !== text) state.history.push(text);
   state.historyIndex = -1;
+  const preparedText = preparePromptForComposerMode(text);
   inputEl.value = "";
   autoResize();
   renderSlashPanel("");
-  sendPrompt(text);
+  sendPrompt(preparedText, { displayText: text });
 });
 
 // ---------- New session / resume ----------
@@ -870,6 +1058,7 @@ $("settings-save").addEventListener("click", async () => {
 // ---------- Init ----------
 
 (async () => {
+  setComposerMode(state.composerMode);
   await refreshAll();
   setInterval(refreshStatus, 5000);
   setInterval(refreshUsage, 5000);

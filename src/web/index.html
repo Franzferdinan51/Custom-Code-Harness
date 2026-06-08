@@ -74,17 +74,57 @@
       <div class="info-banner" id="info-banner"></div>
 
       <form class="input-form" id="input-form">
-        <textarea
-          class="input-box"
-          id="input"
-          placeholder="Ask something, or start with /goal..."
-          rows="3"
-          autofocus
-        ></textarea>
-        <div class="slash-panel" id="slash-panel" hidden></div>
-        <div class="input-toolbar">
-          <div class="input-hint">⌘/Ctrl+K commands · ⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear</div>
-          <button type="submit" class="send-button" id="send-button">send</button>
+        <div class="composer-shell">
+          <div class="composer-header">
+            <div class="composer-mode-card">
+              <div class="composer-kicker">composer</div>
+              <div class="composer-title">Plan first, build when ready.</div>
+              <div class="composer-copy" id="composer-copy">Switch between structured planning and execution without leaving the prompt.</div>
+            </div>
+            <div class="composer-toggle-wrap">
+              <div class="composer-toggle-label">workflow</div>
+              <div class="composer-toggle" id="composer-mode-switch" role="tablist" aria-label="Composer workflow">
+                <button type="button" class="composer-tab" id="mode-plan" data-mode="plan" aria-pressed="false">plan</button>
+                <button type="button" class="composer-tab is-active" id="mode-build" data-mode="build" aria-pressed="true">build</button>
+              </div>
+            </div>
+          </div>
+
+          <textarea
+            class="input-box"
+            id="input"
+            placeholder="Ask something, or start with /goal..."
+            rows="3"
+            autofocus
+          ></textarea>
+          <div class="slash-panel" id="slash-panel" hidden></div>
+
+          <div class="composer-dashboard" aria-label="Composer dashboard">
+            <div class="composer-metrics">
+              <div class="composer-metric" id="composer-metric-plan">
+                <span>plan</span>
+                <strong id="composer-plan-copy">scope, assumptions, next steps</strong>
+              </div>
+              <div class="composer-metric" id="composer-metric-build">
+                <span>build</span>
+                <strong id="composer-build-copy">tools, commands, and edits</strong>
+              </div>
+              <div class="composer-metric composer-metric-live">
+                <span>live</span>
+                <strong id="composer-status">Build mode · direct execution</strong>
+              </div>
+            </div>
+            <div class="composer-actions">
+              <button class="composer-chip" id="composer-goal" type="button">goal run</button>
+              <button class="composer-chip" id="composer-commands" type="button">slash commands</button>
+              <button class="composer-chip" id="composer-new-session" type="button">new session</button>
+            </div>
+            <div class="input-toolbar">
+              <div class="input-hint" id="input-hint">⌘/Ctrl+K commands · ⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear</div>
+              <div class="input-meta" id="input-meta">Mode: build</div>
+              <button type="submit" class="send-button" id="send-button">send</button>
+            </div>
+          </div>
         </div>
       </form>
     </main>

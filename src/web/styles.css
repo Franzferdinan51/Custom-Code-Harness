@@ -195,6 +195,23 @@ html, body {
 .header-left { display: flex; gap: 12px; align-items: baseline; }
 .header-right { display: flex; gap: 12px; align-items: baseline; }
 
+.header-action {
+  background: linear-gradient(135deg, rgba(94, 209, 255, 0.16), rgba(108, 140, 255, 0.16));
+  color: var(--fg);
+  border: 1px solid rgba(94, 209, 255, 0.22);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.header-action:hover {
+  background: linear-gradient(135deg, rgba(94, 209, 255, 0.24), rgba(108, 140, 255, 0.24));
+}
+
 .header-title {
   font-weight: 600;
   font-size: 14px;
@@ -321,6 +338,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  position: relative;
 }
 
 .input-box {
@@ -347,6 +365,45 @@ html, body {
   align-items: center;
   font-size: 11px;
   color: var(--fg-faint);
+}
+
+.slash-panel {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 72px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: rgba(17, 21, 28, 0.98);
+  border: 1px solid rgba(94, 209, 255, 0.18);
+  border-radius: 12px;
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.35);
+  padding: 8px;
+}
+
+.slash-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.slash-item:hover,
+.slash-item.active {
+  background: rgba(108, 140, 255, 0.12);
+}
+
+.slash-name {
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.slash-desc {
+  color: var(--fg-dim);
+  font-size: 12px;
 }
 
 .send-button {
@@ -458,6 +515,8 @@ html, body {
 }
 .settings-modal[hidden] { display: none; }
 
+.command-palette[hidden] { display: none; }
+
 .settings-content {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -465,6 +524,89 @@ html, body {
   padding: 20px 24px;
   width: 440px;
   max-width: 90%;
+}
+
+.command-palette {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+}
+
+.command-palette-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 10, 16, 0.68);
+  backdrop-filter: blur(8px);
+}
+
+.command-palette-card {
+  position: relative;
+  width: min(760px, calc(100vw - 32px));
+  margin: 70px auto 0;
+  background:
+    radial-gradient(circle at top left, rgba(94, 209, 255, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(24, 30, 41, 0.98), rgba(12, 16, 23, 0.98));
+  border: 1px solid rgba(108, 140, 255, 0.18);
+  border-radius: 18px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.42);
+  padding: 18px;
+}
+
+.command-palette-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--fg-dim);
+  margin-bottom: 10px;
+}
+
+.command-palette-input {
+  width: 100%;
+  background: rgba(11, 15, 21, 0.9);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 15px;
+  outline: none;
+}
+
+.command-palette-input:focus {
+  border-color: rgba(94, 209, 255, 0.4);
+}
+
+.command-palette-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.command-palette-item {
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.01);
+  cursor: pointer;
+}
+
+.command-palette-item:hover,
+.command-palette-item.active {
+  border-color: rgba(94, 209, 255, 0.24);
+  background: rgba(94, 209, 255, 0.08);
+}
+
+.command-palette-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  margin-top: 6px;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .settings-title {
@@ -522,6 +664,28 @@ html, body {
 .settings-save { color: var(--green); border-color: var(--green); }
 .settings-cancel { color: var(--fg-dim); }
 .settings-save:hover, .settings-cancel:hover { background: var(--bg-hover); }
+
+@media (max-width: 900px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .header {
+    padding: 10px 14px;
+  }
+
+  .messages {
+    padding: 16px 14px;
+  }
+
+  .slash-item {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* --- Scrollbars --- */
 

@@ -54,6 +54,8 @@ export interface SlashRuntime {
 export interface SlashCommand {
   name: string;
   description: string;
+  /** Optional grouping hint for help UIs. */
+  group?: string;
   /** Optional usage string, e.g. "/model [name]" */
   usage?: string;
   /** Run the command. Return a message to print, or throw on user error. */

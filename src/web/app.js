@@ -17,6 +17,7 @@ const state = {
   streaming: false,
   currentStreamEl: null,
   slashNames: [],
+  slashCommands: [],
   history: [],
   historyIndex: -1,
   pendingApproval: null,   // { resolve, command, reason }
@@ -31,6 +32,10 @@ const messagesEl = $("messages");
 const inputEl = $("input");
 const inputForm = $("input-form");
 const infoBanner = $("info-banner");
+const slashPanel = $("slash-panel");
+const commandPaletteEl = $("command-palette");
+const commandPaletteInput = $("command-palette-input");
+const commandPaletteList = $("command-palette-list");
 
 function el(tag, props = {}, children = []) {
   const e = document.createElement(tag);
@@ -243,7 +248,87 @@ async function refreshAll() {
   try {
     const cmds = await api("/v1/commands");
     state.slashNames = cmds.commands || [];
+    state.slashCommands = cmds.items || [];
   } catch {}
+}
+
+function getSlashMatches(query) {
+  const normalized = query.trim().replace(/^\//, "").toLowerCase();
+  if (!normalized) return state.slashCommands.slice(0, 8);
+  return state.slashCommands
+    .filter((cmd) => cmd.name.toLowerCase().includes(normalized) || cmd.description.toLowerCase().includes(normalized))
+    .slice(0, 8);
+}
+
+function renderSlashPanel(query) {
+  const value = query.trim();
+  if (!value.startsWith("/")) {
+    slashPanel.hidden = true;
+    slashPanel.innerHTML = "";
+    return;
+  }
+  const base = value.slice(1);
+  if (base.includes(" ")) {
+    slashPanel.hidden = true;
+    slashPanel.innerHTML = "";
+    return;
+  }
+  const matches = getSlashMatches(base);
+  if (matches.length === 0) {
+    slashPanel.hidden = true;
+    slashPanel.innerHTML = "";
+    return;
+  }
+  slashPanel.hidden = false;
+  slashPanel.innerHTML = "";
+  matches.forEach((cmd, index) => {
+    const row = el("div", { class: "slash-item" + (index === 0 ? " active" : "") }, [
+      el("div", { class: "slash-name" }, "/" + cmd.name),
+      el("div", { class: "slash-desc" }, cmd.description),
+    ]);
+    row.addEventListener("click", () => {
+      inputEl.value = "/" + cmd.name + " ";
+      autoResize();
+      inputEl.focus();
+      slashPanel.hidden = true;
+    });
+    slashPanel.appendChild(row);
+  });
+}
+
+function renderCommandPalette(filter = "") {
+  const matches = getSlashMatches(filter);
+  commandPaletteList.innerHTML = "";
+  for (const cmd of matches) {
+    const row = el("div", { class: "command-palette-item" }, [
+      el("div", { class: "slash-name" }, cmd.usage || "/" + cmd.name),
+      el("div", { class: "slash-desc" }, cmd.description),
+      el("div", { class: "command-palette-meta" }, [
+        el("span", {}, cmd.group || "other"),
+        el("span", {}, "slash"),
+      ]),
+    ]);
+    row.addEventListener("click", () => {
+      inputEl.value = "/" + cmd.name + " ";
+      autoResize();
+      closeCommandPalette();
+      inputEl.focus();
+    });
+    commandPaletteList.appendChild(row);
+  }
+}
+
+function openCommandPalette(prefill = "") {
+  commandPaletteEl.hidden = false;
+  commandPaletteInput.value = prefill;
+  renderCommandPalette(prefill);
+  commandPaletteInput.focus();
+  commandPaletteInput.select();
+}
+
+function closeCommandPalette() {
+  commandPaletteEl.hidden = true;
+  commandPaletteInput.value = "";
 }
 
 // ---------- Streaming chat ----------
@@ -385,7 +470,13 @@ function autoResize() {
 }
 
 inputEl.addEventListener("input", autoResize);
+inputEl.addEventListener("input", () => renderSlashPanel(inputEl.value));
 inputEl.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    openCommandPalette(inputEl.value.startsWith("/") ? inputEl.value : "");
+    return;
+  }
   // Enter to send, Shift+Enter for newline.
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -402,6 +493,7 @@ inputEl.addEventListener("keydown", (e) => {
       if (matches.length > 0) {
         inputEl.value = "/" + matches[0] + " ";
         autoResize();
+        renderSlashPanel(inputEl.value);
       }
     }
   }
@@ -435,6 +527,35 @@ inputEl.addEventListener("keydown", (e) => {
   }
 });
 
+$("command-palette-button").addEventListener("click", () => openCommandPalette(""));
+$("command-palette-backdrop").addEventListener("click", closeCommandPalette);
+commandPaletteInput.addEventListener("input", () => renderCommandPalette(commandPaletteInput.value));
+commandPaletteInput.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeCommandPalette();
+    inputEl.focus();
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const first = getSlashMatches(commandPaletteInput.value)[0];
+    if (first) {
+      inputEl.value = "/" + first.name + " ";
+      autoResize();
+      closeCommandPalette();
+      inputEl.focus();
+    }
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    openCommandPalette("");
+  } else if (e.key === "Escape" && !commandPaletteEl.hidden) {
+    closeCommandPalette();
+  }
+});
+
 inputForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = inputEl.value.trim();
@@ -456,6 +577,7 @@ inputForm.addEventListener("submit", (e) => {
   state.historyIndex = -1;
   inputEl.value = "";
   autoResize();
+  renderSlashPanel("");
   sendPrompt(text);
 });
 

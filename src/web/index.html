@@ -44,6 +44,7 @@
           <span class="header-model" id="model">— / —</span>
         </div>
         <div class="header-right">
+          <button class="header-action" id="command-palette-button" type="button">commands</button>
           <span class="header-tokens" id="tokens">tokens 0 in / 0 out</span>
           <span class="header-cost" id="cost">$0.00</span>
         </div>
@@ -66,8 +67,9 @@
           rows="3"
           autofocus
         ></textarea>
+        <div class="slash-panel" id="slash-panel" hidden></div>
         <div class="input-toolbar">
-          <div class="input-hint">⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear</div>
+          <div class="input-hint">⌘/Ctrl+K commands · ⏎ send · ⇧⏎ newline · Tab complete slash · ↑/↓ history · Ctrl+L clear</div>
           <button type="submit" class="send-button" id="send-button">send</button>
         </div>
       </form>
@@ -124,6 +126,15 @@
         <button class="settings-save" id="settings-save">save</button>
         <button class="settings-cancel" id="settings-cancel">cancel</button>
       </div>
+    </div>
+  </div>
+
+  <div class="command-palette" id="command-palette" hidden>
+    <div class="command-palette-backdrop" id="command-palette-backdrop"></div>
+    <div class="command-palette-card">
+      <div class="command-palette-title">Slash commands</div>
+      <input id="command-palette-input" class="command-palette-input" type="text" placeholder="Filter commands or type /goal" />
+      <div class="command-palette-list" id="command-palette-list"></div>
     </div>
   </div>
 

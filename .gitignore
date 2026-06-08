@@ -8,3 +8,4 @@ coverage/
 .cache/
 .tmp/
 sessions/
+.harness/.DS_Store

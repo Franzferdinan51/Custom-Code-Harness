@@ -179,7 +179,13 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         return;
       }
       if (req.method === "GET" && path === "/v1/commands") {
-        sendJson(res, 200, { commands: BUILTIN_REGISTRY.names() });
+        const commandMeta = BUILTIN_REGISTRY.list().map((cmd) => ({
+          name: cmd.name,
+          description: cmd.description,
+          usage: cmd.usage ?? "/" + cmd.name,
+          group: cmd.group ?? "other",
+        }));
+        sendJson(res, 200, { commands: commandMeta.map((cmd) => cmd.name), items: commandMeta });
         return;
       }
       if (req.method === "GET" && path === "/v1/settings") {

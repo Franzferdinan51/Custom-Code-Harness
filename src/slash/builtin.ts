@@ -19,6 +19,7 @@ import { runDiagnostics, renderDiagnostics } from "../doctor.js";
 const helpCommand: SlashCommand = {
   name: "help",
   description: "Show available slash commands.",
+  group: "session",
   usage: "/help [command]",
   run(args, ctx) {
     const want = args.trim();
@@ -43,12 +44,14 @@ const helpCommand: SlashCommand = {
 const clearCommand: SlashCommand = {
   name: "clear",
   description: "Start a new in-memory branch (keeps the session id, clears the visible history).",
+  group: "session",
   run(_a, ctx) { ctx.runtime?.().clearHistory(); return "history cleared"; },
 };
 
 const newCommand: SlashCommand = {
   name: "new",
   description: "Start a brand-new session (new id). Persisted.",
+  group: "session",
   async run(_a, ctx) {
     const rt = ctx.runtime?.();
     if (!rt) return "(no runtime)";
@@ -61,6 +64,7 @@ const newCommand: SlashCommand = {
 const resetCommand: SlashCommand = {
   name: "reset",
   description: "Alias for /clear.",
+  group: "session",
   run(_a, ctx) { ctx.runtime?.().clearHistory(); return "history reset"; },
 };
 
@@ -69,6 +73,7 @@ const resetCommand: SlashCommand = {
 const costCommand: SlashCommand = {
   name: "cost",
   description: "Show cumulative token usage and cost for this session.",
+  group: "status",
   async run(_a, ctx) {
     const rt = ctx.runtime as { cost?: { total(): { inputTokens: number; outputTokens: number; cost: number }; perModel(): Array<{ model: string; inputTokens: number; outputTokens: number; cost: number }>; perAgent(): Array<{ agent: string; cost: number; calls: number }> } } | undefined;
     if (!rt?.cost) return "(cost tracking not available)";
@@ -100,6 +105,7 @@ const costCommand: SlashCommand = {
 const approvalCommand: SlashCommand = {
   name: "approval",
   description: "Show or set bash approval mode.",
+  group: "settings",
   usage: "/approval [off|allowlist|blocklist|on-mutation|ask]",
   async run(args, ctx) {
     const rt = ctx.runtime as { approval?: { mode: string } } | undefined;
@@ -120,12 +126,14 @@ const approvalCommand: SlashCommand = {
 const quitCommand: SlashCommand = {
   name: "quit",
   description: "Exit the harness.",
+  group: "session",
   run(_a, ctx) { ctx.runtime?.().quit(); },
 };
 
 const exitCommand: SlashCommand = {
   name: "exit",
   description: "Alias for /quit.",
+  group: "session",
   run(_a, ctx) { ctx.runtime?.().quit(); },
 };
 
@@ -134,6 +142,7 @@ const exitCommand: SlashCommand = {
 const sessionCommand: SlashCommand = {
   name: "session",
   description: "Show the current session id and entry count.",
+  group: "session",
   run(_a, ctx) {
     const rt = ctx.runtime?.();
     return "session: " + (rt?.sessionId() ?? "(none)");
@@ -143,6 +152,7 @@ const sessionCommand: SlashCommand = {
 const sessionsCommand: SlashCommand = {
   name: "sessions",
   description: "List recent sessions, show details, or send a message to one.",
+  group: "session",
   usage: "/sessions [list|show <id>|send <id> <text>|fork <id>]",
   async run(args, ctx) {
     const rt = ctx.runtime?.();
@@ -198,6 +208,7 @@ const sessionsCommand: SlashCommand = {
 const resumeCommand: SlashCommand = {
   name: "resume",
   description: "List recent sessions, or resume a specific one.",
+  group: "session",
   usage: "/resume [id]",
   async run(args, ctx) {
     const rt = ctx.runtime?.();
@@ -223,6 +234,7 @@ const resumeCommand: SlashCommand = {
 const modelCommand: SlashCommand = {
   name: "model",
   description: "Show or change the current model.",
+  group: "model",
   usage: "/model [name|provider/model]",
   async run(args, ctx) {
     const rt = ctx.runtime?.();
@@ -243,6 +255,7 @@ const modelCommand: SlashCommand = {
 const providerCommand: SlashCommand = {
   name: "provider",
   description: "Show or change the current provider (optionally with model).",
+  group: "model",
   usage: "/provider [id] [model]",
   async run(args, ctx) {
     const rt = ctx.runtime?.();
@@ -260,6 +273,7 @@ const providerCommand: SlashCommand = {
 const goalCommand: SlashCommand = {
   name: "goal",
   description: "Run the agent toward a high-level objective. Auto-plans, executes step-by-step, reports when done.",
+  group: "workflow",
   usage: "/goal <objective> [--max-steps=N]",
   async run(args, ctx) {
     const rt = ctx.runtime?.();
@@ -274,10 +288,24 @@ const goalCommand: SlashCommand = {
 
 async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): Promise<string> {
   rt.print("[goal] planning (max " + maxSteps + " steps)...");
-  await rt.sendPrompt("/goal PLAN\n\nObjective: " + objective + "\n\nProduce a numbered, minimal plan (3-7 steps) to achieve this in this repository. After the plan, write 'Ready to execute. Use tools.'", { silent: false });
+  await rt.sendPrompt([
+    "Goal mode: plan",
+    "Objective: " + objective,
+    "",
+    "Produce a numbered, minimal plan (3-7 steps) to achieve this in the current repository.",
+    "After the plan, write exactly: Ready to execute. Use tools.",
+  ].join("\n"), { silent: true });
   for (let step = 1; step <= maxSteps; step++) {
     rt.print("[goal] step " + step + "/" + maxSteps + "...");
-    const response = await rt.sendPromptWithCapture("/goal EXECUTE step " + step + "/" + maxSteps + "\n\nContinue from your plan. Execute the next step. If done, say 'GOAL COMPLETE'. If blocked, say 'GOAL BLOCKED: <reason>'.");
+    const response = await rt.sendPromptWithCapture([
+      "Goal mode: execute",
+      "Objective: " + objective,
+      "Step: " + step + "/" + maxSteps,
+      "",
+      "Continue from your plan and execute the next step in the repository.",
+      "If the objective is complete, say exactly: GOAL COMPLETE",
+      "If you cannot continue, say exactly: GOAL BLOCKED: <reason>",
+    ].join("\n"));
     const lc = response.toLowerCase();
     if (lc.includes("goal complete")) { rt.print("[goal] done in " + step + " step" + (step === 1 ? "" : "s")); return "goal complete in " + step + " step(s)"; }
     if (lc.includes("goal blocked")) { rt.print("[goal] blocked"); return "goal blocked"; }
@@ -291,6 +319,7 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
 const loopCommand: SlashCommand = {
   name: "loop",
   description: "Re-send the previous prompt N times, optionally until a sentinel is detected.",
+  group: "workflow",
   usage: "/loop [N] [sentinel]",
   async run(args, ctx) {
     const rt = ctx.runtime?.();
@@ -302,7 +331,14 @@ const loopCommand: SlashCommand = {
     const sentinel = m?.[2]?.trim();
     for (let i = 1; i <= n; i++) {
       rt.print("[loop] iteration " + i + "/" + n);
-      const r = await rt.sendPromptWithCapture("/loop CONTINUE  iteration " + i + "/" + n + (sentinel ? "\n\nIf the task is done, output the sentinel '" + sentinel + "' exactly." : "\n\nIf the task is done, output the sentinel 'LOOP DONE' exactly. Otherwise continue."));
+      const r = await rt.sendPromptWithCapture([
+        "Loop mode: continue",
+        "Iteration: " + i + "/" + n,
+        "",
+        sentinel
+          ? "If the task is done, output the sentinel '" + sentinel + "' exactly."
+          : "If the task is done, output the sentinel 'LOOP DONE' exactly. Otherwise continue.",
+      ].join("\n"));
       if (sentinel && r.includes(sentinel)) { rt.print("[loop] sentinel seen at " + i); return "loop stopped at " + i + " (sentinel)"; }
       if (!sentinel && /LOOP DONE/.test(r)) { rt.print("[loop] done at " + i); return "loop done at " + i; }
     }
@@ -315,6 +351,7 @@ const loopCommand: SlashCommand = {
 const statusCommand: SlashCommand = {
   name: "status",
   description: "Show session, model, provider, and tool counts.",
+  group: "status",
   async run(_a, ctx) {
     const rt = ctx.runtime?.();
     if (!rt) return "(no runtime)";
@@ -329,6 +366,7 @@ const statusCommand: SlashCommand = {
 const usageCommand: SlashCommand = {
   name: "usage",
   description: "Show rough token usage of the current session.",
+  group: "status",
   async run(_a, ctx) {
     const id = ctx.runtime?.().sessionId();
     if (!id) return "no active session";
@@ -351,6 +389,7 @@ const usageCommand: SlashCommand = {
 const thinkCommand: SlashCommand = {
   name: "think",
   description: "Set the thinking level (off|minimal|low|medium|high|xhigh).",
+  group: "settings",
   usage: "/think <level>",
   async run(args, ctx) {
     const level = args.trim();
@@ -367,6 +406,7 @@ const thinkCommand: SlashCommand = {
 const retryCommand: SlashCommand = {
   name: "retry",
   description: "Re-run the last user prompt.",
+  group: "session",
   async run(_a, ctx) {
     const id = ctx.runtime?.().sessionId();
     if (!id) return "no active session";
@@ -381,6 +421,7 @@ const retryCommand: SlashCommand = {
 const undoCommand: SlashCommand = {
   name: "undo",
   description: "Rewind the session to the previous user message and clear the assistant/tool entries that followed.",
+  group: "session",
   async run(_a, ctx) {
     const id = ctx.runtime?.().sessionId();
     if (!id) return "no active session";
@@ -409,6 +450,7 @@ const undoCommand: SlashCommand = {
 const compactCommand: SlashCommand = {
   name: "compact",
   description: "Compact older messages into a summary. Supports --preview and --dry-run.",
+  group: "context",
   usage: "/compact [--preview|--dry-run] [instructions]",
   async run(args, ctx) {
     const rt = ctx.runtime?.() as { compactNow?: (opts: { dryRun?: boolean; instructions?: string }) => Promise<string> } | undefined;
@@ -429,6 +471,7 @@ const compactCommand: SlashCommand = {
 const memoryCommand: SlashCommand = {
   name: "memory",
   description: "Read, append to, or search persistent memory.",
+  group: "context",
   usage: "/memory [read|add <text>|search <query>|user]",
   async run(args, ctx) {
     const rt = ctx.runtime?.() as { memory?: { read(): string; append(t: string): Promise<void>; search(q: string): Promise<string>; readUser(): string; appendUser(t: string): Promise<void> } } | undefined;
@@ -463,6 +506,7 @@ const memoryCommand: SlashCommand = {
 const skillCommand: SlashCommand = {
   name: "skill",
   description: "List skills or load a specific one.",
+  group: "tools",
   usage: "/skill [list|<name>]",
   async run(args, ctx) {
     const rt = ctx.runtime?.() as { skills?: { list(): Promise<Array<{ name: string; description: string }>>; load(n: string): Promise<{ content: string } | null> } } | undefined;
@@ -484,6 +528,7 @@ const skillCommand: SlashCommand = {
 const agentsCommand: SlashCommand = {
   name: "agents",
   description: "List available sub-agents.",
+  group: "tools",
   async run(_a, ctx) {
     const rt = ctx.runtime?.() as { listAgents?: () => Array<{ name: string; description: string; builtin?: boolean }> } | undefined;
     if (!rt?.listAgents) return "(sub-agent registry not available)";
@@ -498,6 +543,7 @@ const agentsCommand: SlashCommand = {
 const cronCommand: SlashCommand = {
   name: "cron",
   description: "Manage scheduled jobs. 'add <schedule> <prompt>' / list / remove / run / enable / disable",
+  group: "workflow",
   usage: "/cron [list|add <schedule> <prompt>|remove <id>|run <id>|enable <id>|disable <id>]",
   async run(args, ctx) {
     const store = new CronStore();
@@ -546,6 +592,7 @@ const cronCommand: SlashCommand = {
 const doctorCommand: SlashCommand = {
   name: "doctor",
   description: "Run diagnostics on the environment.",
+  group: "tools",
   async run(_a, ctx) {
     const items = await runDiagnostics({ cwd: ctx.cwd });
     return renderDiagnostics(items);
@@ -557,6 +604,7 @@ const doctorCommand: SlashCommand = {
 const initCommand: SlashCommand = {
   name: "init",
   description: "Generate a starter .codingharness/AGENTS.md in the current directory.",
+  group: "tools",
   run(_a, ctx) {
     const path = ctx.cwd + "/.codingharness/AGENTS.md";
     const { mkdirSync, writeFileSync, existsSync } = require("node:fs") as typeof import("node:fs");
@@ -589,6 +637,7 @@ import { renderSessionTree } from "./tree-render.js";
 const treeCommand: SlashCommand = {
   name: "tree",
   description: "Show the session tree (with branching).",
+  group: "context",
   async run(_a, ctx) {
     const id = ctx.runtime?.().sessionId();
     if (!id) return "no active session";
@@ -602,6 +651,7 @@ const treeCommand: SlashCommand = {
 const forkCommand: SlashCommand = {
   name: "fork",
   description: "Fork the current session from a previous user message.",
+  group: "session",
   usage: "/fork [user-message-id]",
   async run(args, ctx) {
     const id = ctx.runtime?.().sessionId();
@@ -621,6 +671,7 @@ const forkCommand: SlashCommand = {
 const promptsCommand: SlashCommand = {
   name: "prompts",
   description: "List or run a prompt template by name.",
+  group: "tools",
   usage: "/prompts [list|<name> [vars...]]",
   async run(args, ctx) {
     const templates = loadPromptTemplates(ctx.cwd);
@@ -645,6 +696,7 @@ const promptsCommand: SlashCommand = {
 const mcpCommand: SlashCommand = {
   name: "mcp",
   description: "Manage Model Context Protocol servers (status / add / remove). v1 is a stub.",
+  group: "tools",
   async run(_a) {
     return "MCP is a documented stub in v1. To enable: drop an mcp.json in ~/.codingharness/ with a list of {name, command, args} servers. Full MCP client is on the roadmap.";
   },
@@ -655,6 +707,7 @@ const mcpCommand: SlashCommand = {
 const personalityCommand: SlashCommand = {
   name: "personality",
   description: "Load a SOUL.md personality file from ~/.codingharness/personalities/<name>.md.",
+  group: "settings",
   usage: "/personality [name|off]",
   async run(args, ctx) {
     const rt = ctx.runtime?.() as { setPersonality?: (name: string | null) => void } | undefined;
@@ -669,9 +722,42 @@ const personalityCommand: SlashCommand = {
   },
 };
 
+const commandsCommand: SlashCommand = {
+  name: "commands",
+  description: "Browse available slash commands with descriptions and usage.",
+  group: "session",
+  usage: "/commands [name]",
+  run(args, ctx) {
+    const want = args.trim();
+    if (want) return helpCommand.run(want, ctx);
+    const groups = new Map<string, SlashCommand[]>();
+    for (const cmd of BUILTIN_REGISTRY.list()) {
+      const group = cmd.group ?? "other";
+      const existing = groups.get(group) ?? [];
+      existing.push(cmd);
+      groups.set(group, existing);
+    }
+    const order = ["workflow", "session", "model", "context", "tools", "settings", "status", "other"];
+    const lines: string[] = ["Slash commands:"];
+    for (const group of order) {
+      const items = groups.get(group);
+      if (!items?.length) continue;
+      lines.push("");
+      lines.push(group.toUpperCase());
+      for (const cmd of items) {
+        lines.push(("  /" + cmd.name).padEnd(18) + cmd.description);
+      }
+    }
+    lines.push("");
+    lines.push("Use /commands <name> or /help <name> for details.");
+    return lines.join("\n");
+  },
+};
+
 // ---------- Registry export ----------
 
 export const BUILTIN_REGISTRY = new SlashRegistry();
+BUILTIN_REGISTRY.register(commandsCommand);
 BUILTIN_REGISTRY.register(helpCommand);
 BUILTIN_REGISTRY.register(clearCommand);
 BUILTIN_REGISTRY.register(newCommand);

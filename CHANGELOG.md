@@ -7,6 +7,24 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **`/todo` slash command + `ch todo` CLI subcommand**
+  (`src/slash/builtin.ts`, `src/cli.ts`, `src/runtime.ts`,
+  `src/slash/registry.ts`, `src/__tests__/slash.test.ts`):
+  the `todo` tool existed (the agent could call it) but the
+  user had no way to view or edit the in-session todo list
+  from the slash palette or CLI. Now both surfaces give the
+  same operations: `list` (default), `add <text>`,
+  `set <text>...` (with `|` separator for multi-word items,
+  whitespace fallback when no `|`), and `clear`.
+  - `HarnessRuntime.readTodo()` and `HarnessRuntime.writeTodo()`
+    are the new entry points. They write to the same
+    `todoItems` array the agent's `todo` tool reads from, so
+    the next agent turn sees the user's manual edits.
+  - 5 new tests pin: empty placeholder, add appends +
+    reports count, set with `|` separator handles multi-word
+    items, set with whitespace falls back to word splitting,
+    and clear empties the list.
+
 - **Web first-run onboarding modal** (`src/web/index.html`,
   `src/web/styles.css`, `src/web/app.js`): web users no longer
   hit a silent "no provider" state on first launch. The

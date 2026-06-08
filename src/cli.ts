@@ -551,68 +551,12 @@ async function runTraceCmd(ctx: SubcommandContext): Promise<number> {
  *  default?", "what version is this?" in a single command. */
 async function runInfoCmd(ctx: SubcommandContext): Promise<number> {
   ensurePaths();
-  const settings = loadSettings();
-  const { paths } = await import("./config/paths.js");
-  const { execSync } = await import("node:child_process");
-  let cliPath = "";
-  try {
-    cliPath = execSync("which ch", { encoding: "utf-8" }).trim();
-  } catch { /* not on PATH */ }
-  const info = {
-    version: VERSION,
-    node: process.version,
-    platform: process.platform,
-    arch: process.arch,
-    cwd: ctx.cwd,
-    home: paths.home,
-    paths: {
-      settings: paths.settings,
-      sessions: paths.sessions,
-      logs: paths.logs,
-      memory: paths.memory,
-      skills: paths.skills,
-      agents: paths.agents,
-    },
-    cliPath: cliPath || "(not on PATH)",
-    defaultProvider: settings.defaultProvider ?? null,
-    defaultModel: settings.defaultModel ?? null,
-    thinking: settings.thinking ?? "medium",
-    approvalMode: settings.approval?.mode ?? "off",
-    providersConfigured: Object.keys(settings.providers ?? {}),
-  };
+  const { collectRuntimeInfo, renderRuntimeInfo } = await import("./runtime/info.js");
   if (ctx.json) {
-    process.stdout.write(JSON.stringify(info, null, 2) + "\n");
+    process.stdout.write(JSON.stringify(collectRuntimeInfo(ctx.cwd), null, 2) + "\n");
     return 0;
   }
-  // Pretty-printed human view.
-  const lines: string[] = [];
-  lines.push("CodingHarness " + info.version);
-  lines.push("");
-  lines.push("  node:      " + info.node + " (" + info.platform + "/" + info.arch + ")");
-  lines.push("  cli:       " + info.cliPath);
-  lines.push("  cwd:       " + info.cwd);
-  lines.push("  home:      " + info.home);
-  lines.push("");
-  lines.push("Settings (" + info.paths.settings + "):");
-  lines.push("  provider:  " + (info.defaultProvider ?? "(unset)"));
-  lines.push("  model:     " + (info.defaultModel ?? "(unset)"));
-  lines.push("  thinking:  " + info.thinking);
-  lines.push("  approval:  " + info.approvalMode);
-  if (info.providersConfigured.length > 0) {
-    lines.push("  providers: " + info.providersConfigured.join(", "));
-  } else {
-    lines.push("  providers: (none — set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)");
-  }
-  lines.push("");
-  lines.push("Paths:");
-  lines.push("  sessions:  " + info.paths.sessions);
-  lines.push("  logs:      " + info.paths.logs);
-  lines.push("  memory:    " + info.paths.memory);
-  lines.push("  skills:    " + info.paths.skills);
-  lines.push("  agents:    " + info.paths.agents);
-  lines.push("");
-  lines.push("Run `ch doctor` for health checks, `ch help` for all commands.");
-  process.stdout.write(lines.join("\n") + "\n");
+  process.stdout.write(renderRuntimeInfo(ctx.cwd) + "\n");
   return 0;
 }
 

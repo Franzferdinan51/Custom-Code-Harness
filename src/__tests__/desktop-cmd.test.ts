@@ -110,4 +110,33 @@ test("ch verbose and ch trace toggle runtime logging", () => {
   }
 });
 
+test("ch info prints a runtime snapshot", () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-info-"));
+  try {
+    const env = { ...process.env, CODINGHARNESS_HOME: home, NO_COLOR: "1" };
+    const info = spawnSync("bun", ["src/cli.ts", "info"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(info.status, 0, info.stderr);
+    assert.match(info.stdout, /CodingHarness 0\.2\.2/);
+    assert.match(info.stdout, /Settings/);
+    assert.match(info.stdout, /Paths/);
+
+    const infoJson = spawnSync("bun", ["src/cli.ts", "info", "--json"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(infoJson.status, 0, infoJson.stderr);
+    const parsed = JSON.parse(infoJson.stdout);
+    assert.equal(parsed.version, "0.2.2");
+    assert.ok(parsed.paths);
+    assert.ok(parsed.cliPath);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("ALL OK", () => {});

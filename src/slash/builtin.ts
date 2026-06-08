@@ -1184,6 +1184,7 @@ BUILTIN_REGISTRY.register(cronCommand);
 BUILTIN_REGISTRY.register(doctorCommand);
 BUILTIN_REGISTRY.register(diagCommand);
 BUILTIN_REGISTRY.register(tokensCommand);
+BUILTIN_REGISTRY.register(infoCommand);
 BUILTIN_REGISTRY.register(initCommand);
 BUILTIN_REGISTRY.register(treeCommand);
 BUILTIN_REGISTRY.register(forkCommand);

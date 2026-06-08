@@ -43,7 +43,7 @@ test("tryParseSlash returns null for non-slash input", () => {
 
 test("builtin registry has all expected commands", () => {
   const names = BUILTIN_REGISTRY.names();
-  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "compact", "tree", "fork", "export", "cost", "approval", "think", "verbose", "trace"]) {
+  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "compact", "tree", "fork", "export", "cost", "approval", "think", "verbose", "trace", "info"]) {
     assert.ok(names.includes(want), "missing /" + want);
   }
 });
@@ -407,4 +407,18 @@ test("/sessions search finds transcript content", async () => {
   assert.ok(typeof out === "string");
   assert.match(out!, /Matching sessions:/);
   assert.match(out!, /search-fixture/);
+});
+
+test("/info renders the runtime snapshot", async () => {
+  const info = BUILTIN_REGISTRY.get("info");
+  assert.ok(info);
+  const out = await info!.run("", { cwd: "/" });
+  assert.ok(typeof out === "string");
+  assert.match(out!, /CodingHarness \d+\.\d+\.\d+/);
+  assert.match(out!, /node:/);
+  assert.match(out!, /home:/);
+  assert.match(out!, /Settings/);
+  assert.match(out!, /provider:/);
+  assert.match(out!, /Paths:/);
+  assert.match(out!, /sessions:/);
 });

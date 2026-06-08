@@ -7,6 +7,32 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **Web first-run onboarding modal** (`src/web/index.html`,
+  `src/web/styles.css`, `src/web/app.js`): web users no longer
+  hit a silent "no provider" state on first launch. The
+  modal auto-opens when the app loads with no provider
+  configured, walks the user through a 3-step wizard
+  (pick provider → paste key → save & test), and re-shows
+  after 30 days if the user previously dismissed it. A
+  new "first-run setup" sidebar button (hidden when a
+  provider is set) gives a manual re-entry point.
+- **`/v1/info`, `/v1/provider/catalog`, `/v1/provider/set-key`
+  HTTP endpoints** (`src/server.ts`, `src/web/app.js`,
+  `src/__tests__/info-endpoints.test.ts`): the same
+  first-run support surfaces that work on the TUI/CLI
+  now also work over HTTP. Dashboards, MCP clients, and
+  the web's onboard wizard all read from these endpoints
+  so the three surfaces (slash command, CLI subcommand,
+  HTTP endpoint) can never drift.
+  - `GET /v1/info` — runtime snapshot (version, paths,
+    provider, model, thinking level, approval mode)
+  - `GET /v1/provider/catalog` — provider catalog with
+    auth modes, env vars, default models, docs URLs
+  - `POST /v1/provider/set-key` — non-interactive key
+    save, runs a best-effort /diag in the back so the
+    UI gets instant feedback
+  - 6 new tests spawn a real server in a child process
+    and exercise the wire end-to-end
 - **First-run `/onboard` + `ch onboard` wizard** (`src/slash/builtin.ts`,
   `src/cli.ts`, `src/runtime.ts`, `src/ui/tui-app.ts`,
   `src/__tests__/slash.test.ts`): the harness used to silently

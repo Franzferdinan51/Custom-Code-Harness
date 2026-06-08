@@ -134,6 +134,8 @@ export class HarnessRuntime implements SlashRuntime {
       const p = this.settings.providers[providerId];
       if (p?.model) this.settings.defaultModel = p.model;
     }
+    this.providerRegistry.invalidate(providerId);
+    try { saveSettings(this.settings); } catch { /* best-effort */ }
   }
 
   /**

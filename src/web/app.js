@@ -25,6 +25,8 @@ const state = {
   recentSessions: [],
   sessionQuery: "",
   goalActivity: null,
+  providerPresets: [],
+  providerProfiles: [],
 };
 
 // ---------- DOM helpers ----------
@@ -806,29 +808,57 @@ async function resumeSession(id) {
 // ---------- Settings ----------
 
 const settingsModal = $("settings-modal");
+const settingsProviderMeta = $("setting-provider-meta");
+
+function syncProviderSettingsForm() {
+  const select = $("setting-provider");
+  const selectedId = select.value;
+  const preset = state.providerPresets.find((item) => item.id === selectedId) || null;
+  const configured = state.providerProfiles.find((item) => item.id === selectedId) || null;
+  $("setting-model").value = configured?.model || preset?.defaultModel || "";
+  if (configured?.baseUrl) $("setting-baseurl").value = configured.baseUrl;
+  else $("setting-baseurl").value = preset?.defaultBaseUrl || "";
+  $("setting-apikey").value = "";
+  settingsProviderMeta.textContent = preset?.description || "Custom provider profile.";
+}
+
 $("settings").addEventListener("click", async () => {
   // Load current settings.
   try {
     const s = await api("/v1/settings");
+    state.providerPresets = s.presets || [];
+    state.providerProfiles = s.providers || [];
     // Populate.
     $("setting-model").value = s.model || "";
     $("setting-approval").value = s.approval || "on-mutation";
     $("setting-thinking").value = s.thinking || "medium";
     const provSel = $("setting-provider");
     provSel.innerHTML = "";
-    for (const p of (s.providers || [])) {
-      provSel.appendChild(el("option", { value: p.id }, p.id + (p.model ? " (" + p.model + ")" : "")));
+    const seen = new Set();
+    for (const preset of state.providerPresets) {
+      seen.add(preset.id);
+      const configured = state.providerProfiles.find((item) => item.id === preset.id);
+      const label = preset.label + (configured?.model ? " (" + configured.model + ")" : "");
+      provSel.appendChild(el("option", { value: preset.id }, label));
     }
-    provSel.value = s.provider || "";
+    for (const provider of state.providerProfiles) {
+      if (seen.has(provider.id)) continue;
+      provSel.appendChild(el("option", { value: provider.id }, provider.id + (provider.model ? " (" + provider.model + ")" : "")));
+    }
+    provSel.value = s.provider || state.providerPresets[0]?.id || "";
+    syncProviderSettingsForm();
   } catch (e) { /* ignore */ }
   settingsModal.hidden = false;
 });
+$("setting-provider").addEventListener("change", () => syncProviderSettingsForm());
 $("settings-cancel").addEventListener("click", () => { settingsModal.hidden = true; });
 $("settings-save").addEventListener("click", async () => {
   try {
     await api("/v1/settings", { method: "POST", body: {
       provider: $("setting-provider").value,
       model: $("setting-model").value,
+      baseUrl: $("setting-baseurl").value,
+      apiKey: $("setting-apikey").value,
       approval: $("setting-approval").value,
       thinking: $("setting-thinking").value,
     }});

@@ -11,7 +11,7 @@
 //   GET  /v1/usage                  — { inputTokens, outputTokens, cost, topModel }
 //   GET  /v1/commands               — list of slash commands
 //   GET  /v1/settings               — current settings
-//   POST /v1/settings               — { provider, model, approval, thinking } update
+//   POST /v1/settings               — { provider, model, baseUrl, apiKey, approval, thinking } update
 //   POST /v1/chat                   — { prompt, agent? } one-shot JSON
 //   POST /v1/chat/stream            — SSE: text, tool_start, tool_end, info, error, approval_required, usage, done
 //   POST /v1/spawn                  — { agent, prompt } — synchronous sub-agent run
@@ -36,7 +36,8 @@ import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { Session, sessionToMessages } from "./agent/session.js";
-import { loadSettings, type Settings } from "./config/settings.js";
+import { loadSettings, saveSettings, type Settings } from "./config/settings.js";
+import { getProviderPreset, listProviderPresets } from "./providers/presets.js";
 import { BUILTIN_REGISTRY, tryParseSlash } from "./slash/index.js";
 import { runAgent, DEFAULT_LIMITS } from "./agent/loop.js";
 import { log } from "./util/logger.js";
@@ -195,17 +196,70 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         sendJson(res, 200, {
           provider: s.defaultProvider,
           model: s.defaultModel,
-          approval: runtime.approval?.mode ?? "on-mutation",
-          thinking: "medium",
-          providers: Object.entries(s.providers).map(([id, p]) => ({ id, model: p.model })),
+          approval: runtime.approval?.mode ?? s.approval?.mode ?? "on-mutation",
+          thinking: s.thinking ?? "medium",
+          providers: Object.entries(s.providers).map(([id, p]) => ({
+            id,
+            model: p.model,
+            baseUrl: p.baseUrl,
+            hasApiKey: Boolean(p.apiKey),
+            label: getProviderPreset(id)?.label ?? id,
+          })),
+          presets: listProviderPresets().map((preset) => ({
+            id: preset.id,
+            label: preset.label,
+            protocol: preset.protocol,
+            defaultBaseUrl: preset.defaultBaseUrl,
+            defaultModel: preset.defaultModel,
+            description: preset.description,
+          })),
         });
         return;
       }
       if (req.method === "POST" && path === "/v1/settings") {
-        const body = await readJson<{ provider?: string; model?: string; approval?: string; thinking?: string }>(req);
-        if (body.provider) await runtime.setProviderAndModel(body.provider, body.model);
-        if (body.model) await runtime.setProviderAndModel(runtime.providerId() ?? "openai", body.model);
-        if (body.approval && runtime.approval) runtime.approval.mode = body.approval as "off";
+        const body = await readJson<{ provider?: string; model?: string; baseUrl?: string; apiKey?: string; approval?: string; thinking?: string }>(req);
+        const settings = runtime.settings;
+        const providerId = body.provider?.trim() || settings.defaultProvider;
+        if (providerId) {
+          const preset = getProviderPreset(providerId);
+          const profile = settings.providers[providerId] ?? {
+            id: providerId,
+            baseUrl: preset?.defaultBaseUrl,
+            model: preset?.defaultModel,
+          };
+          if (body.baseUrl !== undefined) {
+            const value = body.baseUrl.trim();
+            if (value) profile.baseUrl = value;
+            else if (preset?.defaultBaseUrl) profile.baseUrl = preset.defaultBaseUrl;
+            else delete profile.baseUrl;
+          }
+          if (body.apiKey !== undefined) {
+            const value = body.apiKey.trim();
+            if (value) profile.apiKey = value;
+            else delete profile.apiKey;
+          }
+          if (body.model !== undefined) {
+            const value = body.model.trim();
+            if (value) profile.model = value;
+            else if (preset?.defaultModel) profile.model = preset.defaultModel;
+          }
+          settings.providers[providerId] = profile;
+          settings.defaultProvider = providerId;
+          settings.defaultModel = profile.model ?? settings.defaultModel;
+          runtime.providerRegistry.invalidate(providerId);
+          await runtime.setProviderAndModel(providerId, settings.defaultModel);
+        } else if (body.model) {
+          settings.defaultModel = body.model.trim();
+        }
+        if (body.approval) {
+          settings.approval = { ...(settings.approval ?? {}), mode: body.approval as "off" };
+          if (runtime.approval) runtime.approval.mode = body.approval as "off";
+        }
+        if (body.thinking) {
+          settings.thinking = body.thinking as Settings["thinking"];
+          runtime.setThinking(body.thinking);
+        }
+        saveSettings(settings);
         sendJson(res, 200, { ok: true });
         return;
       }

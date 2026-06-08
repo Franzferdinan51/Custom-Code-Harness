@@ -3,6 +3,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { paths } from "./paths.js";
+import { firstEnvValue, getProviderPreset, listProviderPresets } from "../providers/presets.js";
 
 export interface ProviderProfile {
   id: string;
@@ -171,27 +172,38 @@ function merge<T>(base: T, override: Partial<T> | undefined): T {
 /** Apply env-var fallbacks for the most common settings. */
 function mergeWithEnv(s: Settings): Settings {
   const out: Settings = { ...s };
+  const presetOrder = ["anthropic", "openai", "codex", "xai", "grok", "minimax", "lmstudio"];
   // Default provider: prefer env-inferred if no settings.json entry.
   if (!out.defaultProvider) {
-    if (process.env.ANTHROPIC_API_KEY) out.defaultProvider = "anthropic";
-    else if (process.env.OPENAI_API_KEY) out.defaultProvider = "openai";
+    for (const id of presetOrder) {
+      const preset = getProviderPreset(id);
+      const apiKey = firstEnvValue(preset?.apiKeyEnv);
+      const baseUrl = firstEnvValue(preset?.baseUrlEnv);
+      if (apiKey || (id === "lmstudio" && (baseUrl || process.env.LM_API_TOKEN || process.env.LMSTUDIO_BASE_URL))) {
+        out.defaultProvider = id;
+        break;
+      }
+    }
   }
   // Inject env-backed provider profiles when the user has none for them.
-  if (!out.providers.openai && process.env.OPENAI_API_KEY) {
-    out.providers.openai = {
-      id: "openai",
-      baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
-      apiKey: process.env.OPENAI_API_KEY,
-      model: process.env.OPENAI_MODEL ?? "gpt-4o",
-      default: out.defaultProvider === "openai",
-    };
-  }
-  if (!out.providers.anthropic && process.env.ANTHROPIC_API_KEY) {
-    out.providers.anthropic = {
-      id: "anthropic",
-      apiKey: process.env.ANTHROPIC_API_KEY,
-      model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
-      default: out.defaultProvider === "anthropic",
+  for (const preset of listProviderPresets()) {
+    if (out.providers[preset.id]) continue;
+    const apiKey = firstEnvValue(preset.apiKeyEnv);
+    const baseUrl = firstEnvValue(preset.baseUrlEnv) ?? preset.defaultBaseUrl;
+    const model = firstEnvValue(preset.modelEnv) ?? preset.defaultModel;
+    const aliasRequested =
+      preset.id === "codex" ? Boolean(process.env.CODEX_API_KEY || process.env.CODEX_BASE_URL || process.env.CODEX_MODEL) :
+      preset.id === "grok" ? Boolean(process.env.GROK_API_KEY || process.env.GROK_BASE_URL || process.env.GROK_MODEL) :
+      true;
+    const shouldInject = aliasRequested && (Boolean(apiKey) || (preset.id === "lmstudio" && Boolean(firstEnvValue(preset.baseUrlEnv) || process.env.LM_API_TOKEN)));
+    if (!shouldInject && preset.id !== "openai" && preset.id !== "anthropic") continue;
+    if ((preset.id === "openai" || preset.id === "anthropic") && !apiKey) continue;
+    out.providers[preset.id] = {
+      id: preset.id,
+      baseUrl,
+      apiKey,
+      model,
+      default: out.defaultProvider === preset.id,
     };
   }
   if (out.defaultProvider && !out.defaultModel) {

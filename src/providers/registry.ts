@@ -5,6 +5,7 @@ import type { Provider } from "../types.js";
 import type { Settings } from "../config/settings.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
 import { AnthropicProvider } from "./anthropic.js";
+import { firstEnvValue, getProviderPreset } from "./presets.js";
 import { log } from "../util/logger.js";
 
 export class ProviderRegistry {
@@ -40,6 +41,11 @@ export class ProviderRegistry {
     return p;
   }
 
+  invalidate(id?: string): void {
+    if (id) this.cache.delete(id);
+    else this.cache.clear();
+  }
+
   /** List the configured provider ids (in settings.json), even if not built. */
   configuredIds(): string[] {
     return [...new Set([...Object.keys(this.settings.providers), ...this.external.keys()])];
@@ -47,24 +53,31 @@ export class ProviderRegistry {
 }
 
 function buildProvider(id: string, profile: Settings["providers"][string], settings: Settings): Provider | undefined {
+  const preset = getProviderPreset(id);
   // Anthropic is the only non-OpenAI-compat provider we ship.
-  if (id === "anthropic" || id.startsWith("anthropic-")) {
-    const apiKey = profile.apiKey ?? process.env.ANTHROPIC_API_KEY;
+  if (preset?.protocol === "anthropic" || id === "anthropic" || id.startsWith("anthropic-")) {
+    const apiKey = profile.apiKey ?? firstEnvValue(preset?.apiKeyEnv) ?? process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       log.warn(`provider ${id}: missing apiKey (set ANTHROPIC_API_KEY or settings.json)`);
       return undefined;
     }
     return new AnthropicProvider({
       apiKey,
-      defaultModel: profile.model ?? settings.defaultModel ?? "claude-sonnet-4-5",
-      baseUrl: profile.baseUrl,
+      defaultModel: profile.model ?? settings.defaultModel ?? preset?.defaultModel ?? "claude-sonnet-4-5",
+      baseUrl: profile.baseUrl ?? preset?.defaultBaseUrl,
     });
   }
   // Everything else: openai-compat.
-  const apiKey = profile.apiKey ?? process.env.OPENAI_API_KEY ?? process.env[envKeyFor(id)];
+  const apiKey =
+    profile.apiKey ??
+    firstEnvValue(preset?.apiKeyEnv) ??
+    process.env.OPENAI_API_KEY ??
+    process.env[envKeyFor(id)];
   const baseUrl =
     profile.baseUrl ??
-    (id === "openai" ? "https://api.openai.com/v1" : process.env.OPENAI_BASE_URL);
+    firstEnvValue(preset?.baseUrlEnv) ??
+    (id === "openai" ? "https://api.openai.com/v1" : process.env.OPENAI_BASE_URL) ??
+    preset?.defaultBaseUrl;
   if (!baseUrl) {
     log.warn(`provider ${id}: missing baseUrl`);
     return undefined;
@@ -73,7 +86,7 @@ function buildProvider(id: string, profile: Settings["providers"][string], setti
     id,
     baseUrl,
     apiKey,
-    defaultModel: profile.model ?? settings.defaultModel ?? "gpt-4o",
+    defaultModel: profile.model ?? settings.defaultModel ?? firstEnvValue(preset?.modelEnv) ?? preset?.defaultModel ?? "gpt-4o",
   });
 }
 

@@ -170,7 +170,12 @@ function showHelp(cmd?: string): number {
   lines.push("");
   lines.push("Environment:");
   lines.push("  OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL");
+  lines.push("  CODEX_API_KEY, CODEX_BASE_URL, CODEX_MODEL");
   lines.push("  ANTHROPIC_API_KEY, ANTHROPIC_MODEL");
+  lines.push("  XAI_API_KEY, XAI_BASE_URL, XAI_MODEL");
+  lines.push("  GROK_API_KEY, GROK_BASE_URL, GROK_MODEL");
+  lines.push("  MINIMAX_API_KEY, MINIMAX_BASE_URL, MINIMAX_MODEL");
+  lines.push("  LMSTUDIO_API_KEY, LMSTUDIO_BASE_URL, LMSTUDIO_MODEL, LM_API_TOKEN");
   lines.push("  CH_HOME (default ~/.codingharness)");
   lines.push("  CODINGHARNESS_DEBUG=1 for verbose logging");
   lines.push("  NO_COLOR=1 to disable ANSI");

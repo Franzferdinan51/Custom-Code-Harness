@@ -847,6 +847,14 @@ html, body {
   margin-bottom: 16px;
 }
 
+.settings-meta {
+  margin-top: -6px;
+  margin-bottom: 12px;
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .settings-row {
   display: flex;
   flex-direction: column;

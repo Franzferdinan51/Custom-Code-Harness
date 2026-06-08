@@ -33,8 +33,18 @@ export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initia
     },
   });
 
+  // Wire the approval flow: when the bash tool flags a command, pop
+  // the TUI modal. "allow-always" gets persisted to settings.json by
+  // the runtime's services.askApproval wrapper.
+  const clearApproval = runtime.setApprovalRequestHandler((command, reason) =>
+    tui.askApproval(command, reason)
+  );
+
   tui.start();
   tui.addMessage({ kind: "info", text: "Welcome to CodingHarness v" + RUNTIME_VERSION + ". Type /help for commands." });
+
+  // Clean up the approval handler on exit.
+  process.once("exit", clearApproval);
 
   // When the user submits a prompt, run it through the runtime.
   tui.onSubmit(async (raw) => {

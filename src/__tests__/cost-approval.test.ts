@@ -143,4 +143,76 @@ test("approval: MUTATION_PATTERNS catches common foot-guns", () => {
   assert.ok(!MUTATION_PATTERNS.some((p) => p.test("git log --oneline")));
 });
 
+// ---- approval handler wiring (v0.2.2) ----
+
+import { bashTool } from "../agent/tools/bash.js";
+import type { ToolContext } from "../agent/tools/registry.js";
+
+function makeCtx(services: Record<string, unknown>): ToolContext {
+  return {
+    cwd: process.cwd(),
+    signal: new AbortController().signal,
+    limits: { bashTimeoutMs: 5_000, readMaxBytes: 1000, maxToolResultBytes: 1000, maxSteps: 1, requestTimeoutMs: 1000 },
+    log: () => {},
+    services: services as ToolContext["services"],
+  };
+}
+
+test("bash: returns isError when approval needed and no handler set", async () => {
+  const ctx = makeCtx({
+    getApproval: () => ({ mode: "on-mutation" as const, allowlist: [], blocklist: [] }),
+  });
+  const r = await bashTool.run({ command: "rm -rf /tmp/foo" }, ctx);
+  assert.equal(r.isError, true);
+  assert.match(r.content, /needs approval/);
+});
+
+test("bash: returns isError 'denied' when handler returns deny", async () => {
+  let called = false;
+  const ctx = makeCtx({
+    getApproval: () => ({ mode: "on-mutation" as const, allowlist: [], blocklist: [] }),
+    askApproval: async (_cmd: string, _reason: string) => { called = true; return "deny" as const; },
+  });
+  const r = await bashTool.run({ command: "rm -rf /tmp/foo" }, ctx);
+  assert.equal(called, true);
+  assert.equal(r.isError, true);
+  assert.match(r.content, /denied/);
+});
+
+test("bash: with __approval_bypass=true, skips the check", async () => {
+  const ctx = makeCtx({
+    getApproval: () => ({ mode: "on-mutation" as const, allowlist: [], blocklist: [] }),
+    askApproval: async () => { throw new Error("handler should not be called when bypass is set"); },
+  });
+  const r = await bashTool.run({ command: "echo hello", __approval_bypass: true }, ctx);
+  assert.equal(r.isError, false);
+  assert.match(r.content, /hello/);
+});
+
+test("bash: when handler returns allow-once, command runs (bypass set)", async () => {
+  let receivedReason: string | undefined;
+  const ctx = makeCtx({
+    getApproval: () => ({ mode: "on-mutation" as const, allowlist: [], blocklist: [] }),
+    askApproval: async (_cmd: string, reason: string) => { receivedReason = reason; return "allow-once" as const; },
+  });
+  // Use a command that actually trips the MUTATION_PATTERNS check,
+  // otherwise the handler is correctly not called and the test would
+  // be vacuous.
+  const r = await bashTool.run({ command: "rm -rf /tmp/ch-test-allow-once" }, ctx);
+  assert.ok(receivedReason, "handler should have been called");
+  assert.equal(r.isError, false);
+  assert.match(r.content, /exit/);
+});
+
+test("bash: when no approval config needed, runs without calling handler", async () => {
+  let called = false;
+  const ctx = makeCtx({
+    getApproval: () => ({ mode: "on-mutation" as const, allowlist: [], blocklist: [] }),
+    askApproval: async (): Promise<"allow-once"> => { called = true; return "allow-once"; },
+  });
+  const r = await bashTool.run({ command: "ls /tmp" }, ctx);
+  assert.equal(called, false, "safe command should not trigger the modal");
+  assert.equal(r.isError, false);
+});
+
 test("ALL OK", () => {});

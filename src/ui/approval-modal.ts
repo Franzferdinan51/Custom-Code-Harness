@@ -11,7 +11,7 @@
 // The modal returns a Promise<boolean | "always">. The runtime uses
 // this to decide whether to re-run the command with __approval_bypass.
 
-import { BoxRenderable, TextRenderable, RGBA, type CliRenderer } from "@opentui/core";
+import { BoxRenderable, TextRenderable, RGBA, type CliRenderer, type Renderable } from "@opentui/core";
 
 const COLORS = {
   bg:        RGBA.fromHex("#1a1f29"),
@@ -30,7 +30,7 @@ export async function askApproval(
   renderer: CliRenderer,
   command: string,
   reason: string,
-  parent: BoxRenderable
+  parent: Renderable
 ): Promise<ApprovalDecision> {
   // Build the modal overlay. We insert it as a child of `parent` (the
   // root) on top of everything else, then remove it on resolve.
@@ -50,7 +50,9 @@ export async function askApproval(
     paddingBottom: 1,
     zIndex: 1000,
   });
-  parent.add(overlay);
+  // RootRenderable.add exists but isn't on the Renderable base type;
+  // cast through unknown so we can pass either.
+  (parent as unknown as { add: (r: Renderable) => void }).add(overlay);
 
   const title = new TextRenderable(renderer, { id: "ap-title", content: "  ⚠ Bash command requires approval", fg: COLORS.fgYellow, attributes: 1 });
   overlay.add(title);
@@ -86,7 +88,7 @@ export async function askApproval(
     };
     renderer.addInputHandler(handler);
     function cleanup(decision: ApprovalDecision): void {
-      try { parent.remove("approval-modal"); } catch { /* ignore */ }
+      try { (parent as unknown as { remove: (id: string) => void }).remove("approval-modal"); } catch { /* ignore */ }
       try { renderer.removeInputHandler(handler); } catch { /* ignore */ }
       resolve(decision);
     }

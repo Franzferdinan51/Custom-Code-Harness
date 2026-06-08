@@ -35,6 +35,12 @@ export interface ToolServices {
   webSearch?: (query: string, maxResults?: number) => Promise<Array<{ title: string; url: string; snippet: string }>>;
   /** Returns the current approval config (settable from settings). */
   getApproval?: () => import("../../agent/approval.js").ApprovalConfig;
+  /** Asks the user interactively for a decision. Returns "allow-once",
+   *  "allow-always", or "deny". The host (TUI, web) decides how to
+   *  surface the prompt. If unset, the tool falls back to a static
+   *  "needs approval" error so non-interactive callers still get a
+   *  structured response. */
+  askApproval?: (command: string, reason: string) => Promise<"allow-once" | "allow-always" | "deny">;
 }
 
 export interface Tool {

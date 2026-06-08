@@ -21,6 +21,7 @@ import { paths } from "./config/paths.js";
 import type { ChatMessage, ToolCall, ToolResult, Provider } from "./types.js";
 import { CostTracker, formatUSD, callCost } from "./agent/cost.js";
 import { DEFAULT_APPROVAL, type ApprovalConfig } from "./agent/approval.js";
+import { saveSettings } from "./config/settings.js";
 
 export interface RuntimeOptions {
   cwd: string;
@@ -58,6 +59,17 @@ export class HarnessRuntime implements SlashRuntime {
   readonly activeSubagents = new Map<string, { prompt: string; startedAt: number; status: "running" | "ok" | "err" }>();
   /** Approval config (settings-driven). */
   approval: ApprovalConfig = DEFAULT_APPROVAL;
+  /** When the bash tool needs user approval, the host (TUI modal, web
+   *  modal) registers a handler here. If unset, the tool returns a
+   *  static "needs approval" error. */
+  askApprovalHandler: ((command: string, reason: string) => Promise<"allow-once" | "allow-always" | "deny">) | null = null;
+
+  /** Register an approval handler. Returns a cleanup function that
+   *  removes the handler (used in tests). */
+  setApprovalRequestHandler(fn: typeof this.askApprovalHandler): () => void {
+    this.askApprovalHandler = fn;
+    return () => { if (this.askApprovalHandler === fn) this.askApprovalHandler = null; };
+  }
 
   constructor(opts: RuntimeOptions) {
     this.cwd = opts.cwd;
@@ -262,6 +274,33 @@ export class HarnessRuntime implements SlashRuntime {
       readTodo: () => this.todoItems,
       writeTodo: async (items: string[]) => { this.todoItems = items; if (this.session) void this.session.append({ kind: "meta", data: { todo: items } }); },
       getApproval: () => this.approval,
+      askApproval: async (command: string, reason: string) => {
+        if (!this.askApprovalHandler) {
+          // No host — return "deny" so the tool surfaces a static error
+          // rather than hanging or running the command unapproved.
+          return "deny";
+        }
+        const decision = await this.askApprovalHandler(command, reason);
+        if (decision === "allow-always") {
+          // Persist the exact command to the allowlist. We escape
+          // regex metacharacters and anchor with ^...$ to make it
+          // a strict exact-match pattern. The user can hand-edit
+          // settings.json to make it broader.
+          const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const pattern = "^" + escaped + "$";
+          if (!this.approval.allowlist.includes(pattern)) {
+            this.approval.allowlist.push(pattern);
+            // Mirror to settings.json so the rule survives restarts.
+            if (!this.settings.approval) {
+              this.settings.approval = { ...this.approval };
+            } else {
+              this.settings.approval.allowlist = this.approval.allowlist.slice();
+            }
+            try { saveSettings(this.settings); } catch { /* best-effort */ }
+          }
+        }
+        return decision;
+      },
     };
   }
   private todoItems: string[] = [];

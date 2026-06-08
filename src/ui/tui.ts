@@ -23,6 +23,7 @@ import type { HarnessRuntime } from "../runtime.js";
 import { c as color } from "./colors.js";
 import { formatUSD } from "../agent/cost.js";
 import { Session } from "../agent/session.js";
+import { askApproval as showApprovalModal, type ApprovalDecision } from "./approval-modal.js";
 
 const VERSION = "0.2.2";
 
@@ -78,6 +79,8 @@ export interface Tui {
   getInput(): string;
   setInput(text: string): void;
   redraw(): void;
+  /** Pop the approval modal and resolve with the user's decision. */
+  askApproval(command: string, reason: string): Promise<ApprovalDecision>;
 }
 
 // --- Color palette (RGBA) ---
@@ -519,6 +522,17 @@ export function createTui(opts: TuiOptions): Tui {
     getInput() { return textarea.plainText; },
     setInput(text) { textarea.editBuffer.setText(text); },
     redraw() { renderer.requestRender(); markSidebarDirty(); },
+
+    async askApproval(command, reason) {
+      // Defocus the textarea so the modal's input handler isn't fighting
+      // the user's typing in the prompt.
+      try { textarea.blur(); } catch {}
+      try {
+        return await showApprovalModal(renderer, command, reason, root);
+      } finally {
+        try { textarea.focus(); } catch {}
+      }
+    },
   };
 }
 

@@ -59,17 +59,37 @@ export const bashTool: Tool = {
         : { mode: "off", allowlist: [], blocklist: [] };
       const r = needsApproval(raw.command, approval);
       if (r.decision === "ask") {
-        return {
-          toolCallId: "",
-          display: "bash: approval required",
-          content:
-            "Bash command needs approval: " + r.reason + "\n" +
-            "\n" +
-            "Command: " + raw.command + "\n" +
-            "\n" +
-            "(Approval flow: " + approval.mode + ")",
-          isError: true,
-        };
+        // If the host registered an ask handler (TUI modal, web modal),
+        // use it. Otherwise fall back to the static "needs approval" error
+        // so callers without a UI (CLI/server JSON mode) still get a
+        // structured response.
+        const askFn = ctx.services?.askApproval;
+        if (askFn) {
+          const decision = await askFn(raw.command, r.reason ?? "approval required");
+          if (decision === "deny") {
+            return {
+              toolCallId: "",
+              display: "bash: denied by user",
+              content: "Bash command was denied by the user. " +
+                "Run /approval to change the mode, or use a less destructive command.",
+              isError: true,
+            };
+          }
+          // allow-once / allow-always: fall through with bypass set.
+          raw.__approval_bypass = true;
+        } else {
+          return {
+            toolCallId: "",
+            display: "bash: approval required",
+            content:
+              "Bash command needs approval: " + r.reason + "\n" +
+              "\n" +
+              "Command: " + raw.command + "\n" +
+              "\n" +
+              "(Approval flow: " + approval.mode + " — no interactive handler registered)",
+            isError: true,
+          };
+        }
       }
     }
     const timeoutMs = raw.timeout_ms ?? ctx.limits.bashTimeoutMs;

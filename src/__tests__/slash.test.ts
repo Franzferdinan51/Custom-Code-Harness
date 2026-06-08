@@ -43,7 +43,7 @@ test("tryParseSlash returns null for non-slash input", () => {
 
 test("builtin registry has all expected commands", () => {
   const names = BUILTIN_REGISTRY.names();
-  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "compact", "tree", "fork", "export", "cost", "approval", "think", "verbose", "trace", "info", "welcome", "onboard"]) {
+  for (const want of ["commands", "help", "clear", "quit", "session", "resume", "model", "provider", "goal", "plan", "build", "loop", "compact", "tree", "fork", "todo", "export", "cost", "approval", "think", "verbose", "trace", "info", "welcome", "onboard"]) {
     assert.ok(names.includes(want), "missing /" + want);
   }
 });
@@ -471,6 +471,70 @@ test("/agents <name> returns a friendly error for an unknown name", async () => 
   } as never) });
   assert.match(String(out), /no such agent: nope/);
   assert.match(String(out), /\/agents alone/);
+});
+
+test("/todo list (empty) shows the placeholder", async () => {
+  const todo = BUILTIN_REGISTRY.get("todo");
+  assert.ok(todo);
+  const rt = {
+    readTodo: () => [],
+    async writeTodo(_items: string[]) { /* noop */ },
+  };
+  const out = await todo!.run("", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /empty/);
+  assert.match(String(out), /\/todo add/);
+});
+
+test("/todo add appends to the list and reports the count", async () => {
+  const todo = BUILTIN_REGISTRY.get("todo");
+  assert.ok(todo);
+  let current: string[] = ["existing"];
+  const rt = {
+    readTodo: () => current,
+    async writeTodo(items: string[]) { current = items; },
+  };
+  const out = await todo!.run("add new thing", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /added \(2 items\)/);
+  assert.deepEqual(current, ["existing", "new thing"]);
+});
+
+test("/todo set with `|` separator handles multi-word items", async () => {
+  const todo = BUILTIN_REGISTRY.get("todo");
+  assert.ok(todo);
+  let current: string[] = [];
+  const rt = {
+    readTodo: () => current,
+    async writeTodo(items: string[]) { current = items; },
+  };
+  const out = await todo!.run("set alpha | beta two | gamma", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /set 3 items/);
+  assert.deepEqual(current, ["alpha", "beta two", "gamma"]);
+});
+
+test("/todo set with whitespace falls back to word splitting", async () => {
+  const todo = BUILTIN_REGISTRY.get("todo");
+  assert.ok(todo);
+  let current: string[] = [];
+  const rt = {
+    readTodo: () => current,
+    async writeTodo(items: string[]) { current = items; },
+  };
+  const out = await todo!.run("set one two three", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /set 3 items/);
+  assert.deepEqual(current, ["one", "two", "three"]);
+});
+
+test("/todo clear empties the list", async () => {
+  const todo = BUILTIN_REGISTRY.get("todo");
+  assert.ok(todo);
+  let current: string[] = ["x", "y"];
+  const rt = {
+    readTodo: () => current,
+    async writeTodo(items: string[]) { current = items; },
+  };
+  const out = await todo!.run("clear", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /cleared/);
+  assert.deepEqual(current, []);
 });
 
 test("/info renders the runtime snapshot", async () => {

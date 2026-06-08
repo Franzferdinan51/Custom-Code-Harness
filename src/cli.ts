@@ -154,6 +154,10 @@ registerSubcommand("fork", "Fork the active session from a previous user message
   "ch fork [--session <id>|--resume <id>|-c] [user-message-id]",
   async (ctx) => { return runForkCmd(ctx); });
 
+registerSubcommand("todo", "View or edit the in-session todo list.",
+  "ch todo [list|add <text>|set <text>...|clear]",
+  async (ctx) => { return runTodoCmd(ctx); });
+
 registerSubcommand("compact", "Compact the active session and print the outcome.",
   "ch compact [--preview|--dry-run] [--session <id>|--resume <id>|-c] [instructions]",
   async (ctx) => { return runCompactCmd(ctx); });
@@ -204,7 +208,7 @@ function showHelp(cmd?: string): number {
     { title: "Run a prompt", blurb: "One-shot, autonomous, or multi-step.",
       names: ["run", "agent", "code", "goal", "loop"] },
     { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling.",
-      names: ["sessions", "tree", "fork", "compact", "memory", "skills", "agents", "skill", "cron", "init", "export"] },
+      names: ["sessions", "tree", "fork", "todo", "compact", "memory", "skills", "agents", "skill", "cron", "init", "export"] },
     { title: "Settings", blurb: "Thinking level and model preferences.",
       names: ["think", "verbose", "trace"] },
     { title: "Health",         blurb: "Connectivity and diagnostics.",
@@ -1216,6 +1220,25 @@ async function runForkCmd(ctx: SubcommandContext): Promise<number> {
   }
   const cmd = BUILTIN_REGISTRY.get("fork");
   if (!cmd) { process.stderr.write("error: /fork command missing\n"); return 1; }
+  const out = await cmd.run(ctx.args.join(" "), { cwd: ctx.cwd, runtime: () => runtime });
+  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
+  return 0;
+}
+
+/** `ch todo [list|add <text>|set <text>...|clear]` — view or edit
+ *  the in-session todo list. Delegates to the /todo slash command
+ *  so the two surfaces can't drift. */
+async function runTodoCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  try {
+    await hydrateRuntimeSession(runtime, ctx);
+  } catch (e) {
+    process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+    return 1;
+  }
+  const cmd = BUILTIN_REGISTRY.get("todo");
+  if (!cmd) { process.stderr.write("error: /todo command missing\n"); return 1; }
   const out = await cmd.run(ctx.args.join(" "), { cwd: ctx.cwd, runtime: () => runtime });
   if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
   return 0;

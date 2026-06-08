@@ -87,6 +87,12 @@ export interface SlashRuntime {
   /** True when no provider is configured at all. The TUI uses this
    *  on launch to print an onboarding hint instead of a generic welcome. */
   isFirstRun?(): boolean;
+  /** Read the current in-session todo list. The same data the
+   *  `todo` tool sees when the agent invokes it. */
+  readTodo?(): string[];
+  /** Replace the in-session todo list. Persists to the session
+   *  JSONL via the runtime's todo service so reloads see it. */
+  writeTodo?(items: string[]): Promise<void>;
 }
 
 export interface SlashCommand {

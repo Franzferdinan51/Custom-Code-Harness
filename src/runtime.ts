@@ -496,6 +496,17 @@ export class HarnessRuntime implements SlashRuntime {
    *  when the agent isn't registered. Used by `/agents <name>` and
    *  the future `ch agents show <name>` CLI subcommand. */
   getAgent(name: string) { return this.subagents.get(name); }
+  /** Read the current in-session todo list. Same data the `todo`
+   *  tool sees when the agent invokes it. */
+  readTodo(): string[] { return this.todoItems; }
+  /** Replace the in-session todo list. Persists to the session
+   *  JSONL so reloads see it. */
+  async writeTodo(items: string[]): Promise<void> {
+    this.todoItems = items;
+    if (this.session) {
+      try { await this.session.append({ kind: "meta", data: { todo: items } }); } catch { /* best-effort */ }
+    }
+  }
 
   // ---- Internals ----
 

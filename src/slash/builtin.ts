@@ -1166,6 +1166,51 @@ const treeCommand: SlashCommand = {
   },
 };
 
+/** View or edit the in-session todo list. Mirrors the `todo` tool
+ *  the agent uses — so when the user runs `/todo add foo`, the
+ *  next agent turn sees "foo" in the list and checks it off. */
+const todoCommand: SlashCommand = {
+  name: "todo",
+  description: "View or edit the in-session todo list (list | add | set | clear).",
+  group: "context",
+  usage: "/todo [list|add <text>|set <text>...|clear]",
+  async run(args, ctx) {
+    const rt = ctx.runtime?.();
+    if (!rt) return "(no runtime)";
+    if (!rt.readTodo || !rt.writeTodo) return "(runtime doesn't expose a todo list)";
+    const trimmed = args.trim();
+    if (!trimmed || trimmed === "list") {
+      const items = rt.readTodo();
+      if (items.length === 0) return "(empty — try: /todo add \"first thing to do\")";
+      return items.map((t, i) => (i + 1) + ". " + t).join("\n");
+    }
+    if (trimmed === "clear") {
+      await rt.writeTodo([]);
+      return "cleared todo list";
+    }
+    if (trimmed.startsWith("add ")) {
+      const item = trimmed.slice("add ".length).trim();
+      if (!item) return "usage: /todo add <text>";
+      const items = [...rt.readTodo(), item];
+      await rt.writeTodo(items);
+      return "added (" + items.length + " item" + (items.length === 1 ? "" : "s") + ")";
+    }
+    if (trimmed.startsWith("set ")) {
+      // /todo set a | b | c  — split by `|` OR whitespace when no `|`.
+      // Prefer `|` because todo items often contain spaces.
+      const rest = trimmed.slice("set ".length).trim();
+      if (!rest) return "usage: /todo set <text>...  (separate items with | or newlines)";
+      const items = rest.includes("|")
+        ? rest.split("|").map((s) => s.trim()).filter(Boolean)
+        : rest.split(/\s+/).filter(Boolean);
+      if (items.length === 0) return "(no items parsed)";
+      await rt.writeTodo(items);
+      return "set " + items.length + " item" + (items.length === 1 ? "" : "s");
+    }
+    return "usage: /todo [list|add <text>|set <text>...|clear]";
+  },
+};
+
 const forkCommand: SlashCommand = {
   name: "fork",
   description: "Fork the current session from a previous user message.",
@@ -1366,6 +1411,7 @@ BUILTIN_REGISTRY.register(tokensCommand);
 BUILTIN_REGISTRY.register(infoCommand);
 BUILTIN_REGISTRY.register(initCommand);
 BUILTIN_REGISTRY.register(treeCommand);
+BUILTIN_REGISTRY.register(todoCommand);
 BUILTIN_REGISTRY.register(forkCommand);
 BUILTIN_REGISTRY.register(promptsCommand);
 BUILTIN_REGISTRY.register(mcpCommand);

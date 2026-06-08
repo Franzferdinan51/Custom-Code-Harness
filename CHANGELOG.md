@@ -7,6 +7,68 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **First-run `/onboard` + `ch onboard` wizard** (`src/slash/builtin.ts`,
+  `src/cli.ts`, `src/runtime.ts`, `src/ui/tui-app.ts`,
+  `src/__tests__/slash.test.ts`): the harness used to silently
+  boot with no provider and wait for the user to set env vars
+  or hand-edit `settings.json`. Now `/onboard` (or `ch onboard`)
+  walks the user through a 3-step plan: pick a provider from
+  the catalog, save an API key, and run `/diag` to confirm
+  the connection works. On a configured install the same
+  command prints a one-line "you're all set" summary and
+  points at `/provider` for changes.
+  - `HarnessRuntime.isFirstRun()` is the new testable predicate
+    behind the first-run banner. The TUI prints a one-line
+    nudge on launch when no provider is configured so the
+    user discovers `/onboard` even if they never type `/help`.
+- **`/provider` setup wizard** (`src/provider/setup.ts`,
+  `src/slash/builtin.ts`, `src/cli.ts`, `src/runtime.ts`,
+  `src/__tests__/slash.test.ts`): the previous `/provider`
+  was a one-liner that only fast-switched. Now it's a real
+  guided setup flow:
+  - `/provider` with no args shows current + setup hint
+    (different message on first run)
+  - `/provider list` shows the provider catalog with auth modes
+  - `/provider setup <id>` prints a one-provider setup card
+    (base URL, model, env var, docs link, two ways to give me
+    the key)
+  - `/provider setup <id> <key>` saves the key, runs `/diag`
+    automatically, and reports first-byte / total latency
+  - `/provider <id> [model]` still works as the fast switch
+  - `ch provider set-key <id> <key>` is the non-interactive
+    escape hatch for scripts
+  - `HarnessRuntime.saveProviderApiKey()` is the new entry
+    point behind all of this. It validates the key isn't
+    empty / too short, persists to `settings.json`, and
+    invalidates the cached provider so the new key is picked
+    up on the next call. Surfaced as an optional
+    `saveProviderApiKey?()` on `SlashRuntime` so non-runtime
+    hosts can mock it.
+  - 6 new tests cover the wizard: list, one-line save + diag,
+    bad-key error, unknown provider, setup card, no-args-on-
+    first-run.
+
+- **Enter to send in the TUI** (`src/ui/tui.ts`,
+  `src/__tests__/tui.test.ts`): OpenTUI's default bindings had
+  Enter = newline and Meta+Enter = submit, which surprised
+  every new user who pressed Enter to send a prompt. The
+  textarea's `keyBindings` are now overridden so Enter (and
+  keypad Enter) fire `onSubmit`, and Shift+Enter / Ctrl+Enter
+  insert a newline. Footer hint updated to match. New test
+  pins the behavior against a real `TextareaRenderable`.
+
+### Changed
+
+- **TUI tool-call display is now a 2-line block** (`src/ui/tui.ts`):
+  the header line carries the status icon + tool name, an
+  indented dim line shows the (truncated) args, and a
+  colored result line shows the tool's display message. Old
+  layout was a single line with everything jammed together;
+  scanning scrollback to find which tool returned what was
+  painful.
+
+### Added (continued from prior unreleased work)
+
 - **`/skill show <name>` + `ch skills show <name>` focused
   skill view** (`src/slash/builtin.ts`, `src/cli.ts`,
   `src/__tests__/slash.test.ts`): same pattern as the new

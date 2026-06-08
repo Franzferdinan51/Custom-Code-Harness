@@ -53,6 +53,10 @@ export interface Settings {
     color?: "auto" | "always" | "never";
     /** Show reasoning blocks separately. Default true. */
     showReasoning?: boolean;
+    /** Show verbose agent/runtime logs. */
+    verbose?: boolean;
+    /** Show trace output like tool call names. */
+    trace?: boolean;
   };
   /** Slash command customizations. */
   slash?: {

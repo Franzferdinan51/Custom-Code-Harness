@@ -137,6 +137,8 @@ export class HarnessRuntime implements SlashRuntime {
         override: this.settings.approval.override,
       };
     }
+    this.verbose = !!this.settings.ui?.verbose;
+    this.trace = !!this.settings.ui?.trace;
   }
 
   async ensureSession(): Promise<Session> {
@@ -277,7 +279,21 @@ export class HarnessRuntime implements SlashRuntime {
     }
     process.stdout.write(s + "\n");
   }
-  setThinking(level: string): void { this.thinking = level; }
+  setThinking(level: string): void {
+    this.thinking = level;
+    this.settings.thinking = level as Settings["thinking"];
+    try { saveSettings(this.settings); } catch { /* best-effort */ }
+  }
+  setVerbose(enabled: boolean): void {
+    this.verbose = enabled;
+    this.settings.ui = { ...(this.settings.ui ?? {}), verbose: enabled };
+    try { saveSettings(this.settings); } catch { /* best-effort */ }
+  }
+  setTrace(enabled: boolean): void {
+    this.trace = enabled;
+    this.settings.ui = { ...(this.settings.ui ?? {}), trace: enabled };
+    try { saveSettings(this.settings); } catch { /* best-effort */ }
+  }
   setComposerMode(mode: "plan" | "build"): void { this.composerMode = mode === "plan" ? "plan" : "build"; }
   getComposerMode(): "plan" | "build" { return this.composerMode; }
   setPersonality(name: string | null): void { this.personality = name; }
@@ -329,6 +345,9 @@ export class HarnessRuntime implements SlashRuntime {
     const services = this.buildToolServices(provider, model);
 
     // 5) Run the agent
+    if (this.verbose) {
+      this.print(c.dim("  (verbose: " + messages.length + " messages, thinking " + this.thinking + ")"));
+    }
     const ac = new AbortController();
     const onSig = () => { try { ac.abort(); } catch {} };
     process.once("SIGINT", onSig);

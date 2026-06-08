@@ -599,6 +599,44 @@ const thinkCommand: SlashCommand = {
   },
 };
 
+const verboseCommand: SlashCommand = {
+  name: "verbose",
+  description: "Show or toggle verbose runtime logging.",
+  group: "settings",
+  usage: "/verbose [on|off|toggle]",
+  run(args, ctx) {
+    const rt = ctx.runtime?.() as { settings?: { ui?: { verbose?: boolean } }; setVerbose?: (enabled: boolean) => void } | undefined;
+    const current = !!rt?.settings?.ui?.verbose;
+    const arg = args.trim();
+    if (!arg) {
+      return "verbose: " + (current ? "on" : "off") + "\n(use /verbose on|off|toggle)";
+    }
+    const next = arg === "on" ? true : arg === "off" ? false : arg === "toggle" ? !current : null;
+    if (next === null) return "usage: /verbose [on|off|toggle]";
+    rt?.setVerbose?.(next);
+    return "verbose " + (next ? "enabled" : "disabled");
+  },
+};
+
+const traceCommand: SlashCommand = {
+  name: "trace",
+  description: "Show or toggle trace output for tool calls.",
+  group: "settings",
+  usage: "/trace [on|off|toggle]",
+  run(args, ctx) {
+    const rt = ctx.runtime?.() as { settings?: { ui?: { trace?: boolean } }; setTrace?: (enabled: boolean) => void } | undefined;
+    const current = !!rt?.settings?.ui?.trace;
+    const arg = args.trim();
+    if (!arg) {
+      return "trace: " + (current ? "on" : "off") + "\n(use /trace on|off|toggle)";
+    }
+    const next = arg === "on" ? true : arg === "off" ? false : arg === "toggle" ? !current : null;
+    if (next === null) return "usage: /trace [on|off|toggle]";
+    rt?.setTrace?.(next);
+    return "trace " + (next ? "enabled" : "disabled");
+  },
+};
+
 // ---------- /retry / /undo / /redo ----------
 
 const retryCommand: SlashCommand = {
@@ -826,6 +864,22 @@ const tokensCommand: SlashCommand = {
     }
     if (breakdown.length > 10) lines.push("    …(" + (breakdown.length - 10) + " earlier messages omitted)");
     return lines.join("\n");
+  },
+};
+
+// ---------- /info ----------
+
+/** Show a snapshot of the running install: paths, provider, model,
+ *  thinking level, approval mode. Same shape as `ch info` — both
+ *  delegate to the same pretty-printer so the surfaces never drift. */
+const infoCommand: SlashCommand = {
+  name: "info",
+  description: "Show runtime info: version, paths, provider, model, thinking.",
+  group: "status",
+  usage: "/info",
+  async run(_a, ctx) {
+    const { renderRuntimeInfo } = await import("../runtime/info.js");
+    return renderRuntimeInfo(ctx.cwd);
   },
 };
 
@@ -1118,6 +1172,8 @@ BUILTIN_REGISTRY.register(exportCommand);
 BUILTIN_REGISTRY.register(statusCommand);
 BUILTIN_REGISTRY.register(usageCommand);
 BUILTIN_REGISTRY.register(thinkCommand);
+BUILTIN_REGISTRY.register(verboseCommand);
+BUILTIN_REGISTRY.register(traceCommand);
 BUILTIN_REGISTRY.register(retryCommand);
 BUILTIN_REGISTRY.register(undoCommand);
 BUILTIN_REGISTRY.register(compactCommand);
@@ -1128,6 +1184,7 @@ BUILTIN_REGISTRY.register(cronCommand);
 BUILTIN_REGISTRY.register(doctorCommand);
 BUILTIN_REGISTRY.register(diagCommand);
 BUILTIN_REGISTRY.register(tokensCommand);
+BUILTIN_REGISTRY.register(infoCommand);
 BUILTIN_REGISTRY.register(initCommand);
 BUILTIN_REGISTRY.register(treeCommand);
 BUILTIN_REGISTRY.register(forkCommand);

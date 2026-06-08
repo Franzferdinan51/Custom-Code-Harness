@@ -41,6 +41,102 @@ test("ch desktop: appears in the subcommand list", () => {
   assert.match(r.stdout, /tree/);
   assert.match(r.stdout, /fork/);
   assert.match(r.stdout, /compact/);
+  assert.match(r.stdout, /think/);
+  assert.match(r.stdout, /verbose/);
+  assert.match(r.stdout, /trace/);
+});
+
+test("ch think sets and reports the thinking level", () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-think-"));
+  try {
+    const env = { ...process.env, CODINGHARNESS_HOME: home, NO_COLOR: "1" };
+    const set = spawnSync("bun", ["src/cli.ts", "think", "high"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(set.status, 0, set.stderr);
+    assert.match(set.stdout, /thinking level set to high/);
+
+    const show = spawnSync("bun", ["src/cli.ts", "think"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(show.status, 0, show.stderr);
+    assert.match(show.stdout, /thinking level: high/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("ch verbose and ch trace toggle runtime logging", () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-debug-"));
+  try {
+    const env = { ...process.env, CODINGHARNESS_HOME: home, NO_COLOR: "1" };
+    const verboseOn = spawnSync("bun", ["src/cli.ts", "verbose", "on"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(verboseOn.status, 0, verboseOn.stderr);
+    assert.match(verboseOn.stdout, /verbose enabled/);
+
+    const verboseShow = spawnSync("bun", ["src/cli.ts", "verbose"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(verboseShow.status, 0, verboseShow.stderr);
+    assert.match(verboseShow.stdout, /verbose: on/);
+
+    const traceOn = spawnSync("bun", ["src/cli.ts", "trace", "on"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(traceOn.status, 0, traceOn.stderr);
+    assert.match(traceOn.stdout, /trace enabled/);
+
+    const traceShow = spawnSync("bun", ["src/cli.ts", "trace"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(traceShow.status, 0, traceShow.stderr);
+    assert.match(traceShow.stdout, /trace: on/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("ch info prints a runtime snapshot", () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-info-"));
+  try {
+    const env = { ...process.env, CODINGHARNESS_HOME: home, NO_COLOR: "1" };
+    const info = spawnSync("bun", ["src/cli.ts", "info"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(info.status, 0, info.stderr);
+    assert.match(info.stdout, /CodingHarness 0\.2\.2/);
+    assert.match(info.stdout, /Settings/);
+    assert.match(info.stdout, /Paths/);
+
+    const infoJson = spawnSync("bun", ["src/cli.ts", "info", "--json"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(infoJson.status, 0, infoJson.stderr);
+    const parsed = JSON.parse(infoJson.stdout);
+    assert.equal(parsed.version, "0.2.2");
+    assert.ok(parsed.paths);
+    assert.ok(parsed.cliPath);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("ALL OK", () => {});

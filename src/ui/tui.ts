@@ -6,23 +6,17 @@
 //
 //   ┌─ header (2 rows) ────────────────────────────────────┐
 //   ├─ body (flex 1) ──────────────────────────────────────┤
-//   │  ┌─ sidebar (24 cols) ─┐  ┌─ main (flex 1) ──────┐  │
-//   │  │ sessions            │  │  scroll (messages)   │  │
-//   │  │ current run         │  │                      │  │
-//   │  │ active sub-agents   │  │                      │  │
-//   │  │ cost                │  │                      │  │
-//   │  └─────────────────────┘  └──────────────────────┘  │
+//   │  ┌─ sidebar (compact status) ─┐  ┌─ main ────────┐  │
+//   │  │ current run               │  │ messages      │  │
+//   │  └───────────────────────────┘  └────────────────┘  │
 //   ├─ input (5 rows) ─────────────────────────────────────┤
 //   ├─ footer (1 row) ─────────────────────────────────────┘
 
 import { CliRenderer, BoxRenderable, TextRenderable, ScrollBoxRenderable, TextareaRenderable, RGBA } from "@opentui/core";
-import { BUILTIN_REGISTRY, QUICK_START, renderQuickStart } from "../slash/builtin.js";
+import { BUILTIN_REGISTRY } from "../slash/builtin.js";
 import { tryParseSlash } from "../slash/registry.js";
 import { runAgent, DEFAULT_LIMITS } from "../agent/loop.js";
-import { sessionToMessages } from "../agent/session.js";
 import type { HarnessRuntime } from "../runtime.js";
-import { formatUSD } from "../agent/cost.js";
-import { Session } from "../agent/session.js";
 import { askApproval as showApprovalModal, type ApprovalDecision } from "./approval-modal.js";
 
 const VERSION = "0.2.2";
@@ -159,12 +153,12 @@ export function createTui(opts: TuiOptions): Tui {
   });
   root.add(body);
 
-  // --- sidebar (left, 28 cols) ---
+  // --- sidebar (compact status) ---
   const sidebar = new BoxRenderable(renderer, {
     id: "sidebar",
     backgroundColor: COLORS.bgSidebar,
     flexDirection: "column",
-    width: 28,
+    width: 26,
     paddingLeft: 1,
     paddingRight: 1,
     paddingTop: 1,
@@ -178,43 +172,14 @@ export function createTui(opts: TuiOptions): Tui {
   const sidebarTitle = new TextRenderable(renderer, { id: "sb-title", content: " CodingHarness", fg: COLORS.fgAccent, attributes: 1 });
   sidebar.add(sidebarTitle);
 
-  const sbSessionsLabel = new TextRenderable(renderer, { id: "sb-sess-label", content: " sessions", fg: COLORS.fgDim });
-  sidebar.add(sbSessionsLabel);
-
-  const sbSessionsList = new TextRenderable(renderer, { id: "sb-sess-list", content: "  (loading...)", fg: COLORS.fgDim });
-  sidebar.add(sbSessionsList);
-
-  const sbSpacer1 = new TextRenderable(renderer, { id: "sb-spacer-1", content: "" });
-  sidebar.add(sbSpacer1);
-
   const sbGoalLabel = new TextRenderable(renderer, { id: "sb-goal-label", content: " current run", fg: COLORS.fgDim });
   sidebar.add(sbGoalLabel);
   const sbGoalState = new TextRenderable(renderer, { id: "sb-goal-state", content: "  idle", fg: COLORS.fgDim, attributes: 1 });
   sidebar.add(sbGoalState);
   const sbGoalMeta = new TextRenderable(renderer, { id: "sb-goal-meta", content: "  ready for the next prompt", fg: COLORS.fgDim });
   sidebar.add(sbGoalMeta);
-  const sbGoalDetail = new TextRenderable(renderer, { id: "sb-goal-detail", content: "  Ctrl+G inserts /goal", fg: COLORS.fgFaint });
+  const sbGoalDetail = new TextRenderable(renderer, { id: "sb-goal-detail", content: "  /goal for multi-step work", fg: COLORS.fgFaint });
   sidebar.add(sbGoalDetail);
-
-  const sbSpacerGoal = new TextRenderable(renderer, { id: "sb-spacer-goal", content: "" });
-  sidebar.add(sbSpacerGoal);
-
-  const sbAgentsLabel = new TextRenderable(renderer, { id: "sb-agents-label", content: " active sub-agents", fg: COLORS.fgDim });
-  sidebar.add(sbAgentsLabel);
-  const sbAgentsList = new TextRenderable(renderer, { id: "sb-agents-list", content: "  (none)", fg: COLORS.fgDim });
-  sidebar.add(sbAgentsList);
-
-  const sbSpacer2 = new TextRenderable(renderer, { id: "sb-spacer-2", content: "" });
-  sidebar.add(sbSpacer2);
-
-  const sbCostLabel = new TextRenderable(renderer, { id: "sb-cost-label", content: " cost (session)", fg: COLORS.fgDim });
-  sidebar.add(sbCostLabel);
-  const sbCostTotal = new TextRenderable(renderer, { id: "sb-cost-total", content: "  $0.00", fg: COLORS.fgCyan, attributes: 1 });
-  sidebar.add(sbCostTotal);
-  const sbCostTokens = new TextRenderable(renderer, { id: "sb-cost-tokens", content: "  0 in / 0 out", fg: COLORS.fgFaint });
-  sidebar.add(sbCostTokens);
-  const sbCostPerModel = new TextRenderable(renderer, { id: "sb-cost-model", content: "", fg: COLORS.fgFaint });
-  sidebar.add(sbCostPerModel);
 
   // --- main (right) ---
   const main = new BoxRenderable(renderer, {
@@ -343,23 +308,6 @@ export function createTui(opts: TuiOptions): Tui {
   function refreshSidebar(): void {
     if (!sidebarDirty) return;
     sidebarDirty = false;
-    void doRefresh();
-  }
-  function markSidebarDirty(): void { sidebarDirty = true; }
-
-  async function doRefresh(): Promise<void> {
-    // Sessions list: most recent 5.
-    try {
-      const list = await Session.list(5);
-      const lines = list.map((m, i) => {
-        const marker = m.id === status.session ? "●" : " ";
-        const short = m.id.slice(0, 8);
-        const when = formatAgo(m.updatedAt);
-        return " " + marker + " " + short + "  " + when;
-      });
-      sbSessionsList.content = lines.length === 0 ? "  (none)" : lines.join("\n");
-    } catch { sbSessionsList.content = "  (error)"; }
-
     const goal = runtime?.getGoalActivity?.() ?? null;
     if (goal) {
       const phase = goal.phase === "executing" ? "running" : goal.phase;
@@ -381,58 +329,25 @@ export function createTui(opts: TuiOptions): Tui {
     } else {
       sbGoalState.content = "  idle — try a prompt";
       sbGoalMeta.content = "  /help · /goal · /model · /plan · /build";
-      sbGoalDetail.content = "  ⏎ sends · Tab completes · " + composerMode + " mode";
+      sbGoalDetail.content = "  " + composerMode + " mode · /goal for multi-step work";
       sbGoalState.fg = COLORS.fgDim;
       sbGoalMeta.fg = COLORS.fgDim;
       sbGoalDetail.fg = COLORS.fgFaint;
     }
-
-    // Active sub-agents.
-    if (runtime && runtime.activeSubagents.size > 0) {
-      const lines: string[] = [];
-      for (const [id, a] of runtime.activeSubagents) {
-        const mark = a.status === "ok" ? "✓" : a.status === "err" ? "✗" : "⋯";
-        const shortPrompt = a.prompt.length > 16 ? a.prompt.slice(0, 14) + "…" : a.prompt;
-        lines.push(" " + mark + " " + id.split(":")[0] + "  " + shortPrompt);
-      }
-      sbAgentsList.content = lines.join("\n");
-    } else if (runtime && runtime.subagentHistory.length > 0) {
-      // Show the last 3.
-      const recent = runtime.subagentHistory.slice(-3).reverse();
-      sbAgentsList.content = recent.map((s) => {
-        const mark = s.status === "ok" ? "✓" : s.status === "err" ? "✗" : "·";
-        return " " + mark + " " + s.name + "  " + formatUSD(s.cost);
-      }).join("\n");
-    } else {
-      sbAgentsList.content = "  (none)";
-    }
-
-    // Cost.
-    if (runtime && runtime.cost) {
-      const t = runtime.cost.total();
-      sbCostTotal.content = "  " + formatUSD(t.cost);
-      sbCostTokens.content = "  " + t.inputTokens + " in / " + t.outputTokens + " out";
-      const perModel = runtime.cost.perModel();
-      if (perModel.length > 0) {
-        const top = perModel[0]!;
-        sbCostPerModel.content = "  " + (top.model.length > 22 ? top.model.slice(0, 20) + "…" : top.model) + "  " + formatUSD(top.cost);
-      } else {
-        sbCostPerModel.content = "";
-      }
-    } else {
-      sbCostTotal.content = "  $0.00";
-      sbCostTokens.content = "  0 in / 0 out";
-      sbCostPerModel.content = "";
-    }
   }
+  function markSidebarDirty(): void { sidebarDirty = true; }
 
   // --- rendering helpers ---
 
   function updateStatus(): void {
     headerLeft.content = " CodingHarness v" + VERSION + "  " + (status.provider || "—") + "/" + (status.model || "—") + "  " + (status.cwd || "—");
-    const costText = runtime && runtime.cost ? " · " + formatUSD(runtime.cost.total().cost) : "";
-    headerRight.content = "tokens " + status.tokensIn + " in / " + status.tokensOut + " out" + costText + "  ";
-    footerRight.content = "steps " + status.steps + " · " + composerMode + " mode  ";
+    const thinking = runtime?.settings.thinking ?? status.thinking ?? "medium";
+    const flags = [
+      runtime?.settings.ui?.verbose ? "verbose" : "",
+      runtime?.settings.ui?.trace ? "trace" : "",
+    ].filter(Boolean).join(" · ");
+    headerRight.content = (status.session && status.session !== "—" ? "session " + status.session.slice(0, 8) : "no session") + " · " + composerMode + " · " + thinking + (flags ? " · " + flags : "") + "  ";
+    footerRight.content = status.steps > 0 ? "steps " + status.steps + "  " : "ready  ";
     markSidebarDirty();
   }
 
@@ -538,7 +453,7 @@ export function createTui(opts: TuiOptions): Tui {
   };
 
   // Periodic sidebar refresh.
-  const sidebarTimer = setInterval(() => { markSidebarDirty(); refreshSidebar(); }, 2_000);
+  const sidebarTimer = setInterval(() => { if (sidebarDirty) refreshSidebar(); }, 2_000);
   const previewTimer = setInterval(() => { refreshCommandPreview(); }, 120);
 
   // --- public API ---
@@ -546,16 +461,8 @@ export function createTui(opts: TuiOptions): Tui {
   return {
     async start() {
       updateStatus();
-      // First-launch onboarding. We always show the quick-start card on
-      // launch — it's cheap, fits in 6 lines, and the user can ignore it.
-      // Returning users have already seen it; the persistent sidebar hint
-      // keeps the same 4 commands one keystroke away.
-      const quick = renderQuickStart({ title: "CodingHarness v" + VERSION + " — quick start" });
-      for (const line of quick.split("\n")) {
-        addMessageEl(line, line.startsWith("  ") ? COLORS.fg : COLORS.fgCyan, { prefix: line.startsWith("  ") ? "   " : " · " });
-      }
-      addMessageEl("(type /help any time to see every command)", COLORS.fgDim, { prefix: " · " });
-      await doRefresh();
+      addMessageEl("Type /help for commands. /goal, /plan, and /build stay one slash away.", COLORS.fgDim, { prefix: " · " });
+      refreshSidebar();
       refreshCommandPreview();
       renderer.start();
       await new Promise<void>((resolve) => {
@@ -660,22 +567,17 @@ function truncateArgs(args: string): string {
 function buildCommandPreview(text: string, slashNames: string[]): string {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
-    const lines = ["Type a prompt or /command to start."];
-    for (const q of QUICK_START) {
-      lines.push("  " + q.label.padEnd(12) + q.hint);
-    }
-    lines.push("Tab completes · Ctrl+G inserts /goal · /plan · /build · Ctrl+C aborts · Ctrl+D quits.");
-    return lines.join("\n");
+    return "Type a prompt or /command. /goal is for multi-step work.";
   }
 
   if (!trimmed.startsWith("/")) {
-    return "⏎ sends this prompt. /help for commands, /goal for multi-step work, /plan or /build to switch modes.";
+    return "Enter sends this prompt. /goal for multi-step work. /plan or /build switch framing.";
   }
 
   const firstToken = trimmed.split(/\s+/, 1)[0] ?? "";
   const bare = firstToken.slice(1);
   if (!bare) {
-    return "Slash commands: /goal /help /model /plan /build\nTab completes the highlighted command.";
+    return "Slash commands: /goal /help /model /plan /build";
   }
 
   if (!trimmed.includes(" ")) {
@@ -684,11 +586,11 @@ function buildCommandPreview(text: string, slashNames: string[]): string {
         const names = matches.map((name) => "/" + name).join("   ");
         if (matches.length === 1) {
           const cmd = BUILTIN_REGISTRY.get(matches[0]!);
-          return names + "\n" + compactLine((cmd?.usage ?? "/" + matches[0]!) + (cmd?.description ? " · " + cmd.description : ""), 92);
+          return names + "\n" + compactLine((cmd?.usage ?? "/" + matches[0]!) + (cmd?.description ? " · " + cmd.description : ""), 72);
         }
         return names + "\nTab completes the highlighted command.";
       }
-      return "No slash command matches /" + bare + ".\nTry /help to list available commands.";
+      return "No slash command matches /" + bare + ". Try /help.";
   }
 
   const cmd = BUILTIN_REGISTRY.get(bare);
@@ -696,7 +598,7 @@ function buildCommandPreview(text: string, slashNames: string[]): string {
     return "/" + bare + "\nTry /help to list available commands.";
   }
 
-  return (cmd.usage ?? "/" + cmd.name) + "\n" + compactLine(cmd.description || "Enter to run.", 92);
+  return (cmd.usage ?? "/" + cmd.name) + "\n" + compactLine(cmd.description || "Enter to run.", 72);
 }
 
 function goalIcon(phase: string): string {

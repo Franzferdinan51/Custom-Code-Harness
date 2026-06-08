@@ -78,6 +78,10 @@ registerSubcommand("goal", "Run the agent toward a high-level objective (multi-s
   "ch goal <objective>  [--max-steps=N]  [--provider <id>] [--model <name>]",
   async (ctx) => { return runGoalCmd(ctx); });
 
+registerSubcommand("think", "Show or set the thinking level (off|minimal|low|medium|high|xhigh).",
+  "ch think [level]",
+  async (ctx) => { return runThinkCmd(ctx); });
+
 registerSubcommand("loop", "Re-send the previous (or new) prompt N times, with optional sentinel.",
   "ch loop [N] [sentinel] <prompt>  (or: ch loop N)",
   async (ctx) => { return runLoopCmd(ctx); });
@@ -181,6 +185,8 @@ function showHelp(cmd?: string): number {
       names: ["run", "agent", "code", "goal", "loop"] },
     { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling.",
       names: ["sessions", "tree", "fork", "compact", "memory", "skills", "agents", "skill", "cron", "init", "export"] },
+    { title: "Settings", blurb: "Thinking level and model preferences.",
+      names: ["think"] },
     { title: "Health",         blurb: "Connectivity and diagnostics.",
       names: ["doctor", "diag", "tokens"] },
     { title: "Integrate",      blurb: "MCP server, updates.",
@@ -239,6 +245,7 @@ function showHelp(cmd?: string): number {
   lines.push("  ch agent \"add a /healthcheck slash command\"");
   lines.push("  ch code \"explain src/cli.ts\"");
   lines.push("  ch goal \"wire up OAuth for the dashboard\" --max-steps=8");
+  lines.push("  ch think high            # raise the thinking level");
   lines.push("  ch loop 5 \"run the test suite until it passes\"");
   lines.push("  ch tree                  # inspect the active session tree");
   lines.push("  ch compact --preview     # preview a session compaction");
@@ -388,7 +395,8 @@ async function runSimpleRepl(runtime: HarnessRuntime, ctx: SubcommandContext & {
   if (process.stdout.isTTY) {
     const provider = runtime.providerId() ?? "(no provider)";
     const model = runtime.model() ?? "(no model)";
-    process.stdout.write(c.bold("CodingHarness") + c.gray(" · ") + c.cyan(provider) + c.gray(" · ") + c.gray(model) + c.gray(" · ") + c.dim(ctx.cwd) + "\n");
+    const thinking = runtime.settings.thinking ?? "medium";
+    process.stdout.write(c.bold("CodingHarness") + c.gray(" · ") + c.cyan(provider) + c.gray(" · ") + c.gray(model) + c.gray(" · ") + c.dim("thinking " + thinking) + c.gray(" · ") + c.dim(ctx.cwd) + "\n");
     process.stdout.write(c.dim('type /help for commands, ctrl+c to abort a turn, ctrl+d to exit') + "\n\n");
   }
 
@@ -483,6 +491,17 @@ async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
   const cmd = BUILTIN_REGISTRY.get("goal");
   if (!cmd) { process.stderr.write("error: /goal command missing\n"); return 1; }
   const out = await cmd.run(objective + " --max-steps=" + maxSteps, { cwd: ctx.cwd, runtime: () => runtime });
+  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
+  return 0;
+}
+
+async function runThinkCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const cmd = BUILTIN_REGISTRY.get("think");
+  if (!cmd) { process.stderr.write("error: /think command missing\n"); return 1; }
+  const arg = ctx.args.join(" ").trim();
+  const out = await cmd.run(arg, { cwd: ctx.cwd, runtime: () => runtime });
   if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
   return 0;
 }

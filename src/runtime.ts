@@ -277,7 +277,11 @@ export class HarnessRuntime implements SlashRuntime {
     }
     process.stdout.write(s + "\n");
   }
-  setThinking(level: string): void { this.thinking = level; }
+  setThinking(level: string): void {
+    this.thinking = level;
+    this.settings.thinking = level as Settings["thinking"];
+    try { saveSettings(this.settings); } catch { /* best-effort */ }
+  }
   setComposerMode(mode: "plan" | "build"): void { this.composerMode = mode === "plan" ? "plan" : "build"; }
   getComposerMode(): "plan" | "build" { return this.composerMode; }
   setPersonality(name: string | null): void { this.personality = name; }

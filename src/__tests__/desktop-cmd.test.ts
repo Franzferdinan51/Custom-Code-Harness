@@ -41,6 +41,31 @@ test("ch desktop: appears in the subcommand list", () => {
   assert.match(r.stdout, /tree/);
   assert.match(r.stdout, /fork/);
   assert.match(r.stdout, /compact/);
+  assert.match(r.stdout, /think/);
+});
+
+test("ch think sets and reports the thinking level", () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-think-"));
+  try {
+    const env = { ...process.env, CODINGHARNESS_HOME: home, NO_COLOR: "1" };
+    const set = spawnSync("bun", ["src/cli.ts", "think", "high"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(set.status, 0, set.stderr);
+    assert.match(set.stdout, /thinking level set to high/);
+
+    const show = spawnSync("bun", ["src/cli.ts", "think"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env,
+    });
+    assert.equal(show.status, 0, show.stderr);
+    assert.match(show.stdout, /thinking level: high/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("ALL OK", () => {});

@@ -114,8 +114,8 @@ registerSubcommand("tokens", "Show the rough token count of the active session's
   "ch tokens",
   async (ctx) => { return runTokensCmd(ctx); });
 
-registerSubcommand("skills", "List installed skills.",
-  "ch skills",
+registerSubcommand("skills", "List installed skills (or show one).",
+  "ch skills [list|show <name>]",
   async (ctx) => { return listSkillsCmd(ctx); });
 
 registerSubcommand("agents", "List available sub-agents (or show details for one).",
@@ -608,6 +608,29 @@ async function runWelcomeCmd(): Promise<number> {
 async function listSkillsCmd(ctx: SubcommandContext): Promise<number> {
   const { SkillRegistry } = await import("./agent/skills.js");
   const reg = new SkillRegistry({ cwd: ctx.cwd });
+  // `ch skills show <name>` — focused one-skill view, same shape
+  // as `/skill show <name>` inside the TUI.
+  const sub = ctx.args[0];
+  if (sub === "show") {
+    const name = ctx.args[1];
+    if (!name) {
+      process.stderr.write("usage: ch skills show <name>\n");
+      return 2;
+    }
+    const s = await reg.load(name);
+    if (!s) {
+      process.stderr.write("no such skill: " + name + "\n");
+      return 1;
+    }
+    const meta = (await reg.list()).find((x) => x.name === name);
+    const lines: string[] = [];
+    lines.push("Skill: " + name);
+    if (meta?.description) lines.push("  " + meta.description);
+    lines.push("");
+    lines.push(s.content);
+    process.stdout.write(lines.join("\n") + "\n");
+    return 0;
+  }
   const all = await reg.list();
   if (all.length === 0) {
     process.stdout.write("(no skills installed — drop SKILL.md into ~/.codingharness/skills/<name>/)\n");

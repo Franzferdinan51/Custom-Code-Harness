@@ -742,21 +742,47 @@ const memoryCommand: SlashCommand = {
 
 const skillCommand: SlashCommand = {
   name: "skill",
-  description: "List skills or load a specific one.",
+  description: "List skills, show one, or load one into the conversation.",
   group: "tools",
-  usage: "/skill [list|<name>]",
+  usage: "/skill [list|show <name>|load <name>]",
   async run(args, ctx) {
     const rt = ctx.runtime?.() as { skills?: { list(): Promise<Array<{ name: string; description: string }>>; load(n: string): Promise<{ content: string } | null> } } | undefined;
     if (!rt?.skills) return "(skill registry not available)";
     const trimmed = args.trim();
-    if (!trimmed || trimmed === "list") {
+    // Parse "<sub> <name>" so `/skill show foo` and `/skill load foo`
+    // are both first-class, while `/skill <name>` still works as a
+    // shorthand for `load` (the original behavior).
+    const parts = trimmed.split(/\s+/).filter((s) => s.length > 0);
+    const sub = parts[0] ?? "list";
+    const name = parts[1];
+
+    if (sub === "list" || (!name && (sub === "list" || sub === ""))) {
       const list = await rt.skills.list();
       if (list.length === 0) return "(no skills installed — drop SKILL.md into ~/.codingharness/skills/<name>/)";
       return list.map((s, i) => (i + 1) + ". " + s.name + " — " + s.description).join("\n");
     }
-    const loaded = await rt.skills.load(trimmed);
-    if (!loaded) return "no such skill: " + trimmed;
-    return "Loaded skill: " + trimmed + "\n\n" + loaded.content;
+
+    if (sub === "show") {
+      if (!name) return "usage: /skill show <name>";
+      const loaded = await rt.skills.load(name);
+      if (!loaded) return "no such skill: " + name + " — try /skill list";
+      const meta = await rt.skills.list();
+      const m = meta.find((s) => s.name === name);
+      const lines: string[] = [];
+      lines.push("Skill: " + name);
+      if (m?.description) lines.push("  " + m.description);
+      lines.push("");
+      lines.push(loaded.content);
+      return lines.join("\n");
+    }
+
+    // `/skill <name>` (no subcommand) — load the skill, original behavior.
+    // We also handle the `load <name>` form so scripts can be explicit.
+    const targetName = sub === "load" ? name : sub;
+    if (!targetName) return "usage: /skill [list|show <name>|load <name>]";
+    const loaded = await rt.skills.load(targetName);
+    if (!loaded) return "no such skill: " + targetName + " — try /skill list";
+    return "Loaded skill: " + targetName + "\n\n" + loaded.content;
   },
 };
 

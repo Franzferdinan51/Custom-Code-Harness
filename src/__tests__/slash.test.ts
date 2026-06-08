@@ -486,3 +486,53 @@ test("/info renders the runtime snapshot", async () => {
   assert.match(out!, /Paths:/);
   assert.match(out!, /sessions:/);
 });
+
+test("/skill show <name> renders the focused one-skill view", async () => {
+  const skill = BUILTIN_REGISTRY.get("skill");
+  assert.ok(skill);
+  // Mock the skills registry with two entries.
+  const skills = [
+    { name: "alpha", description: "first skill" },
+    { name: "beta", description: "second skill" },
+  ];
+  const rt = {
+    skills: {
+      list: async () => skills,
+      load: async (n: string) => n === "alpha" ? { content: "alpha body" } : null,
+    },
+  };
+  // show <name> should print the body and a friendly header.
+  const out = await skill!.run("show alpha", { cwd: "/", runtime: () => rt as never });
+  assert.ok(typeof out === "string");
+  assert.match(out!, /Skill: alpha/);
+  assert.match(out!, /first skill/);
+  assert.match(out!, /alpha body/);
+});
+
+test("/skill <name> still loads (backward-compatible shorthand)", async () => {
+  const skill = BUILTIN_REGISTRY.get("skill");
+  assert.ok(skill);
+  const rt = {
+    skills: {
+      list: async () => [{ name: "alpha", description: "first skill" }],
+      load: async (n: string) => n === "alpha" ? { content: "alpha body" } : null,
+    },
+  };
+  const out = await skill!.run("alpha", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /Loaded skill: alpha/);
+  assert.match(String(out), /alpha body/);
+});
+
+test("/skill show <unknown> returns a friendly error", async () => {
+  const skill = BUILTIN_REGISTRY.get("skill");
+  assert.ok(skill);
+  const rt = {
+    skills: {
+      list: async () => [{ name: "alpha", description: "first skill" }],
+      load: async (_n: string) => null,
+    },
+  };
+  const out = await skill!.run("show nope", { cwd: "/", runtime: () => rt as never });
+  assert.match(String(out), /no such skill: nope/);
+  assert.match(String(out), /\/skill list/);
+});

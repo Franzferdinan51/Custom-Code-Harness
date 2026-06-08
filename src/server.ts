@@ -141,10 +141,11 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
       if (req.method === "GET" && path === "/v1/status") {
         sendJson(res, 200, {
           ok: true,
-          version: runtime.constructor.name === "HarnessRuntime" ? "0.2.1" : "0.2.1",
+          version: "0.2.2",
           model: runtime.model(),
           provider: runtime.providerId(),
           session: runtime.sessionId(),
+          goalActivity: runtime.getGoalActivity(),
         });
         return;
       }
@@ -158,7 +159,8 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
         return;
       }
       if (req.method === "GET" && path === "/v1/sessions") {
-        const list = await Session.list(50);
+        const query = url.searchParams.get("query")?.trim();
+        const list = query ? await Session.search(query, 50) : await Session.list(50);
         sendJson(res, 200, { sessions: list });
         return;
       }
@@ -327,11 +329,21 @@ async function streamChat(runtime: HarnessRuntime, prompt: string, res: ServerRe
   if (slash) {
     const cmd = BUILTIN_REGISTRY.get(slash.name);
     if (cmd) {
+      const clearOutput = runtime.setOutputHandler({
+        onTextDelta: (text) => { res.write(sse("text", { text })); },
+        onToolCallStart: (tc) => { res.write(sse("tool_start", { name: tc.name, args: tc.argsJson })); },
+        onToolCallEnd: (tc, r) => { res.write(sse("tool_end", { name: tc.name, isError: r.isError, display: r.display, detail: r.display })); },
+        onUsage: (u) => { res.write(sse("usage", u)); },
+        onInfo: (text) => { res.write(sse("info", { text })); },
+        onError: (error) => { res.write(sse("error", { text: error.message })); },
+      });
       try {
         const out = await cmd.run(slash.args, { cwd: process.cwd(), runtime: () => runtime });
         if (typeof out === "string" && out.length > 0) res.write(sse("info", { text: out }));
       } catch (e) {
         res.write(sse("error", { text: (e as Error).message }));
+      } finally {
+        clearOutput();
       }
       res.write(sse("done", { text: "" }));
       res.end();

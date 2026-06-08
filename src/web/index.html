@@ -11,11 +11,18 @@
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-section">
         <div class="sidebar-title">CodingHarness</div>
-        <div class="sidebar-version" id="version">v0.2.1</div>
+        <div class="sidebar-version" id="version">v0.2.2</div>
       </div>
       <div class="sidebar-section">
-        <div class="sidebar-label">sessions</div>
+        <div class="sidebar-label" id="sessions-label">sessions</div>
+        <input class="sidebar-search" id="session-search" type="text" placeholder="search sessions, previews, cwd" />
         <div class="sidebar-list" id="session-list"><div class="sidebar-empty">loading…</div></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">current run</div>
+        <div class="sidebar-goal" id="goal-activity">
+          <div class="sidebar-empty">idle</div>
+        </div>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-label">active sub-agents</div>
@@ -32,8 +39,13 @@
         <div class="sidebar-list" id="approval-status">on-mutation</div>
       </div>
       <div class="sidebar-footer">
-        <button class="sidebar-button" id="new-session">+ new session</button>
-        <button class="sidebar-button" id="settings">⚙ settings</button>
+        <div class="quick-actions">
+          <button class="sidebar-button sidebar-button-primary" id="quick-goal">/goal</button>
+          <button class="sidebar-button" id="new-session">+ new session</button>
+          <button class="sidebar-button" id="settings">⚙ settings</button>
+          <button class="sidebar-button desktop-only" id="show-logs" hidden>show logs</button>
+          <button class="sidebar-button desktop-only" id="reveal-appdata" hidden>app data</button>
+        </div>
       </div>
     </aside>
 
@@ -42,12 +54,14 @@
         <div class="header-left">
           <span class="header-title">CodingHarness</span>
           <span class="header-model" id="model">— / —</span>
+          <span class="header-session" id="header-session">session —</span>
         </div>
         <div class="header-right">
-          <button class="header-action" id="command-palette-button" type="button">commands</button>
-          <span class="header-tokens" id="tokens">tokens 0 in / 0 out</span>
-          <span class="header-cost" id="cost">$0.00</span>
-        </div>
+          <button class="header-action header-action-goal" id="goal-button" type="button">goal</button>
+        <button class="header-action" id="command-palette-button" type="button">commands</button>
+        <span class="header-tokens" id="tokens">tokens 0 in / 0 out</span>
+        <span class="header-cost" id="cost">$0.00</span>
+      </div>
       </header>
 
       <div class="messages" id="messages">
@@ -63,7 +77,7 @@
         <textarea
           class="input-box"
           id="input"
-          placeholder="Type a prompt or /command..."
+          placeholder="Ask something, or start with /goal..."
           rows="3"
           autofocus
         ></textarea>
@@ -132,7 +146,8 @@
   <div class="command-palette" id="command-palette" hidden>
     <div class="command-palette-backdrop" id="command-palette-backdrop"></div>
     <div class="command-palette-card">
-      <div class="command-palette-title">Slash commands</div>
+      <div class="command-palette-title">Commands and goals</div>
+      <div class="command-palette-hint">Enter inserts a command, /goal starts a structured run, Ctrl/⌘+K opens this palette.</div>
       <input id="command-palette-input" class="command-palette-input" type="text" placeholder="Filter commands or type /goal" />
       <div class="command-palette-list" id="command-palette-list"></div>
     </div>

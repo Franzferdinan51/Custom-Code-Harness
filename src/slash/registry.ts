@@ -9,6 +9,17 @@ export interface SlashContext {
   runtime?: () => SlashRuntime;
 }
 
+export interface GoalActivityState {
+  mode: "goal";
+  objective: string;
+  phase: "planning" | "executing" | "complete" | "blocked";
+  step: number;
+  maxSteps: number;
+  startedAt: number;
+  updatedAt: number;
+  statusText?: string;
+}
+
 export interface SlashRuntime {
   /** Current provider id. */
   providerId(): string | undefined;
@@ -49,6 +60,10 @@ export interface SlashRuntime {
   };
   /** List sub-agents. */
   listAgents?(): Array<{ name: string; description: string; builtin?: boolean }>;
+  /** Update live goal-mode activity for hosts like the desktop UI. */
+  setGoalActivity?(state: GoalActivityState | null): void;
+  /** Read current goal-mode activity, if any. */
+  getGoalActivity?(): GoalActivityState | null;
 }
 
 export interface SlashCommand {

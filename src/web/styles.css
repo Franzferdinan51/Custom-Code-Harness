@@ -95,6 +95,23 @@ html, body {
   font-weight: 500;
 }
 
+.sidebar-search {
+  width: 100%;
+  background: rgba(14, 17, 22, 0.92);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 12px;
+  font-family: var(--mono);
+  margin-bottom: 8px;
+  outline: none;
+}
+
+.sidebar-search:focus {
+  border-color: rgba(94, 209, 255, 0.34);
+}
+
 .sidebar-list {
   font-size: 12px;
   color: var(--fg);
@@ -102,11 +119,159 @@ html, body {
   line-height: 1.6;
 }
 
+.sidebar-goal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-goal-card {
+  border: 1px solid rgba(108, 140, 255, 0.22);
+  border-radius: 14px;
+  padding: 12px 12px 11px;
+  background:
+    radial-gradient(circle at top right, rgba(94, 209, 255, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(18, 24, 33, 0.98), rgba(11, 15, 21, 0.98));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+
+.sidebar-goal-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-faint);
+  margin-bottom: 8px;
+}
+
+.sidebar-goal-phase {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.sidebar-goal-objective {
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+
+.sidebar-run-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.sidebar-run-chip {
+  background: rgba(11, 15, 21, 0.92);
+  color: var(--fg);
+  border: 1px solid rgba(94, 209, 255, 0.18);
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.sidebar-run-chip.is-muted {
+  color: var(--fg-faint);
+  cursor: default;
+}
+
+.sidebar-run-session-meta {
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+.sidebar-goal-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+}
+
+.sidebar-goal-status {
+  color: var(--cyan);
+  font-size: 11px;
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+
+.sidebar-run-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sidebar-run-action {
+  flex: 1;
+  background: rgba(14, 17, 22, 0.96);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.sidebar-run-action:hover {
+  background: var(--bg-hover);
+  border-color: rgba(94, 209, 255, 0.26);
+}
+
+.sidebar-run-progress {
+  height: 5px;
+  background: rgba(30, 35, 48, 0.85);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.sidebar-run-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green), var(--cyan));
+}
+
+.session-pill {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(126, 212, 163, 0.12);
+  color: var(--green);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sidebar-list .row.is-active {
+  color: var(--fg);
+  background: rgba(94, 209, 255, 0.06);
+  border: 1px solid rgba(94, 209, 255, 0.12);
+  border-radius: 8px;
+  padding: 4px 8px;
+  margin: 1px -8px;
+}
+
+.sidebar-list .row.is-active .when {
+  color: var(--cyan);
+}
+
 .sidebar-list .row {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 2px 0;
+  min-width: 0;
 }
 
 .sidebar-list .row .marker {
@@ -118,6 +283,15 @@ html, body {
   color: var(--fg-faint);
   font-size: 10px;
   margin-left: auto;
+}
+
+.sidebar-preview {
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 1px 0 8px 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sidebar-empty {
@@ -153,6 +327,12 @@ html, body {
   border-top: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.quick-actions {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
 }
 
@@ -170,6 +350,15 @@ html, body {
 }
 
 .sidebar-button:hover { background: var(--bg-hover); }
+
+.sidebar-button-primary {
+  background: linear-gradient(135deg, rgba(94, 209, 255, 0.18), rgba(108, 140, 255, 0.18));
+  border-color: rgba(94, 209, 255, 0.26);
+}
+
+.sidebar-button-primary:hover {
+  background: linear-gradient(135deg, rgba(94, 209, 255, 0.26), rgba(108, 140, 255, 0.26));
+}
 
 /* --- Main --- */
 
@@ -212,6 +401,15 @@ html, body {
   background: linear-gradient(135deg, rgba(94, 209, 255, 0.24), rgba(108, 140, 255, 0.24));
 }
 
+.header-action-goal {
+  border-color: rgba(126, 212, 163, 0.24);
+  background: linear-gradient(135deg, rgba(126, 212, 163, 0.16), rgba(94, 209, 255, 0.16));
+}
+
+.header-action-goal:hover {
+  background: linear-gradient(135deg, rgba(126, 212, 163, 0.24), rgba(94, 209, 255, 0.22));
+}
+
 .header-title {
   font-weight: 600;
   font-size: 14px;
@@ -220,6 +418,16 @@ html, body {
 }
 
 .header-model { color: var(--fg-dim); }
+.header-session {
+  color: var(--green);
+  background: rgba(126, 212, 163, 0.08);
+  border: 1px solid rgba(126, 212, 163, 0.18);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
 .header-tokens { color: var(--fg-faint); }
 .header-cost { color: var(--cyan); font-weight: 500; }
 
@@ -560,6 +768,13 @@ html, body {
   margin-bottom: 10px;
 }
 
+.command-palette-hint {
+  color: var(--fg-faint);
+  font-size: 11px;
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
 .command-palette-input {
   width: 100%;
   background: rgba(11, 15, 21, 0.9);
@@ -592,10 +807,22 @@ html, body {
   cursor: pointer;
 }
 
+.command-palette-item.featured {
+  border-color: rgba(126, 212, 163, 0.2);
+  background: rgba(126, 212, 163, 0.08);
+}
+
 .command-palette-item:hover,
 .command-palette-item.active {
   border-color: rgba(94, 209, 255, 0.24);
   background: rgba(94, 209, 255, 0.08);
+}
+
+.command-palette-empty {
+  padding: 16px 14px;
+  color: var(--fg-faint);
+  font-size: 12px;
+  font-style: italic;
 }
 
 .command-palette-meta {

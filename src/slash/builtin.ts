@@ -155,8 +155,6 @@ const sessionsCommand: SlashCommand = {
   group: "session",
   usage: "/sessions [list|show <id>|send <id> <text>|fork <id>]",
   async run(args, ctx) {
-    const rt = ctx.runtime?.();
-    if (!rt) return "(no runtime)";
     const parts = args.trim().split(/\s+/);
     const sub = parts[0] ?? "list";
     if (sub === "list") {
@@ -170,6 +168,22 @@ const sessionsCommand: SlashCommand = {
       }
       return out.join("\n");
     }
+    if (sub === "search" && parts.length >= 2) {
+      const query = parts.slice(1).join(" ").trim();
+      if (!query) return "usage: /sessions search <query>";
+      const list = await Session.search(query, 12);
+      if (list.length === 0) return "(no matching sessions)";
+      const out = ["Matching sessions:"];
+      for (const m of list) {
+        const when = new Date(m.updatedAt).toISOString().slice(0, 19).replace("T", " ");
+        const name = m.name ? " (" + m.name + ")" : "";
+        out.push("  " + m.id + "  " + when + "  " + m.entryCount + " entries" + name);
+        if (m.preview) out.push("    " + m.preview);
+      }
+      return out.join("\n");
+    }
+    const rt = ctx.runtime?.();
+    if (!rt) return "(no runtime)";
     if (sub === "show" && parts[1]) {
       const s = await Session.open(parts[1]);
       const entries = s.allEntries();
@@ -199,7 +213,7 @@ const sessionsCommand: SlashCommand = {
       await s.append({ kind: "message", message: { role: "user", content: text } });
       return "appended user message to " + s.id;
     }
-    return "usage: /sessions [list|show <id>|send <id> <text>|fork <id>]";
+    return "usage: /sessions [list|search <query>|show <id>|send <id> <text>|fork <id>]";
   },
 };
 
@@ -287,6 +301,17 @@ const goalCommand: SlashCommand = {
 };
 
 async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): Promise<string> {
+  const startedAt = Date.now();
+  rt.setGoalActivity?.({
+    mode: "goal",
+    objective,
+    phase: "planning",
+    step: 0,
+    maxSteps,
+    startedAt,
+    updatedAt: startedAt,
+    statusText: "Planning approach",
+  });
   rt.print("[goal] planning (max " + maxSteps + " steps)...");
   await rt.sendPrompt([
     "Goal mode: plan",
@@ -296,6 +321,16 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
     "After the plan, write exactly: Ready to execute. Use tools.",
   ].join("\n"), { silent: true });
   for (let step = 1; step <= maxSteps; step++) {
+    rt.setGoalActivity?.({
+      mode: "goal",
+      objective,
+      phase: "executing",
+      step,
+      maxSteps,
+      startedAt,
+      updatedAt: Date.now(),
+      statusText: "Running step " + step + " of " + maxSteps,
+    });
     rt.print("[goal] step " + step + "/" + maxSteps + "...");
     const response = await rt.sendPromptWithCapture([
       "Goal mode: execute",
@@ -307,9 +342,45 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
       "If you cannot continue, say exactly: GOAL BLOCKED: <reason>",
     ].join("\n"));
     const lc = response.toLowerCase();
-    if (lc.includes("goal complete")) { rt.print("[goal] done in " + step + " step" + (step === 1 ? "" : "s")); return "goal complete in " + step + " step(s)"; }
-    if (lc.includes("goal blocked")) { rt.print("[goal] blocked"); return "goal blocked"; }
+    if (lc.includes("goal complete")) {
+      rt.setGoalActivity?.({
+        mode: "goal",
+        objective,
+        phase: "complete",
+        step,
+        maxSteps,
+        startedAt,
+        updatedAt: Date.now(),
+        statusText: "Completed in " + step + " step" + (step === 1 ? "" : "s"),
+      });
+      rt.print("[goal] done in " + step + " step" + (step === 1 ? "" : "s"));
+      return "goal complete in " + step + " step(s)";
+    }
+    if (lc.includes("goal blocked")) {
+      rt.setGoalActivity?.({
+        mode: "goal",
+        objective,
+        phase: "blocked",
+        step,
+        maxSteps,
+        startedAt,
+        updatedAt: Date.now(),
+        statusText: "Blocked while executing step " + step,
+      });
+      rt.print("[goal] blocked");
+      return "goal blocked";
+    }
   }
+  rt.setGoalActivity?.({
+    mode: "goal",
+    objective,
+    phase: "blocked",
+    step: maxSteps,
+    maxSteps,
+    startedAt,
+    updatedAt: Date.now(),
+    statusText: "Reached max steps (" + maxSteps + ")",
+  });
   rt.print("[goal] reached max steps (" + maxSteps + ")");
   return "goal did not complete within " + maxSteps + " steps";
 }

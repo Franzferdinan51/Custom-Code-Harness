@@ -8,7 +8,7 @@ import { defaultToolRegistry, type ToolRegistry } from "./agent/tools/index.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { loadSettings, type Settings } from "./config/settings.js";
 import { BUILTIN_REGISTRY } from "./slash/builtin.js";
-import { tryParseSlash, type SlashRuntime } from "./slash/registry.js";
+import { tryParseSlash, type GoalActivityState, type SlashRuntime } from "./slash/registry.js";
 import { c } from "./ui/colors.js";
 import { log } from "./util/logger.js";
 import { SubAgentManager } from "./agent/subagent.js";
@@ -28,6 +28,16 @@ export interface RuntimeOptions {
   ephemeral?: boolean;
   /** Skip AGENTS.md/CLAUDE.md loading. */
   noContext?: boolean;
+}
+
+export interface RuntimeOutputHandler {
+  onTextDelta?: (text: string) => void;
+  onToolCallStart?: (toolCall: ToolCall) => void;
+  onToolCallEnd?: (toolCall: ToolCall, result: ToolResult) => void;
+  onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+  onInfo?: (text: string) => void;
+  onError?: (error: Error) => void;
+  onTurnEnd?: () => void;
 }
 
 export class HarnessRuntime implements SlashRuntime {
@@ -63,12 +73,27 @@ export class HarnessRuntime implements SlashRuntime {
    *  modal) registers a handler here. If unset, the tool returns a
    *  static "needs approval" error. */
   askApprovalHandler: ((command: string, reason: string) => Promise<"allow-once" | "allow-always" | "deny">) | null = null;
+  private outputHandler: RuntimeOutputHandler | null = null;
+  private goalActivity: GoalActivityState | null = null;
 
   /** Register an approval handler. Returns a cleanup function that
    *  removes the handler (used in tests). */
   setApprovalRequestHandler(fn: typeof this.askApprovalHandler): () => void {
     this.askApprovalHandler = fn;
     return () => { if (this.askApprovalHandler === fn) this.askApprovalHandler = null; };
+  }
+
+  setOutputHandler(fn: RuntimeOutputHandler | null): () => void {
+    this.outputHandler = fn;
+    return () => { if (this.outputHandler === fn) this.outputHandler = null; };
+  }
+
+  setGoalActivity(state: GoalActivityState | null): void {
+    this.goalActivity = state ? { ...state } : null;
+  }
+
+  getGoalActivity(): GoalActivityState | null {
+    return this.goalActivity ? { ...this.goalActivity } : null;
   }
 
   constructor(opts: RuntimeOptions) {
@@ -144,7 +169,13 @@ export class HarnessRuntime implements SlashRuntime {
   clearHistory(): void { void Session.create({ cwd: this.cwd }).then((s) => { this.session = s; this.lastUserPrompt = null; }); }
   quit(): void { this.shouldQuit = true; }
   shouldExit(): boolean { return this.shouldQuit; }
-  print(s: string): void { process.stdout.write(s + "\n"); }
+  print(s: string): void {
+    if (this.outputHandler?.onInfo) {
+      this.outputHandler.onInfo(s);
+      return;
+    }
+    process.stdout.write(s + "\n");
+  }
   setThinking(level: string): void { this.thinking = level; }
   setPersonality(name: string | null): void { this.personality = name; }
 
@@ -200,6 +231,7 @@ export class HarnessRuntime implements SlashRuntime {
     process.once("SIGINT", onSig);
 
     let sawAnyText = false;
+    const outputHandler = this.outputHandler;
     try {
       const result = await runAgent({
         provider,
@@ -214,15 +246,28 @@ export class HarnessRuntime implements SlashRuntime {
         hooks: {
           onTextDelta: (t) => {
             if (opts.captureText) opts.captureText(t);
+            if (outputHandler?.onTextDelta) {
+              outputHandler.onTextDelta(t);
+              sawAnyText = true;
+              return;
+            }
             if (!sawAnyText) { process.stdout.write("\n"); sawAnyText = true; }
             process.stdout.write(t);
           },
           onToolCallStart: (tc) => {
+            if (outputHandler?.onToolCallStart) {
+              outputHandler.onToolCallStart(tc);
+              return;
+            }
             process.stdout.write("\n" + c.gray("→ " + tc.name) + " " + c.dim(summarizeArgs(tc.argsJson)) + "\n");
           },
           onToolCallEnd: (tc, r) => {
-            const mark = r.isError ? c.red("✗") : c.green("✓");
-            process.stdout.write(c.gray("  " + mark + " " + r.display) + "\n");
+            if (outputHandler?.onToolCallEnd) {
+              outputHandler.onToolCallEnd(tc, r);
+            } else {
+              const mark = r.isError ? c.red("✗") : c.green("✓");
+              process.stdout.write(c.gray("  " + mark + " " + r.display) + "\n");
+            }
             if (!this.ephemeral) {
               void session.append({ kind: "tool_result", toolCallId: tc.id, toolName: tc.name, result: r });
               void session.append({ kind: "tool_call_record", toolCall: tc, args: safeParse(tc.argsJson) });
@@ -232,12 +277,18 @@ export class HarnessRuntime implements SlashRuntime {
             this.lastTokensIn = u.inputTokens;
             this.lastTokensOut = u.outputTokens;
             this.cost.record(model, provider.id, u.inputTokens, u.outputTokens);
+            outputHandler?.onUsage?.(u);
             if (this.settings.ui?.showTokenUsage !== false) {
-              const t = this.cost.total();
-              process.stdout.write(c.dim("  (tokens in=" + u.inputTokens + " out=" + u.outputTokens + " · session cost " + formatUSD(t.cost) + ")") + "\n");
+              if (!outputHandler?.onInfo) {
+                const t = this.cost.total();
+                process.stdout.write(c.dim("  (tokens in=" + u.inputTokens + " out=" + u.outputTokens + " · session cost " + formatUSD(t.cost) + ")") + "\n");
+              }
             }
           },
-          onError: (e) => { this.print(c.red("  ! " + e.message)); },
+          onError: (e) => {
+            outputHandler?.onError?.(e);
+            this.print(c.red("  ! " + e.message));
+          },
         },
         onComplete: (m) => {
           if (!this.ephemeral) {
@@ -252,6 +303,7 @@ export class HarnessRuntime implements SlashRuntime {
       this.print(c.red("agent crashed: " + (e as Error).message));
       log.error("agent crash", e);
     } finally {
+      outputHandler?.onTurnEnd?.();
       process.removeListener("SIGINT", onSig);
     }
   }

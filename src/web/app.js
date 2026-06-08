@@ -23,6 +23,8 @@ const state = {
   pendingApproval: null,   // { resolve, command, reason }
   activeSubagents: [],
   recentSessions: [],
+  sessionQuery: "",
+  goalActivity: null,
 };
 
 // ---------- DOM helpers ----------
@@ -78,6 +80,27 @@ function renderText(text) {
   }
   if (last < escaped.length) out.appendChild(document.createTextNode(escaped.slice(last)));
   return out;
+}
+
+function shortSessionId(id) {
+  if (!id || id === "—") return "—";
+  return id.slice(0, 8);
+}
+
+function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "true");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand("copy");
+  ta.remove();
+  return Promise.resolve();
 }
 
 // ---------- Messages ----------
@@ -158,36 +181,110 @@ async function refreshStatus() {
     state.model = s.model || "—";
     state.provider = s.provider || "—";
     state.session = s.session || "—";
+    state.goalActivity = s.goalActivity || null;
     $("version").textContent = "v" + state.version;
     $("model").textContent = state.provider + " / " + state.model;
+    $("header-session").textContent = "session " + shortSessionId(state.session);
     $("approval-status").textContent = state.approval;
+    renderGoalActivity();
   } catch (e) {
     console.error("status:", e);
   }
 }
 
+function renderGoalActivity() {
+  const root = $("goal-activity");
+  const activity = state.goalActivity;
+  root.innerHTML = "";
+  const sessionId = state.session;
+  const sessionActive = sessionId !== "—";
+  const sessionChip = el("button", {
+    class: "sidebar-run-chip sidebar-run-chip-copy" + (sessionActive ? "" : " is-muted"),
+    type: "button",
+    title: sessionActive ? "Copy the full session id" : "No active session",
+  }, sessionActive ? "session " + shortSessionId(sessionId) : "session —");
+  if (!sessionActive) {
+    sessionChip.disabled = true;
+    sessionChip.setAttribute("aria-disabled", "true");
+  }
+  if (sessionActive) {
+    sessionChip.addEventListener("click", async () => {
+      try {
+        await copyText(sessionId);
+        showInfo("Session id copied.");
+      } catch {
+        showInfo("Could not copy session id.");
+      }
+    });
+  }
+
+  const actionRow = el("div", { class: "sidebar-run-actions" }, []);
+  const goalButton = el("button", { class: "sidebar-run-action", type: "button" }, "/goal");
+  const commandsButton = el("button", { class: "sidebar-run-action", type: "button" }, "commands");
+  goalButton.addEventListener("click", () => primeGoalInput());
+  commandsButton.addEventListener("click", () => openCommandPalette(""));
+  actionRow.appendChild(goalButton);
+  actionRow.appendChild(commandsButton);
+
+  const phaseLabel = activity ? (activity.phase === "executing" ? "running" : activity.phase) : "idle";
+  const stepLabel = activity ? (activity.step > 0 ? "step " + activity.step + "/" + activity.maxSteps : "plan") : "ready";
+  const progress = activity && activity.maxSteps > 0 ? Math.max(0, Math.min(100, Math.round((activity.step / activity.maxSteps) * 100))) : 0;
+  const objective = activity ? activity.objective : "Use /goal to plan, execute, and track a structured task.";
+  const status = activity ? (activity.statusText || "Working through the goal.") : "No goal is running yet.";
+
+  root.appendChild(el("div", { class: "sidebar-goal-card" }, [
+    el("div", { class: "sidebar-goal-top" }, [
+      el("span", { class: "sidebar-goal-phase" }, phaseLabel),
+      el("span", {}, activity ? formatAgo(activity.updatedAt) : "idle"),
+    ]),
+    el("div", { class: "sidebar-run-session" }, [
+      sessionChip,
+      el("span", { class: "sidebar-run-session-meta" }, activity ? "started " + formatAgo(activity.startedAt) : "current session"),
+    ]),
+    el("div", { class: "sidebar-goal-objective" }, objective),
+    el("div", { class: "sidebar-goal-meta" }, [
+      el("span", {}, stepLabel),
+      el("span", {}, activity ? activity.mode : "session"),
+    ]),
+    el("div", { class: "sidebar-run-progress", "aria-hidden": "true" }, [
+      el("span", { style: { width: progress + "%" } }),
+    ]),
+    el("div", { class: "sidebar-goal-status" }, status),
+    actionRow,
+  ]));
+}
+
 async function refreshSessions() {
   try {
-    const j = await api("/v1/sessions");
+    const query = state.sessionQuery ? "?query=" + encodeURIComponent(state.sessionQuery) : "";
+    const j = await api("/v1/sessions" + query);
     state.recentSessions = (j.sessions || []).slice(0, 6);
     const list = $("session-list");
+    const sessionsLabel = $("sessions-label");
+    if (sessionsLabel) {
+      sessionsLabel.textContent = "sessions" + (state.sessionQuery ? " · filtered" : "") + " (" + state.recentSessions.length + ")";
+    }
     list.innerHTML = "";
     if (state.recentSessions.length === 0) {
-      list.appendChild(el("div", { class: "sidebar-empty" }, "none"));
+      list.appendChild(el("div", { class: "sidebar-empty" }, state.sessionQuery ? "no matches" : "none"));
     } else {
       for (const s of state.recentSessions) {
         const marker = s.id === state.session ? "●" : " ";
         const when = formatAgo(s.updatedAt);
         const short = s.id.slice(0, 8);
-        const row = el("div", { class: "row" }, [
+        const row = el("div", { class: "row" + (s.id === state.session ? " is-active" : "") }, [
           el("span", { class: "marker" }, marker),
           el("span", {}, short),
+          s.id === state.session ? el("span", { class: "session-pill" }, "active") : null,
           el("span", { class: "when" }, when),
         ]);
         row.style.cursor = "pointer";
         row.title = "Click to resume " + s.id;
         row.addEventListener("click", () => resumeSession(s.id));
         list.appendChild(row);
+        if (s.preview) {
+          list.appendChild(el("div", { class: "sidebar-preview" }, s.preview));
+        }
       }
     }
   } catch (e) { console.error("sessions:", e); }
@@ -252,12 +349,41 @@ async function refreshAll() {
   } catch {}
 }
 
+const SLASH_GROUP_PRIORITY = {
+  workflow: 0,
+  session: 1,
+  model: 2,
+  memory: 3,
+  agent: 4,
+  other: 5,
+};
+
+function scoreSlashCommand(cmd, query) {
+  const groupRank = SLASH_GROUP_PRIORITY[cmd.group] ?? SLASH_GROUP_PRIORITY.other;
+  if (!query) {
+    const goalRank = cmd.name === "goal" ? -20 : 0;
+    const helpRank = cmd.name === "help" ? -10 : 0;
+    return groupRank * 100 + goalRank + helpRank;
+  }
+  const haystack = [cmd.name, cmd.description, cmd.usage || "", cmd.group || ""].join(" ").toLowerCase();
+  if (!haystack.includes(query)) return Number.POSITIVE_INFINITY;
+  let score = groupRank * 10;
+  if (cmd.name === query) score -= 80;
+  if (cmd.name.startsWith(query)) score -= 40;
+  if ((cmd.usage || "").toLowerCase().includes(query)) score -= 15;
+  if (cmd.description.toLowerCase().includes(query)) score -= 10;
+  if (cmd.name === "goal") score -= 5;
+  return score + cmd.name.length / 100;
+}
+
 function getSlashMatches(query) {
   const normalized = query.trim().replace(/^\//, "").toLowerCase();
-  if (!normalized) return state.slashCommands.slice(0, 8);
   return state.slashCommands
-    .filter((cmd) => cmd.name.toLowerCase().includes(normalized) || cmd.description.toLowerCase().includes(normalized))
-    .slice(0, 8);
+    .map((cmd) => ({ cmd, score: scoreSlashCommand(cmd, normalized) }))
+    .filter(({ score }) => Number.isFinite(score))
+    .sort((a, b) => a.score - b.score || a.cmd.name.localeCompare(b.cmd.name))
+    .slice(0, normalized ? 10 : 8)
+    .map(({ cmd }) => cmd);
 }
 
 function renderSlashPanel(query) {
@@ -299,8 +425,12 @@ function renderSlashPanel(query) {
 function renderCommandPalette(filter = "") {
   const matches = getSlashMatches(filter);
   commandPaletteList.innerHTML = "";
+  if (matches.length === 0) {
+    commandPaletteList.appendChild(el("div", { class: "command-palette-empty" }, "No matching commands."));
+    return;
+  }
   for (const cmd of matches) {
-    const row = el("div", { class: "command-palette-item" }, [
+    const row = el("div", { class: "command-palette-item" + (cmd.name === "goal" ? " featured" : "") }, [
       el("div", { class: "slash-name" }, cmd.usage || "/" + cmd.name),
       el("div", { class: "slash-desc" }, cmd.description),
       el("div", { class: "command-palette-meta" }, [
@@ -331,6 +461,67 @@ function closeCommandPalette() {
   commandPaletteInput.value = "";
 }
 
+function primeGoalInput() {
+  inputEl.value = "/goal ";
+  autoResize();
+  renderSlashPanel(inputEl.value);
+  inputEl.focus();
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+}
+
+function handleDesktopCommand(command) {
+  switch (command) {
+    case "new-session":
+      $("new-session").click();
+      break;
+    case "goal":
+      primeGoalInput();
+      break;
+    case "command-palette":
+      openCommandPalette("");
+      break;
+    case "show-logs":
+      window.ch?.showLogs?.();
+      break;
+    case "reveal-appdata":
+      window.ch?.revealAppData?.();
+      break;
+  }
+}
+
+function handleDeepLink(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname;
+    const parts = parsed.pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
+    if (host === "new-session") {
+      $("new-session").click();
+      showInfo("Started a new session from deep link.");
+      return;
+    }
+    if (host === "goal") {
+      const objective = [parts.join("/"), parsed.searchParams.get("q") || ""].filter(Boolean).join(" ").trim();
+      inputEl.value = objective ? "/goal " + objective : "/goal ";
+      autoResize();
+      inputEl.focus();
+      showInfo("Goal mode ready.");
+      return;
+    }
+    if (host === "session" && parts[0]) {
+      void resumeSession(parts[0]);
+      showInfo("Resuming session " + parts[0].slice(0, 8) + "…");
+      return;
+    }
+    if (host === "command" && parts[0]) {
+      inputEl.value = "/" + parts[0] + " ";
+      autoResize();
+      inputEl.focus();
+      return;
+    }
+  } catch {}
+  showInfo("Deep link: " + url);
+}
+
 // ---------- Streaming chat ----------
 
 async function sendPrompt(prompt) {
@@ -344,6 +535,7 @@ async function sendPrompt(prompt) {
   addMessage({ kind: "user", text: prompt });
 
   try {
+    await refreshStatus();
     const res = await fetch("/v1/chat/stream", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -422,7 +614,10 @@ async function handleEvent(event, p, _resolveApproval) {
         }
       }
       break;
-    case "info":       addMessage({ kind: "info", text: p.text || "" }); break;
+    case "info":
+      addMessage({ kind: "info", text: p.text || "" });
+      if ((p.text || "").includes("[goal]")) void refreshStatus();
+      break;
     case "error":      addMessage({ kind: "error", text: p.text || "" }); break;
     case "approval_required": {
       // Pop the approval modal; resolve the SSE with the user's decision
@@ -528,6 +723,8 @@ inputEl.addEventListener("keydown", (e) => {
 });
 
 $("command-palette-button").addEventListener("click", () => openCommandPalette(""));
+$("goal-button").addEventListener("click", () => primeGoalInput());
+$("quick-goal").addEventListener("click", () => primeGoalInput());
 $("command-palette-backdrop").addEventListener("click", closeCommandPalette);
 commandPaletteInput.addEventListener("input", () => renderCommandPalette(commandPaletteInput.value));
 commandPaletteInput.addEventListener("keydown", (e) => {
@@ -591,6 +788,13 @@ $("new-session").addEventListener("click", async () => {
   } catch (e) { addMessage({ kind: "error", text: "new session: " + e.message }); }
 });
 
+$("show-logs").addEventListener("click", () => window.ch?.showLogs?.());
+$("reveal-appdata").addEventListener("click", () => window.ch?.revealAppData?.());
+$("session-search").addEventListener("input", (e) => {
+  state.sessionQuery = e.target.value.trim();
+  refreshSessions();
+});
+
 async function resumeSession(id) {
   try {
     await api("/v1/session", { method: "POST", body: { id } });
@@ -637,6 +841,7 @@ $("settings-save").addEventListener("click", async () => {
 
 (async () => {
   await refreshAll();
+  setInterval(refreshStatus, 5000);
   setInterval(refreshUsage, 5000);
   setInterval(refreshSessions, 15000);
   setInterval(refreshAgents, 30000);
@@ -657,16 +862,13 @@ $("settings-save").addEventListener("click", async () => {
         badge.title = "Electron " + info.electron + " · Node " + info.node + " · Chrome " + info.chrome;
         const brand = document.querySelector(".sidebar-title");
         if (brand) brand.appendChild(badge);
+        document.querySelectorAll(".desktop-only").forEach((el) => { el.hidden = false; });
       }
-      window.ch.onMenuCommand && window.ch.onMenuCommand(() => {
-        // File > New Session
-        const newBtn = document.getElementById("new-session");
-        if (newBtn) newBtn.click();
-        else location.reload();
+      window.ch.onMenuCommand && window.ch.onMenuCommand((command) => {
+        handleDesktopCommand(command);
       });
       window.ch.onDeepLink && window.ch.onDeepLink((url) => {
-        // ch://new-session or ch://session/abc123
-        showInfo("Deep link: " + url);
+        handleDeepLink(url);
       });
     } catch { /* not in electron — ignore */ }
   }

@@ -8,6 +8,7 @@
 //   ├─ body (flex 1) ──────────────────────────────────────┤
 //   │  ┌─ sidebar (24 cols) ─┐  ┌─ main (flex 1) ──────┐  │
 //   │  │ sessions            │  │  scroll (messages)   │  │
+//   │  │ current run         │  │                      │  │
 //   │  │ active sub-agents   │  │                      │  │
 //   │  │ cost                │  │                      │  │
 //   │  └─────────────────────┘  └──────────────────────┘  │
@@ -45,6 +46,13 @@ export interface TuiStatus {
   thinking: string;
 }
 
+export interface TuiRunState {
+  phase: "idle" | "running" | "complete" | "error";
+  title: string;
+  detail: string;
+  updatedAt: number;
+}
+
 export interface TuiMessage {
   kind: "user" | "assistant" | "tool" | "system" | "info" | "error";
   text: string;
@@ -72,6 +80,7 @@ export interface Tui {
   appendMessage(text: string): void;
   addToolCall(name: string, args: string, status: "run" | "ok" | "err", detail?: string): void;
   setStatus(s: Partial<TuiStatus>): void;
+  setRunState(s: Partial<TuiRunState>): void;
   setSlashNames(names: string[]): void;
   onSubmit(cb: (text: string) => void): void;
   onAction(cb: (a: TuiAction) => void): void;
@@ -177,6 +186,18 @@ export function createTui(opts: TuiOptions): Tui {
   const sbSpacer1 = new TextRenderable(renderer, { id: "sb-spacer-1", content: "" });
   sidebar.add(sbSpacer1);
 
+  const sbGoalLabel = new TextRenderable(renderer, { id: "sb-goal-label", content: " current run", fg: COLORS.fgDim });
+  sidebar.add(sbGoalLabel);
+  const sbGoalState = new TextRenderable(renderer, { id: "sb-goal-state", content: "  idle", fg: COLORS.fgDim, attributes: 1 });
+  sidebar.add(sbGoalState);
+  const sbGoalMeta = new TextRenderable(renderer, { id: "sb-goal-meta", content: "  ready for the next prompt", fg: COLORS.fgDim });
+  sidebar.add(sbGoalMeta);
+  const sbGoalDetail = new TextRenderable(renderer, { id: "sb-goal-detail", content: "  Ctrl+G inserts /goal", fg: COLORS.fgFaint });
+  sidebar.add(sbGoalDetail);
+
+  const sbSpacerGoal = new TextRenderable(renderer, { id: "sb-spacer-goal", content: "" });
+  sidebar.add(sbSpacerGoal);
+
   const sbAgentsLabel = new TextRenderable(renderer, { id: "sb-agents-label", content: " active sub-agents", fg: COLORS.fgDim });
   sidebar.add(sbAgentsLabel);
   const sbAgentsList = new TextRenderable(renderer, { id: "sb-agents-list", content: "  (none)", fg: COLORS.fgDim });
@@ -214,6 +235,18 @@ export function createTui(opts: TuiOptions): Tui {
   main.add(infoBox);
   const infoText = new TextRenderable(renderer, { id: "info", content: "", fg: COLORS.fgYellow });
   infoBox.add(infoText);
+
+  const commandPreviewBox = new BoxRenderable(renderer, {
+    id: "command-preview-box",
+    backgroundColor: COLORS.bg,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 1,
+    height: 2,
+  });
+  main.add(commandPreviewBox);
+  const commandPreviewText = new TextRenderable(renderer, { id: "command-preview", content: "", fg: COLORS.fgDim });
+  commandPreviewBox.add(commandPreviewText);
 
   // --- messages (ScrollBox) ---
   const scroll = new ScrollBoxRenderable(renderer, {
@@ -271,7 +304,7 @@ export function createTui(opts: TuiOptions): Tui {
 
   const footerLeft = new TextRenderable(renderer, {
     id: "footer-left",
-    content: " ⏎ send · ⇧⏎ newline · Tab complete · ↑/↓ history · Ctrl+C abort · Ctrl+D quit ",
+    content: " ⏎ send · ⇧⏎ newline · Tab complete · Ctrl+G /goal · Ctrl+C abort · Ctrl+D quit ",
     fg: COLORS.fgDim,
   });
   footer.add(footerLeft);
@@ -285,11 +318,18 @@ export function createTui(opts: TuiOptions): Tui {
     tokensIn: 0, tokensOut: 0, steps: 0, thinking: "medium",
     ...opts.status,
   };
+  const runState: TuiRunState = {
+    phase: "idle",
+    title: "idle",
+    detail: "Ready for the next prompt.",
+    updatedAt: Date.now(),
+  };
   let slashNames = opts.slashNames.slice();
   let currentStreamText = "";
   let currentStreamTextEl: TextRenderable | null = null;
   const messageEls: TextRenderable[] = [];
   let infoTimer: NodeJS.Timeout | null = null;
+  let lastPreviewKey = "";
   let quitRequested = false;
   let sidebarDirty = true;
 
@@ -317,6 +357,33 @@ export function createTui(opts: TuiOptions): Tui {
       });
       sbSessionsList.content = lines.length === 0 ? "  (none)" : lines.join("\n");
     } catch { sbSessionsList.content = "  (error)"; }
+
+    const goal = runtime?.getGoalActivity?.() ?? null;
+    if (goal) {
+      const phase = goal.phase === "executing" ? "running" : goal.phase;
+      const step = goal.step > 0 ? "step " + goal.step + "/" + goal.maxSteps : "planning";
+      const objective = goal.statusText ?? goal.objective;
+      sbGoalState.content = "  " + goalIcon(phase) + " " + phase;
+      sbGoalMeta.content = "  " + step + " · " + formatAgo(goal.updatedAt);
+      sbGoalDetail.content = "  " + compactLine(objective, 24);
+      sbGoalState.fg = goal.phase === "complete" ? COLORS.fgGreen : goal.phase === "blocked" ? COLORS.fgRed : COLORS.fgCyan;
+      sbGoalMeta.fg = COLORS.fgDim;
+      sbGoalDetail.fg = goal.phase === "blocked" ? COLORS.fgRed : goal.phase === "complete" ? COLORS.fgGreen : COLORS.fgFaint;
+    } else if (runState.phase !== "idle") {
+      sbGoalState.content = "  " + goalIcon(runState.phase) + " " + runState.title;
+      sbGoalMeta.content = "  " + formatAgo(runState.updatedAt);
+      sbGoalDetail.content = "  " + compactLine(runState.detail, 24);
+      sbGoalState.fg = runState.phase === "complete" ? COLORS.fgGreen : runState.phase === "error" ? COLORS.fgRed : COLORS.fgCyan;
+      sbGoalMeta.fg = COLORS.fgDim;
+      sbGoalDetail.fg = runState.phase === "error" ? COLORS.fgRed : COLORS.fgFaint;
+    } else {
+      sbGoalState.content = "  idle";
+      sbGoalMeta.content = "  Ctrl+G inserts /goal";
+      sbGoalDetail.content = "  Type a prompt or /command";
+      sbGoalState.fg = COLORS.fgDim;
+      sbGoalMeta.fg = COLORS.fgDim;
+      sbGoalDetail.fg = COLORS.fgFaint;
+    }
 
     // Active sub-agents.
     if (runtime && runtime.activeSubagents.size > 0) {
@@ -395,12 +462,29 @@ export function createTui(opts: TuiOptions): Tui {
     addMessageEl(msg.text, fg, { prefix });
   }
 
+  function refreshCommandPreview(): void {
+    const text = textarea.plainText.trimStart();
+    const next = buildCommandPreview(text, slashNames);
+    if (next !== lastPreviewKey) {
+      lastPreviewKey = next;
+      commandPreviewText.content = next ? " " + next : "";
+      renderer.requestRender();
+    }
+  }
+
   // --- input handling ---
 
   renderer.addInputHandler((sequence) => {
+    if (sequence === "\x07") {  // Ctrl+G
+      textarea.editBuffer.setText("/goal ");
+      refreshCommandPreview();
+      renderer.requestRender();
+      return true;
+    }
     if (sequence === "\x03") {  // Ctrl+C
       if (textarea.plainText.length > 0) textarea.clear();
       else for (const cb of actionListeners) cb({ action: "cancel" });
+      refreshCommandPreview();
       return true;
     }
     if (sequence === "\x04") {  // Ctrl+D
@@ -423,6 +507,7 @@ export function createTui(opts: TuiOptions): Tui {
         const matches = slashNames.filter((n) => n.startsWith(base));
         if (matches.length > 0) {
           textarea.editBuffer.setText("/" + matches[0]! + " ");
+          refreshCommandPreview();
           return true;
         }
       }
@@ -436,6 +521,7 @@ export function createTui(opts: TuiOptions): Tui {
     if (text.trim().length === 0) return;
     addMessageEl(text, COLORS.fgGreen, { prefix: " › " });
     textarea.clear();
+    refreshCommandPreview();
     markSidebarDirty();
     for (const cb of submitListeners) {
       try { cb(text); } catch (e) { console.error("submit error:", e); }
@@ -444,6 +530,7 @@ export function createTui(opts: TuiOptions): Tui {
 
   // Periodic sidebar refresh.
   const sidebarTimer = setInterval(() => { markSidebarDirty(); refreshSidebar(); }, 2_000);
+  const previewTimer = setInterval(() => { refreshCommandPreview(); }, 120);
 
   // --- public API ---
 
@@ -452,6 +539,7 @@ export function createTui(opts: TuiOptions): Tui {
       updateStatus();
       addMessageEl("Welcome to CodingHarness v" + VERSION + ". Type /help for commands.", COLORS.fgCyan, { prefix: " · " });
       await doRefresh();
+      refreshCommandPreview();
       renderer.start();
       await new Promise<void>((resolve) => {
         const check = setInterval(() => {
@@ -459,6 +547,7 @@ export function createTui(opts: TuiOptions): Tui {
         }, 100);
       });
       clearInterval(sidebarTimer);
+      clearInterval(previewTimer);
       renderer.stop();
       renderer.destroy();
     },
@@ -466,6 +555,7 @@ export function createTui(opts: TuiOptions): Tui {
     stop() {
       quitRequested = true;
       clearInterval(sidebarTimer);
+      clearInterval(previewTimer);
       try { renderer.stop(); } catch {}
       try { renderer.destroy(); } catch {}
     },
@@ -507,6 +597,13 @@ export function createTui(opts: TuiOptions): Tui {
       markSidebarDirty();
     },
 
+    setRunState(s) {
+      Object.assign(runState, s);
+      runState.updatedAt = s.updatedAt ?? Date.now();
+      markSidebarDirty();
+      renderer.requestRender();
+    },
+
     setSlashNames(names) { slashNames = names.slice(); },
     onSubmit(cb) { submitListeners.add(cb); },
     onAction(cb) { actionListeners.add(cb); },
@@ -520,7 +617,7 @@ export function createTui(opts: TuiOptions): Tui {
     },
 
     getInput() { return textarea.plainText; },
-    setInput(text) { textarea.editBuffer.setText(text); },
+    setInput(text) { textarea.editBuffer.setText(text); refreshCommandPreview(); },
     redraw() { renderer.requestRender(); markSidebarDirty(); },
 
     async askApproval(command, reason) {
@@ -539,6 +636,56 @@ export function createTui(opts: TuiOptions): Tui {
 function truncateArgs(args: string): string {
   const trimmed = args.replace(/\s+/g, " ").trim();
   return trimmed.length > 60 ? trimmed.slice(0, 57) + "…" : trimmed;
+}
+
+function buildCommandPreview(text: string, slashNames: string[]): string {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return "Type a prompt or /command.\nCtrl+G inserts /goal · Tab completes slash commands.";
+  }
+
+  if (!trimmed.startsWith("/")) {
+    return "Type a prompt or /command.\nCtrl+G inserts /goal · Tab completes slash commands.";
+  }
+
+  const firstToken = trimmed.split(/\s+/, 1)[0] ?? "";
+  const bare = firstToken.slice(1);
+  if (!bare) {
+    return "Slash commands: /goal /help /model\nTab completes the highlighted command.";
+  }
+
+  if (!trimmed.includes(" ")) {
+    const matches = slashNames.filter((n) => n.startsWith(bare)).slice(0, 3);
+    if (matches.length > 0) {
+      const names = matches.map((name) => "/" + name).join("   ");
+      if (matches.length === 1) {
+        const cmd = BUILTIN_REGISTRY.get(matches[0]!);
+        return names + "\n" + (cmd?.usage ?? "/" + matches[0]!) + (cmd?.description ? " · " + cmd.description : "");
+      }
+      return names + "\nTab completes the highlighted command.";
+    }
+    return "No slash command matches /" + bare + ".\nTry /help to list available commands.";
+  }
+
+  const cmd = BUILTIN_REGISTRY.get(bare);
+  if (!cmd) {
+    return "/" + bare + "\nTry /help to list available commands.";
+  }
+
+  return (cmd.usage ?? "/" + cmd.name) + "\n" + (cmd.description || "Enter to run.");
+}
+
+function goalIcon(phase: string): string {
+  if (phase === "complete") return "✓";
+  if (phase === "blocked" || phase === "error") return "✗";
+  if (phase === "running") return "●";
+  return "·";
+}
+
+function compactLine(text: string, max = 24): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (cleaned.length === 0) return "ready";
+  return cleaned.length > max ? cleaned.slice(0, max - 1) + "…" : cleaned;
 }
 
 function formatAgo(t: number): string {

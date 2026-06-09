@@ -683,3 +683,20 @@ export async function runGoalStateMachine(
   opts.onStateChange?.(cur.loopStatus, cur);
   return cur;
 }
+
+// ---------- Re-exports (Phase 1 — p1-unify wireup) ----------
+//
+// `src/agent/goals.ts` is the canonical home of goal state. The
+// `Loop<"goal">` shape that the new hierarchy expects also lives
+// here as a re-export so callers (CLI, tests, external consumers)
+// can `import { goalLoop, type GoalLoop, type GoalLoopInput,
+// type GoalLoopOutput } from "./goals.js"` without reaching into
+// `loops/`. The actual implementation is in `loops/goal.ts` — the
+// factory wires the lifecycle into the new `Loop<Kind>` shape.
+
+export {
+  goalLoop,
+  type GoalLoop,
+  type GoalLoopInput,
+  type GoalLoopOutput,
+} from "./loops/goal.js";

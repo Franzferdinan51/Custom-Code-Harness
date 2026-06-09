@@ -340,3 +340,21 @@ function toResultMessage(tc: ToolCall, result: ToolResult, maxBytes: number): Ch
     meta: { isError: result.isError, display: result.display },
   };
 }
+
+// ---------- Re-exports (Phase 1 — p1-unify wireup) ----------
+//
+// `src/agent/loop.ts` is the canonical home of `runAgent`. The new
+// `Loop<"agent">` shape (the AgentLoop factory) is implemented in
+// `loops/agent.ts` and re-exported here so callers and tests can
+// `import { agentLoop, type AgentLoop, type AgentLoopInput,
+// type AgentLoopOutput } from "./loop.js"` without reaching into
+// the `loops/` subdir. The AgentLoop wraps `runAgent` from this
+// file; this re-export is the spec-mandated surface from
+// `plans/plan_phase1/notes/agnt-port-plan.md` §3.
+
+export {
+  agentLoop,
+  type AgentLoop,
+  type AgentLoopInput,
+  type AgentLoopOutput,
+} from "./loops/agent.js";

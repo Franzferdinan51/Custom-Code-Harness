@@ -569,30 +569,15 @@ async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
   const model = runtime.model();
   if (!model) { process.stderr.write("error: no model configured\n"); return 1; }
 
-  const { GoalStore, runGoalStateMachine, formatGoalLine } =
+  // Phase 1 (p1-unify wireup): drive the goal through the unified
+  // `Loop<"goal">` factory. The bridge to `runAgent` is provided as
+  // the loop's `runAgent` input — the loop owns the state machine
+  // and the lifecycle hooks, the CLI owns the user-facing output.
+  const { GoalStore, formatGoalLine, goalLoop } =
     await import("./agent/goals.js");
   const { runAgent, DEFAULT_LIMITS } = await import("./agent/loop.js");
   type SuccessCriteria = import("./agent/goals.js").SuccessCriteria;
   const store = new GoalStore();
-  const goal = store.add({
-    objective,
-    maxSteps,
-    model,
-    providerId: ctx.provider,
-  });
-  store.markInProgress(goal.id);
-  process.stdout.write("[goal] " + goal.id + " — driving state machine (max " + maxSteps + " iterations)\n");
-
-  // Phase 1 (p1-unify): wrap the driver in a `Loop<"goal">` factory.
-  // The CLI body still drives `runGoalStateMachine` directly (so the
-  // rich output stays green), but the loop shape is now the
-  // canonical surface for callers (delegation, tests, repl).
-  const { goalLoop } = await import("./agent/loops/goal.js");
-  const goalLoopInstance = goalLoop();
-  // The instance is registered for lifecycle observability even
-  // though the CLI drives the runner directly. We do not await it
-  // here — it owns its own run; this is just the wiring marker.
-  void goalLoopInstance;
 
   // Optional: pull success criteria from --success <csv> if user passed it.
   let successCriteria: SuccessCriteria | undefined;
@@ -601,7 +586,6 @@ async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
     successCriteria = {
       deliverables: successArg.slice("--success=".length).split(",").map((s) => s.trim()).filter(Boolean),
     };
-    store.update(goal.id, { successCriteria });
   }
 
   // Bridge to runAgent. We rebuild a fresh system prompt + a single
@@ -643,23 +627,41 @@ async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
   };
 
   try {
-    const final = await runGoalStateMachine(goal, {
-      store,
-      maxIterations: maxSteps,
-      onStateChange: (state, g) => {
-        process.stdout.write("[goal " + g.id + "] " + state + " (iter " + (g.currentIteration ?? 0) + "/" + maxSteps + ")\n");
+    const loop = goalLoop();
+    const out = await loop.run(
+      {
+        objective,
+        maxIterations: maxSteps,
+        model,
+        ...(ctx.provider !== undefined ? { providerId: ctx.provider } : {}),
+        ...(successCriteria !== undefined ? { successCriteria } : {}),
+        store,
+        runAgent: async (phase, loopCtx) => {
+          const content = await callAgent(phase, { previousOutput: loopCtx?.previousOutput });
+          return { content, steps: 1 };
+        },
       },
-      runAgent: async (phase, ctx) => {
-        const content = await callAgent(phase, { previousOutput: ctx?.previousOutput });
-        return { content, steps: 1 };
+      {
+        cwd: ctx.cwd,
+        signal: ac.signal,
+        hooks: {
+          onInfo: (msg) => process.stdout.write(msg + "\n"),
+          onState: (state) => {
+            // The loop also drives onStateChange on the store; this
+            // mirrors the iteration counter into the CLI's stdout.
+            process.stdout.write("[goal] " + state + "\n");
+          },
+          onError: (err) => process.stderr.write("[goal] error: " + err.message + "\n"),
+        },
       },
-    });
+    );
+    const final = out.goal;
     process.stdout.write(formatGoalLine(final) + "\n");
-    if (final.finalText) {
+    if (out.finalText) {
       process.stdout.write("\n  result:\n");
-      for (const line of final.finalText.split("\n")) process.stdout.write("    " + line + "\n");
+      for (const line of out.finalText.split("\n")) process.stdout.write("    " + line + "\n");
     }
-    return final.loopStatus === "done" ? 0 : 1;
+    return out.ok ? 0 : 1;
   } catch (e) {
     process.stderr.write("error: " + (e as Error).message + "\n");
     return 1;
@@ -1762,66 +1764,151 @@ async function runCouncilCmd(ctx: SubcommandContext): Promise<number> {
 
   const { runCouncil, BUILTIN_COUNCILORS, DEFAULT_COUNCIL_ROSTER, renderCouncilResult, councilAsGoalLoop } =
     await import("./agent/council.js");
-  // Phase 1 (p1-unify): the council subcommand still uses
-  // `runCouncil` for the rich transcript output, but the file also
-  // exports `councilAsGoalLoop()` — a `Loop<"goal">` shape that
-  // surfaces council in `ch goals list`. Constructing the goal
-  // loop here gives the runtime the lifecycle hook; the actual run
-  // still goes through `runCouncil`.
-  void councilAsGoalLoop();
+  // Phase 1 (p1-unify wireup): the council deliberation runs as a
+  // `Loop<"goal">` lifecycle. The CLI keeps the rich transcript
+  // output by performing the actual `runCouncil()` call inside the
+  // loop's `runAgent` bridge — that way the goal's plan/execute/
+  // evaluate state machine wraps the deliberation, and the goal
+  // itself is persisted to the store (visible via `ch goals list`).
+  const { GoalStore } = await import("./agent/goals.js");
+  const store = new GoalStore();
   const roster = DEFAULT_COUNCIL_ROSTER.map((role) => BUILTIN_COUNCILORS[role]);
 
   try {
-    const result = await runCouncil(question, {
-      mode,
-      councilors: roster,
-      maxRounds: rounds,
-      model: ctx.model,
-      providerId: ctx.provider,
-      cwd: ctx.cwd,
-      signal: ac.signal,
-    }, {
-      spawn: async (opts) => {
-        // Bridge CouncilDeps.spawn to SubAgentManager.spawn by
-        // registering a temporary ephemeral agent per call. This
-        // keeps the council decoupled from the agent registry.
-        const { AgentRegistry } = await import("./agent/agents.js");
-        const reg = new AgentRegistry({ cwd: opts.cwd });
-        const def = {
-          name: "__councilor_" + Math.random().toString(36).slice(2, 8),
-          description: "Ephemeral councilor",
-          systemPromptAppend: opts.system,
-          tools: [], // councilors: text-only, no tools
-          maxSteps: 1,
-          model: opts.model,
-          providerId: opts.providerId,
-          builtin: false,
-        };
-        reg.register(def);
-        const { SubAgentManager } = await import("./agent/subagent.js");
-        const mgr = new SubAgentManager(runtime.providerRegistry, runtime.settings, { cwd: opts.cwd });
-        // Swap the registry so SubAgentManager picks up our
-        // ephemeral def by name.
-        (mgr as unknown as { agents: typeof reg }).agents = reg;
-        const r = await mgr.spawn({
-          agent: def.name,
-          prompt: opts.prompt,
-          model: opts.model,
-          providerId: opts.providerId,
-          cwd: opts.cwd,
-          signal: opts.signal,
-          ephemeral: true,
-        });
-        if (r.status === "ok") return { text: r.text, usage: r.usage };
-        throw new Error(r.error ?? "councilor failed: " + r.status);
+    // Hold the rich `CouncilResult` so the JSON / human transcript
+    // output stays identical to the pre-wireup CLI.
+    let richResult: Awaited<ReturnType<typeof runCouncil>> | null = null;
+    const loop = councilAsGoalLoop();
+    const out = await loop.run(
+      {
+        objective: question,
+        maxIterations: 1,
+        successCriteria: {
+          deliverables: ["council: synthesize a final answer from " + roster.map((r) => r.role).join(", ")],
+        },
+        store,
+        runAgent: async (phase, loopCtx) => {
+          if (phase === "planning") {
+            return {
+              content: "council plan: one subagent per councilor (" +
+                roster.map((r) => r.role).join(", ") + ") + synthesizer",
+              steps: 0,
+            };
+          }
+          // executing: do the actual council deliberation, capture
+          // the rich result for the JSON / transcript output, and
+          // return the synthesizer's final answer as the loop's
+          // content so the goal's finalText reflects the council.
+          richResult = await runCouncil(question, {
+            mode,
+            councilors: roster,
+            maxRounds: rounds,
+            model: ctx.model,
+            providerId: ctx.provider,
+            cwd: ctx.cwd,
+            signal: ac.signal,
+          }, {
+            spawn: async (opts) => {
+              // Bridge CouncilDeps.spawn to SubAgentManager.spawn by
+              // registering a temporary ephemeral agent per call. This
+              // keeps the council decoupled from the agent registry.
+              const { AgentRegistry } = await import("./agent/agents.js");
+              const reg = new AgentRegistry({ cwd: opts.cwd });
+              const def = {
+                name: "__councilor_" + Math.random().toString(36).slice(2, 8),
+                description: "Ephemeral councilor",
+                systemPromptAppend: opts.system,
+                tools: [], // councilors: text-only, no tools
+                maxSteps: 1,
+                model: opts.model,
+                providerId: opts.providerId,
+                builtin: false,
+              };
+              reg.register(def);
+              const { SubAgentManager } = await import("./agent/subagent.js");
+              const mgr = new SubAgentManager(runtime.providerRegistry, runtime.settings, { cwd: opts.cwd });
+              // Swap the registry so SubAgentManager picks up our
+              // ephemeral def by name.
+              (mgr as unknown as { agents: typeof reg }).agents = reg;
+              const r = await mgr.spawn({
+                agent: def.name,
+                prompt: opts.prompt,
+                model: opts.model,
+                providerId: opts.providerId,
+                cwd: opts.cwd,
+                signal: opts.signal,
+                ephemeral: true,
+              });
+              if (r.status === "ok") return { text: r.text, usage: r.usage };
+              throw new Error(r.error ?? "councilor failed: " + r.status);
+            },
+          });
+          return {
+            content: richResult.final,
+            steps: richResult.transcript.length,
+          };
+        },
       },
-    });
-    if (ctx.json) {
-      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-    } else {
-      process.stdout.write(renderCouncilResult(result) + "\n");
+      {
+        cwd: ctx.cwd,
+        signal: ac.signal,
+        hooks: {
+          onInfo: (msg) => process.stdout.write(msg + "\n"),
+          onState: (state) => process.stdout.write("[council:goal] " + state + "\n"),
+          onError: (err) => process.stderr.write("[council:goal] error: " + err.message + "\n"),
+        },
+      },
+    );
+    if (!richResult) {
+      // The loop completed without ever invoking runAgent (e.g. it
+      // already had a matching goal in the store). Re-run the
+      // council directly so the user still gets a transcript.
+      richResult = await runCouncil(question, {
+        mode,
+        councilors: roster,
+        maxRounds: rounds,
+        model: ctx.model,
+        providerId: ctx.provider,
+        cwd: ctx.cwd,
+        signal: ac.signal,
+      }, {
+        spawn: async (opts) => {
+          const { AgentRegistry } = await import("./agent/agents.js");
+          const reg = new AgentRegistry({ cwd: opts.cwd });
+          const def = {
+            name: "__councilor_" + Math.random().toString(36).slice(2, 8),
+            description: "Ephemeral councilor",
+            systemPromptAppend: opts.system,
+            tools: [],
+            maxSteps: 1,
+            model: opts.model,
+            providerId: opts.providerId,
+            builtin: false,
+          };
+          reg.register(def);
+          const { SubAgentManager } = await import("./agent/subagent.js");
+          const mgr = new SubAgentManager(runtime.providerRegistry, runtime.settings, { cwd: opts.cwd });
+          (mgr as unknown as { agents: typeof reg }).agents = reg;
+          const r = await mgr.spawn({
+            agent: def.name,
+            prompt: opts.prompt,
+            model: opts.model,
+            providerId: opts.providerId,
+            cwd: opts.cwd,
+            signal: opts.signal,
+            ephemeral: true,
+          });
+          if (r.status === "ok") return { text: r.text, usage: r.usage };
+          throw new Error(r.error ?? "councilor failed: " + r.status);
+        },
+      });
     }
-    return 0;
+    if (ctx.json) {
+      process.stdout.write(JSON.stringify(richResult, null, 2) + "\n");
+    } else {
+      process.stdout.write(renderCouncilResult(richResult) + "\n");
+    }
+    return out.ok ? 0 : 1;
   } catch (e) {
     process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
     return 1;

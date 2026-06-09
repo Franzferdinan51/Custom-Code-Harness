@@ -106,6 +106,38 @@ All notable changes to CodingHarness are documented here. Format follows
   loops tests + the existing council/goals/agent-loop/delegation
   suites pass; no regressions.
 
+- **feat(loops): wire the CLI commands through the Loop<*> factories
+  (`ch goal` → `goalLoop().run()`, `ch council` → `councilAsGoalLoop().run()`),
+  re-export `goalLoop`/`GoalLoop` from `src/agent/goals.ts` and
+  `agentLoop`/`AgentLoop` from `src/agent/loop.ts`** (`src/cli.ts`,
+  `src/agent/goals.ts`, `src/agent/loop.ts`,
+  `src/__tests__/cli-wireup.test.ts`): lands the runtime integration
+  that the loops/ library alone does not provide. `runGoalCmd` no
+  longer drives `runGoalStateMachine` directly — it constructs a
+  `Loop<"goal">` via the canonical factory, passes the `runAgent`
+  bridge (the existing callAgent closure) and the `GoalStore` as
+  loop input, and reads the final goal from `out.goal` /
+  `out.finalText`. `runCouncilCmd` drives the council deliberation
+  through `councilAsGoalLoop().run()`; the rich transcript output
+  (synthesizer's final answer + per-councilor log) is preserved by
+  performing the actual `runCouncil()` call inside the loop's
+  `runAgent` bridge, so `ch council <q> --json` and the human
+  transcript render identically to the pre-wireup CLI. `ch loop`
+  retains its re-prompt semantics (a slash-command surface, not
+  an objective-driven mission); the `missionLoop()` factory is
+  available as the canonical MissionLoop surface for callers that
+  want a perpetual / resume-aware goal driver. The re-exports in
+  `goals.ts` and `loop.ts` mean `import { goalLoop } from
+  "./agent/goals.js"` and `import { agentLoop } from
+  "./agent/loop.js"` are the canonical surfaces — callers and
+  external consumers no longer need to reach into the `loops/`
+  subdir. 5 new tests in `src/__tests__/cli-wireup.test.ts` cover
+  the re-exports, the goal lifecycle through the re-exported
+  factory, the council goal loop with a stub bridge, and a
+  `DEFAULT_LIMITS` regression. All 77 tests across the 5 critical
+  files (loops, goals, council, delegation, cli-wireup) pass
+  green; full `npm run typecheck` clean.
+
 ## [Unreleased]
 
 ### Added

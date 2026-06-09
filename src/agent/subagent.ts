@@ -21,6 +21,11 @@ import { Session, sessionToMessages } from "./session.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { log } from "../util/logger.js";
 import type { Settings } from "../config/settings.js";
+import {
+  pickVisionCapableModel,
+  promptNeedsVision,
+  type VisionRoutingSource,
+} from "./vision-routing.js";
 
 export interface SubAgentResult {
   agentName: string;
@@ -35,6 +40,13 @@ export interface SubAgentResult {
   sessionId?: string;
   /** Error message if status=error. */
   error?: string;
+  /**
+   * Source of the resolved (provider, model) when vision routing kicked
+   * in. Absent when the spawn used the default provider+model with no
+   * image content in the prompt or message history. See
+   * `vision-routing.ts` for the source values.
+   */
+  routingSource?: VisionRoutingSource;
 }
 
 export interface SubAgentSpawnInput {
@@ -152,8 +164,33 @@ export class SubAgentManager {
   // ---------- internals ----------
 
   private async runOne(def: AgentDefinition, input: SubAgentSpawnInput): Promise<SubAgentResult> {
-    const providerId = input.providerId ?? def.providerId;
-    const model = input.model ?? def.model;
+    const explicitProviderId = input.providerId ?? def.providerId;
+    const explicitModel = input.model ?? def.model;
+
+    // The "caller's message history" we can see at spawn time is the
+    // single user prompt itself. If a richer context is later attached
+    // via parentSessionId, promptNeedsVision will still be re-checked
+    // against the persisted history below.
+    const initialHistory: ChatMessage[] = [{ role: "user", content: input.prompt }];
+    let providerId = explicitProviderId;
+    let model = explicitModel;
+    let routingSource: VisionRoutingSource | undefined;
+    if (promptNeedsVision(input.prompt, initialHistory)) {
+      const route = pickVisionCapableModel(
+        this.providers,
+        explicitProviderId,
+        explicitModel,
+        this.settings,
+      );
+      // Note: an explicit caller override does not bypass the capability
+      // check — pickVisionCapableModel already returns `override` when
+      // the caller's provider+model are already vision-capable, and
+      // re-routes otherwise. The shape is always honored.
+      providerId = route.providerId;
+      model = route.model || explicitModel;
+      routingSource = route.source;
+    }
+
     const provider = this.resolveProvider(providerId, model);
     if (!provider) {
       return { agentName: def.name, status: "error", text: "", usage: { inputTokens: 0, outputTokens: 0 }, steps: 0, error: "no provider available" };
@@ -231,6 +268,7 @@ export class SubAgentManager {
         usage: result.usage,
         steps: result.steps,
         sessionId: session?.id,
+        ...(routingSource ? { routingSource } : {}),
       };
     } catch (e) {
       log.error("sub-agent crashed", e);
@@ -241,6 +279,7 @@ export class SubAgentManager {
         usage: { inputTokens: 0, outputTokens: 0 },
         steps: 0,
         error: (e as Error).message,
+        ...(routingSource ? { routingSource } : {}),
       };
     }
   }

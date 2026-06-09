@@ -211,6 +211,53 @@ Two related changes to the goal lifecycle land in the same release:
 
 ## Unreleased — Delegation
 
+- **feat(delegation): real impls for mcp/api/plugin kinds + maxCostUsd + skills allowlist**
+  (`src/agent/delegation.ts`, `src/agent/subagent.ts`,
+  `src/__tests__/delegation.test.ts`,
+  `src/__tests__/delegation-stubs.test.ts`): replaces 3 of the 4
+  Phase 2 stubs (`mcp`, `plugin`, `api`) with real runners;
+  `workflow` remains a stub per the port plan's 2-3 week track.
+  The `mcp` kind now consults a new narrow `McpRegistry`
+  interface injected via `DelegationRuntimeDeps.mcpRegistry`
+  (the runtime wires a default; tests inject stubs). Unknown
+  server ids surface as `status: "failed"` with a clear reason
+  listing the known servers. The `api` kind uses Node's
+  built-in `fetch` (no new deps) with a default 30s timeout
+  override-able via `timeoutSeconds`; default body is
+  `{ prompt, context, timeoutSeconds }` and can be replaced
+  with a raw `body`. GET / DELETE requests send no body. The
+  `plugin` kind dynamically imports `$pluginHome/<id>.{js,ts}`
+  (default `$CH_HOME/plugins`; override via
+  `DelegationRuntimeDeps.pluginHome`), invoking the tool by
+  name from the plugin's `tools` map. A new
+  `maxCostUsd?: number` on `DelegationBase` enforces a hard
+  cost cap on the `agent` kind: the manager uses a
+  `CostTracker` (per-delegation by default; or the runtime's
+  own tracker when injected on `DelegationRuntimeDeps.costTracker`)
+  and aborts when the cap is exceeded, surfacing
+  `status: "error"` + `error: "maxCostUsd cap exceeded: $X.XX"`.
+  A new `skills?: string[]` on `DelegationBase` is forwarded
+  to `SubAgentSpawnInput.skills` for the `agent` kind; the
+  `SubAgentManager` echoes it back on `SubAgentResult.skillsUsed`
+  so the caller can verify the allowlist was passed through.
+  The SubAgentManager's own integration with the SkillRegistry
+  is a follow-up — v1 of this allowlist is a contract assertion
+  on the wire. 20 new tests in
+  `src/__tests__/delegation-stubs.test.ts` cover: mcp tool
+  call with right args + unknown server + non-ok result; api
+  POST/GET body shape + non-2xx surfaces; plugin load +
+  invoke + missing file/tool + bad export + tool exception;
+  maxCostUsd fires when the run exceeds the cap (single-run
+  + cumulative-tracker) and does not block kinds without
+  model calls; skills allowlist is forwarded to
+  SubAgentManager.spawn and is optional.
+
+## Unreleased — Delegation
+
+- **feat(delegation): discriminated union over worker kinds (agent,
+  goal, async-tool, mcp, plugin, api, human-approval)**
+  (`src/agent/delegation.ts`, `src/runtime.ts`,
+
 - **feat(delegation): discriminated union over worker kinds (agent,
   goal, async-tool, mcp, plugin, api, human-approval)**
   (`src/agent/delegation.ts`, `src/runtime.ts`,

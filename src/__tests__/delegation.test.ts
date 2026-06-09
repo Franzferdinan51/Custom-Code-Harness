@@ -301,22 +301,38 @@ test("delegation: human_approval calls askApproval when wired", async () => {
 
 // ---------- 6. Phase 2 stubs ----------
 
-test("delegation: workflow/mcp/plugin/api are stubs (Phase 2)", async () => {
+test("delegation: workflow kind is still a stub (Phase 2)", async () => {
   const { deps } = makeDeps();
   const mgr = new DelegationManager(deps);
-
   const w = mgr.submit({ kind: "workflow", workflowId: "wf-1", cwd: tmp });
-  const m = mgr.submit({ kind: "mcp", serverId: "fs", tool: "list", args: {}, cwd: tmp });
-  const p = mgr.submit({ kind: "plugin", pluginId: "demo", tool: "run", args: {}, cwd: tmp });
-  const a = mgr.submit({ kind: "api", method: "GET", url: "https://example.com", cwd: tmp });
+  const res = await w.result();
+  assert.equal(res.kind, "workflow");
+  if (res.kind === "workflow") {
+    assert.equal(res.status, "stub");
+  }
+});
 
-  for (const h of [w, m, p, a]) {
-    const res = await h.result();
-    if (res.kind === "workflow" || res.kind === "mcp" || res.kind === "plugin" || res.kind === "api") {
-      assert.equal(res.status, "stub");
-    } else {
-      assert.fail("expected stub result, got " + res.kind);
-    }
+test("delegation: mcp kind without registry returns status=failed with reason", async () => {
+  const { deps } = makeDeps();
+  const mgr = new DelegationManager(deps);
+  const m = mgr.submit({ kind: "mcp", serverId: "fs", tool: "list", args: {}, cwd: tmp });
+  const res = await m.result();
+  assert.equal(res.kind, "mcp");
+  if (res.kind === "mcp") {
+    assert.equal(res.status, "failed");
+    assert.match(res.error ?? "", /no MCP registry wired/);
+  }
+});
+
+test("delegation: plugin kind without file returns status=failed with reason", async () => {
+  const { deps } = makeDeps();
+  const mgr = new DelegationManager(deps);
+  const p = mgr.submit({ kind: "plugin", pluginId: "demo-missing", tool: "run", args: {}, cwd: tmp });
+  const res = await p.result();
+  assert.equal(res.kind, "plugin");
+  if (res.kind === "plugin") {
+    assert.equal(res.status, "failed");
+    assert.match(res.error ?? "", /plugin not found/);
   }
 });
 

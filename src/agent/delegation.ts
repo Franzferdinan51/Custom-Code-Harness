@@ -28,6 +28,8 @@
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { pathToFileURL } from "node:url";
+import { join } from "node:path";
 import { log } from "../util/logger.js";
 import { runGoalStateMachine, type GoalRecord, type GoalState, type GoalStore } from "./goals.js";
 import type { GoalRunAgentFn, RunGoalOptions } from "./goals.js";
@@ -35,6 +37,7 @@ import type { Settings } from "../config/settings.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import { SubAgentManager, type SubAgentResult } from "./subagent.js";
 import { paths } from "../config/paths.js";
+import { CostTracker, formatUSD } from "./cost.js";
 
 // ---------- The union ----------
 
@@ -72,6 +75,35 @@ export interface DelegationBase {
   signal?: AbortSignal;
   /** Created at (ms). Set by the manager. */
   createdAt?: number;
+  /**
+   * Hard cap on estimated cost (USD) for this delegation. When
+   * the cap is exceeded mid-run, the manager aborts and surfaces
+   * a `{ kind, status: "failed", error: "maxCostUsd cap exceeded: $X.XX" }`
+   * result. Cost is computed via `src/agent/cost.ts` against the
+   * `CostTracker` injected on `DelegationRuntimeDeps` (defaulting
+   * to a per-delegation tracker that is discarded after the run).
+   * Applies to any kind that makes model calls (agent, goal). For
+   * kinds without a model call (mcp, plugin, api, async_tool,
+   * human_approval, workflow stub), the cap is recorded but
+   * never triggers — the result is still returned with the
+   * un-exceeded cost.
+   */
+  maxCostUsd?: number;
+  /**
+   * Skills allowlist for the child runner (e.g. the
+   * sub-agent spawned by the `agent` kind). When set, the
+   * `SubAgentManager` only sees skills whose name appears in
+   * this list — the list is forwarded via
+   * `SubAgentSpawnInput.skills` and echoed back on
+   * `SubAgentResult.skillsUsed`. Other kinds ignore the field
+   * (mcp / api / plugin / etc. don't load skills directly). The
+   * runtime's `/skill` tool inside the sub-agent consults
+   * `services.loadSkill`; v1 of this allowlist is a contract
+   * assertion — the SubAgentManager passes the list through
+   * and the actual filter on the sub-agent's services layer
+   * is wired in a follow-up that takes the SkillRegistry.
+   */
+  skills?: string[];
 }
 
 export interface AgentDelegation extends DelegationBase {
@@ -129,23 +161,62 @@ export interface WorkflowDelegation extends DelegationBase {
   workflowId: string;
   inputs?: Record<string, unknown>;
 }
+/**
+ * MCP kind — invoke a tool on a registered MCP server. The
+ * `McpRegistry` injected on `DelegationRuntimeDeps` is the
+ * narrow boundary between the manager and the (out-of-process)
+ * MCP server registry; the runtime wires the default
+ * implementation. If the server is not registered, the
+ * delegation returns `status: "failed"` with a clear reason.
+ */
 export interface McpDelegation extends DelegationBase {
   kind: "mcp";
   serverId: string;
   tool: string;
   args: Record<string, unknown>;
+  /** Optional per-call timeout in seconds. Default: 30. */
+  timeoutSeconds?: number;
 }
+/**
+ * Plugin kind — load a `.agnt`-style plugin from
+ * `$CH_HOME/plugins/<id>.{ts,js}` and invoke a tool on it. The
+ * plugin module exports `{ name, tools: { [toolName]: (args, ctx)
+ * => Promise<any> } }`. If the file is not found, the
+ * delegation returns `status: "failed"` with reason. v1 only
+ * supports the file-based shape; directory-based plugin
+ * packages (with `package.json` / `index.ts`) land in a
+ * follow-up.
+ */
 export interface PluginDelegation extends DelegationBase {
   kind: "plugin";
   pluginId: string;
   tool: string;
   args: Record<string, unknown>;
+  /** Optional per-call timeout in seconds. Default: 30. */
+  timeoutSeconds?: number;
 }
+/**
+ * API kind — POST (or whatever `method` is set to) the work
+ * prompt to `url` as JSON `{ prompt, context, timeoutSeconds }`.
+ * The response is parsed as JSON and surfaced as `output`. Uses
+ * Node's built-in `fetch` (no new deps). Default timeout 30s;
+ * override via `timeoutSeconds`.
+ */
 export interface ApiDelegation extends DelegationBase {
   kind: "api";
-  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  /** HTTP method. Defaults to POST when omitted. */
+  method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
   url: string;
+  /** The work prompt sent in the request body. */
+  prompt?: string;
+  /** Optional context payload (echoed back in the request body). */
+  context?: Record<string, unknown>;
+  /** Per-request timeout in seconds. Default: 30. */
+  timeoutSeconds?: number;
+  /** Extra request headers. */
   headers?: Record<string, string>;
+  /** Override the JSON body. When set, the default
+   *  `{ prompt, context, timeoutSeconds }` body is replaced. */
   body?: unknown;
 }
 
@@ -172,15 +243,21 @@ export type DelegationEvent =
 
 // ---------- Results ----------
 
+/** The status field on a Phase 2 (mcp / plugin / api) delegation
+ *  result. The same shape works for all three: the kind-specific
+ *  fields (serverId / pluginId / url / output) are added by the
+ *  discriminated union arms below. */
+export type Phase2Status = "completed" | "failed";
+
 export type DelegationResult =
-  | { kind: "agent"; text: string; usage: { inputTokens: number; outputTokens: number }; steps: number; sessionId?: string; status: SubAgentResult["status"] }
+  | { kind: "agent"; text: string; usage: { inputTokens: number; outputTokens: number }; steps: number; sessionId?: string; status: SubAgentResult["status"]; error?: string }
   | { kind: "goal"; goalId: string; status: GoalState; finalText?: string; iterations: number }
   | { kind: "async_tool"; toolName: string; iterations: number; result: unknown }
   | { kind: "human_approval"; decision: "allow" | "deny"; reason?: string }
   | { kind: "workflow"; workflowId: string; status: "stub" }
-  | { kind: "mcp"; serverId: string; tool: string; status: "stub" }
-  | { kind: "plugin"; pluginId: string; tool: string; status: "stub" }
-  | { kind: "api"; url: string; status: "stub" };
+  | { kind: "mcp"; serverId: string; tool: string; status: Phase2Status; output?: unknown; error?: string }
+  | { kind: "plugin"; pluginId: string; tool: string; status: Phase2Status; output?: unknown; error?: string }
+  | { kind: "api"; url: string; method: string; status: Phase2Status; output?: unknown; error?: string };
 
 // ---------- Handle ----------
 
@@ -207,6 +284,38 @@ export interface DelegationRun {
 }
 
 // ---------- Dependencies ----------
+
+/** Narrow interface over the MCP server registry. Keeps the
+ *  manager decoupled from the (out-of-process) `mavis mcp`
+ *  registry — the runtime wires a default implementation that
+ *  shells out to the local MCP config; tests inject a stub.
+ *
+ *  `listServers` is used for the "is the server registered?"
+ *  check before `callTool` — failing fast with a clear
+ *  `unknown MCP server: <id>` is friendlier than letting the
+ *  tool call hang or surface a generic transport error. */
+export interface McpRegistry {
+  /** Stable, machine-friendly id of the registry. */
+  readonly id: string;
+  listServers(): Array<{ id: string; name?: string }>;
+  callTool(
+    serverId: string,
+    tool: string,
+    args: Record<string, unknown>,
+    opts: { signal?: AbortSignal; timeoutMs?: number },
+  ): Promise<McpCallResult>;
+}
+
+export interface McpCallResult {
+  /** True when the tool call completed without an error. */
+  ok: boolean;
+  /** The tool's return value. Shape is MCP-server-defined. */
+  output?: unknown;
+  /** Set when `ok` is false. */
+  error?: string;
+  /** Optional structured error data (MCP servers can attach any JSON). */
+  errorData?: unknown;
+}
 
 /** The subset of `HarnessRuntime` the manager needs. Lets us wire
  *  the manager from a slim test fixture without dragging in the
@@ -260,6 +369,17 @@ export interface DelegationRuntimeDeps {
    * file here to keep state isolated.
    */
   asyncToolQueueFile?: string;
+  /** MCP registry. Required for `mcp` kind. When unset, an `mcp`
+   *  delegation fails with `no MCP registry wired`. */
+  mcpRegistry?: McpRegistry;
+  /** Cost tracker for the `maxCostUsd` cap. When unset, the
+   *  manager uses a per-delegation `CostTracker` that's
+   *  discarded after the run. The HarnessRuntime's own
+   *  `cost: CostTracker` is the natural production wiring. */
+  costTracker?: CostTracker;
+  /** Override the directory that hosts plugin files. Defaults
+   *  to `$CH_HOME/plugins`. Used by `plugin` kind. */
+  pluginHome?: string;
 }
 
 /** Signature of the function that actually executes an async tool.
@@ -635,10 +755,13 @@ export class DelegationManager {
       case "human_approval":
         return this.runHumanApprovalKind(work, signal, emit);
       case "workflow":
-      case "mcp":
-      case "plugin":
-      case "api":
         return this.runStubKind(work);
+      case "mcp":
+        return this.runMcpKind(work, signal, emit);
+      case "plugin":
+        return this.runPluginKind(work, signal, emit);
+      case "api":
+        return this.runApiKind(work, signal, emit);
       default: {
         // Exhaustiveness guard.
         const _exhaustive: never = work;
@@ -655,6 +778,19 @@ export class DelegationManager {
     emit: (ev: DelegationEvent) => void,
   ): Promise<{ value: DelegationResult; cancelled: boolean }> {
     emit({ kind: "log", line: "[agent] spawning " + work.agent });
+    // The model used for cost accounting. Falls back to the
+    // settings default — same precedence as the SubAgentManager
+    // (which uses `input.model ?? def.model ?? defaultModel`).
+    const costModel = work.model
+      ?? this.deps.settings.defaultModel
+      ?? "default";
+    // Per-delegation tracker. If the runtime injected its own
+    // `CostTracker`, we read the cumulative total at the end
+    // (not just this run's slice) — the cap is on total spend
+    // since the runtime started, which is the more useful
+    // semantic. For a per-delegation tracker we just track
+    // this run's cost.
+    const tracker = this.deps.costTracker ?? new CostTracker();
     const r = await this.deps.subagent.spawn({
       agent: work.agent,
       prompt: work.prompt,
@@ -664,7 +800,40 @@ export class DelegationManager {
       signal,
       ephemeral: work.ephemeral,
       parentSessionId: work.parentSessionId,
+      ...(work.skills !== undefined ? { skills: work.skills } : {}),
     });
+    // Record the sub-agent's cost on the tracker. Provider id
+    // is best-effort — when the sub-agent routed to a different
+    // provider for vision, the SubAgentResult doesn't surface
+    // it. v1 of the cap uses the sub-agent's input provider id.
+    const providerId = work.providerId ?? this.deps.settings.defaultProvider ?? "unknown";
+    tracker.record(costModel, providerId, r.usage.inputTokens, r.usage.outputTokens, work.agent);
+    // Apply the maxCostUsd cap. The cap is checked post-run for
+    // the agent kind; for goal / loop kinds the same check
+    // fires after the inner state machine finishes. The result
+    // shape mirrors the spec: `{ kind, status: "failed",
+    // error: "maxCostUsd cap exceeded: $X.XX" }`. The "kind"
+    // is the originating delegation kind so the caller can
+    // still discriminate.
+    if (work.maxCostUsd !== undefined) {
+      const total = tracker.total().cost;
+      if (total > work.maxCostUsd) {
+        const msg = "maxCostUsd cap exceeded: " + formatUSD(total) + " > " + formatUSD(work.maxCostUsd);
+        emit({ kind: "log", line: "[agent] " + msg });
+        return {
+          value: {
+            kind: "agent",
+            text: r.text,
+            usage: r.usage,
+            steps: r.steps,
+            sessionId: r.sessionId,
+            status: "error",
+            error: msg,
+          },
+          cancelled: false,
+        };
+      }
+    }
     return {
       value: {
         kind: "agent",
@@ -886,15 +1055,199 @@ export class DelegationManager {
     }
   }
 
-  // ---- stubs (Phase 2) ----
+  // ---- workflow stub (Phase 2) ----
+  //
+  // The workflow kind is the only remaining stub — the port plan
+  // calls it a 2-3 week track (per
+  // `plans/plan_phase2/notes/agnt-port-plan.md` §2.4). The other
+  // three Phase 2 kinds (mcp, plugin, api) have real impls
+  // below.
 
-  private runStubKind(work: WorkflowDelegation | McpDelegation | PluginDelegation | ApiDelegation): { value: DelegationResult; cancelled: boolean } {
+  private runStubKind(work: WorkflowDelegation): { value: DelegationResult; cancelled: boolean } {
     log.warn("delegation: kind " + work.kind + " is a Phase 2 stub");
-    switch (work.kind) {
-      case "workflow": return { value: { kind: "workflow", workflowId: work.workflowId, status: "stub" }, cancelled: false };
-      case "mcp":      return { value: { kind: "mcp", serverId: work.serverId, tool: work.tool, status: "stub" }, cancelled: false };
-      case "plugin":   return { value: { kind: "plugin", pluginId: work.pluginId, tool: work.tool, status: "stub" }, cancelled: false };
-      case "api":      return { value: { kind: "api", url: work.url, status: "stub" }, cancelled: false };
+    return { value: { kind: "workflow", workflowId: work.workflowId, status: "stub" }, cancelled: false };
+  }
+
+  // ---- mcp ----
+  //
+  // Look up `serverId` in the injected `McpRegistry`, then call
+  // the named tool with `args`. The registry is the narrow
+  // boundary; the runtime wires a default that shells out to
+  // `mavis mcp call`, tests inject a stub. Result is the
+  // structured tool output (whatever the MCP server returned)
+  // plus a status field. Unknown server / tool errors are
+  // surfaced as `status: "failed"` with a clear reason rather
+  // than throwing — the manager swallows the throw and emits
+  // a `failed` event, so callers always get a typed result.
+
+  private async runMcpKind(
+    work: McpDelegation,
+    signal: AbortSignal,
+    emit: (ev: DelegationEvent) => void,
+  ): Promise<{ value: DelegationResult; cancelled: boolean }> {
+    const registry = this.deps.mcpRegistry;
+    if (!registry) {
+      const err = "no MCP registry wired (set DelegationRuntimeDeps.mcpRegistry)";
+      emit({ kind: "log", line: "[mcp] " + err });
+      return { value: { kind: "mcp", serverId: work.serverId, tool: work.tool, status: "failed", error: err }, cancelled: false };
+    }
+    const servers = safeListServers(registry);
+    const found = servers.find((s) => s.id === work.serverId);
+    if (!found) {
+      const known = servers.map((s) => s.id).join(", ") || "(none registered)";
+      const err = `unknown MCP server: ${work.serverId} (known: ${known})`;
+      emit({ kind: "log", line: "[mcp] " + err });
+      return { value: { kind: "mcp", serverId: work.serverId, tool: work.tool, status: "failed", error: err }, cancelled: false };
+    }
+    emit({ kind: "log", line: "[mcp] " + work.serverId + "." + work.tool });
+    const timeoutMs = (work.timeoutSeconds ?? 30) * 1000;
+    try {
+      const r = await registry.callTool(work.serverId, work.tool, work.args, { signal, timeoutMs });
+      if (!r.ok) {
+        const err = r.error ?? "MCP tool call failed";
+        return { value: { kind: "mcp", serverId: work.serverId, tool: work.tool, status: "failed", error: err }, cancelled: false };
+      }
+      return { value: { kind: "mcp", serverId: work.serverId, tool: work.tool, status: "completed", output: r.output }, cancelled: false };
+    } catch (e) {
+      if (signal.aborted) {
+        return { value: { kind: "mcp", serverId: work.serverId, tool: work.tool, status: "failed", error: "cancelled" }, cancelled: true };
+      }
+      const err = (e as Error).message;
+      return { value: { kind: "mcp", serverId: work.serverId, tool: work.tool, status: "failed", error: err }, cancelled: false };
+    }
+  }
+
+  // ---- plugin ----
+  //
+  // Load `$pluginHome/<id>.js` (then `.ts` as a fallback for the
+  // dev / tsx runtime). The module exports
+  // `{ name, tools: { [toolName]: (args, ctx) => Promise<any> } }`.
+  // We look up `tool` in `tools` and invoke it. A missing file /
+  // missing tool returns `status: "failed"` with a clear reason.
+  // The plugin's tool receives `(args, ctx)` where `ctx` is the
+  // `ToolContext`-shaped object with cwd + signal so plugins can
+  // do file IO without importing internals.
+
+  private async runPluginKind(
+    work: PluginDelegation,
+    signal: AbortSignal,
+    emit: (ev: DelegationEvent) => void,
+  ): Promise<{ value: DelegationResult; cancelled: boolean }> {
+    const home = this.deps.pluginHome ?? defaultPluginHome();
+    // Try .js first (compiled output), then .ts (dev / tsx).
+    const candidates = [join(home, work.pluginId + ".js"), join(home, work.pluginId + ".ts")];
+    let loadedPath: string | null = null;
+    for (const p of candidates) {
+      if (existsSync(p)) { loadedPath = p; break; }
+    }
+    if (!loadedPath) {
+      const err = `plugin not found: ${work.pluginId} (looked in ${candidates.join(", ")})`;
+      emit({ kind: "log", line: "[plugin] " + err });
+      return { value: { kind: "plugin", pluginId: work.pluginId, tool: work.tool, status: "failed", error: err }, cancelled: false };
+    }
+    emit({ kind: "log", line: "[plugin] " + work.pluginId + "." + work.tool + " (from " + loadedPath + ")" });
+    let mod: PluginModule;
+    try {
+      // Dynamic import. Use file:// URL so the loader treats
+      // it as an absolute path under both ESM and tsx.
+      mod = (await import(pathToFileURL(loadedPath).href + "?ch_plugin=" + Date.now())) as PluginModule;
+    } catch (e) {
+      const err = "plugin load failed: " + (e as Error).message;
+      emit({ kind: "log", line: "[plugin] " + err });
+      return { value: { kind: "plugin", pluginId: work.pluginId, tool: work.tool, status: "failed", error: err }, cancelled: false };
+    }
+    if (!mod || typeof mod !== "object" || !mod.tools || typeof mod.tools !== "object") {
+      const err = `plugin ${work.pluginId} does not export { name, tools }`;
+      return { value: { kind: "plugin", pluginId: work.pluginId, tool: work.tool, status: "failed", error: err }, cancelled: false };
+    }
+    const toolFn = (mod.tools as Record<string, unknown>)[work.tool];
+    if (typeof toolFn !== "function") {
+      const err = `plugin ${work.pluginId} has no tool "${work.tool}" (known: ${Object.keys(mod.tools).join(", ") || "(none)"})`;
+      return { value: { kind: "plugin", pluginId: work.pluginId, tool: work.tool, status: "failed", error: err }, cancelled: false };
+    }
+    const timeoutMs = (work.timeoutSeconds ?? 30) * 1000;
+    const ac = new AbortController();
+    const onAbort = () => ac.abort(signal.reason);
+    if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
+    const t = setTimeout(() => ac.abort(new Error("plugin timeout after " + work.timeoutSeconds + "s")), timeoutMs);
+    try {
+      const ctx: PluginContext = { cwd: work.cwd, signal: ac.signal };
+      const output = await (toolFn as PluginToolFn)(work.args, ctx);
+      if (signal.aborted) {
+        return { value: { kind: "plugin", pluginId: work.pluginId, tool: work.tool, status: "failed", error: "cancelled" }, cancelled: true };
+      }
+      return { value: { kind: "plugin", pluginId: work.pluginId, tool: work.tool, status: "completed", output }, cancelled: false };
+    } catch (e) {
+      if (signal.aborted) {
+        return { value: { kind: "plugin", pluginId: work.pluginId, tool: work.tool, status: "failed", error: "cancelled" }, cancelled: true };
+      }
+      const err = (e as Error).message;
+      return { value: { kind: "plugin", pluginId: work.pluginId, tool: work.tool, status: "failed", error: err }, cancelled: false };
+    } finally {
+      clearTimeout(t);
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  // ---- api ----
+  //
+  // POST (or whatever `method` is set to) the work prompt to
+  // `url` as JSON. The default body is `{ prompt, context,
+  // timeoutSeconds }` — callers can override with `body` for
+  // raw JSON. Default timeout 30s; override via
+  // `timeoutSeconds`. Response is parsed as JSON; non-JSON
+  // responses are returned as the raw text. Node's built-in
+  // `fetch` is used (no new deps).
+
+  private async runApiKind(
+    work: ApiDelegation,
+    signal: AbortSignal,
+    emit: (ev: DelegationEvent) => void,
+  ): Promise<{ value: DelegationResult; cancelled: boolean }> {
+    const method = work.method ?? "POST";
+    const timeoutMs = (work.timeoutSeconds ?? 30) * 1000;
+    emit({ kind: "log", line: "[api] " + method + " " + work.url });
+    const body: unknown = work.body !== undefined
+      ? work.body
+      : { prompt: work.prompt ?? "", context: work.context ?? {}, timeoutSeconds: work.timeoutSeconds ?? 30 };
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      ...(work.headers ?? {}),
+    };
+    const ac = new AbortController();
+    const onAbort = () => ac.abort(signal.reason);
+    if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
+    const t = setTimeout(() => ac.abort(new Error("api timeout after " + work.timeoutSeconds + "s")), timeoutMs);
+    try {
+      const res = await fetch(work.url, {
+        method,
+        headers,
+        body: method === "GET" || method === "DELETE" ? undefined : JSON.stringify(body),
+        signal: ac.signal,
+      });
+      const text = await res.text();
+      if (signal.aborted) {
+        return { value: { kind: "api", url: work.url, method, status: "failed", error: "cancelled" }, cancelled: true };
+      }
+      // Try to parse as JSON; fall back to the raw text.
+      let output: unknown = text;
+      if (text.length > 0) {
+        try { output = JSON.parse(text); } catch { /* leave as text */ }
+      }
+      if (!res.ok) {
+        const err = `HTTP ${res.status} ${res.statusText} — ${typeof output === "string" ? output : JSON.stringify(output).slice(0, 500)}`;
+        return { value: { kind: "api", url: work.url, method, status: "failed", error: err, output }, cancelled: false };
+      }
+      return { value: { kind: "api", url: work.url, method, status: "completed", output }, cancelled: false };
+    } catch (e) {
+      if (signal.aborted) {
+        return { value: { kind: "api", url: work.url, method, status: "failed", error: "cancelled" }, cancelled: true };
+      }
+      const err = (e as Error).message;
+      return { value: { kind: "api", url: work.url, method, status: "failed", error: err }, cancelled: false };
+    } finally {
+      clearTimeout(t);
+      signal.removeEventListener("abort", onAbort);
     }
   }
 
@@ -970,4 +1323,61 @@ export async function delegate(
   const mgr = new DelegationManager(ctx);
   const handle = mgr.submit(work);
   return await handle.result();
+}
+
+// ---------- Plugin helpers (mcp / plugin / api runners) ----------
+
+/** Plugin module shape. v1: a single JS/TS file exporting this. */
+export interface PluginModule {
+  /** Plugin display name. */
+  name: string;
+  /** Map of tool name → tool function. */
+  tools: Record<string, PluginToolFn>;
+  /** Optional version / author metadata. Ignored by the runner. */
+  version?: string;
+}
+
+/** A plugin tool's function signature. */
+export type PluginToolFn = (args: Record<string, unknown>, ctx: PluginContext) => Promise<unknown> | unknown;
+
+/** Context passed to plugin tool functions. */
+export interface PluginContext {
+  /** Working directory. */
+  cwd: string;
+  /** Abort signal — fires when the delegation is cancelled or
+   *  the per-call timeout elapses. */
+  signal: AbortSignal;
+}
+
+/** Default plugin home. `$CH_HOME/plugins`. Resolved lazily so
+ *  tests can override `CODINGHARNESS_HOME` / `CH_HOME` before the
+ *  first call. */
+function defaultPluginHome(): string {
+  // Avoid importing `paths` at module top so the file can load
+  // before `paths.home` is wired (the test suite overrides
+  // CODINGHARNESS_HOME then mkdirSync's subdirs). A dynamic
+  // import would also work; this is simpler.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const home = process.env.CODINGHARNESS_HOME
+    ? process.env.CODINGHARNESS_HOME
+    : process.env.CH_HOME
+    ? process.env.CH_HOME
+    : "";
+  return join(home, "plugins");
+}
+
+/** Defensive: the registry's `listServers` is allowed to throw or
+ *  return non-array. Coerce to a safe empty list so the
+ *  "unknown server" branch can always be reached. */
+function safeListServers(reg: McpRegistry): Array<{ id: string; name?: string }> {
+  try {
+    const out = reg.listServers();
+    if (Array.isArray(out)) {
+      return out.filter((s): s is { id: string; name?: string } =>
+        typeof s === "object" && s !== null && typeof (s as { id?: unknown }).id === "string");
+    }
+    return [];
+  } catch {
+    return [];
+  }
 }

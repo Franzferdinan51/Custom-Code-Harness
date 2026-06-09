@@ -25,6 +25,8 @@ const state = {
   recentSessions: [],
   sessionQuery: "",
   goalActivity: null,
+  goals: [],
+  delegations: [],
   composerMode: "build",
   providerPresets: [],
   providerProfiles: [],
@@ -633,6 +635,300 @@ async function refreshUsage() {
   } catch (e) { console.error("usage:", e); }
 }
 
+// ---------- Goals panel ----------
+//
+// The goals panel lives in the left sidebar. Each row is clickable;
+// clicking opens the right-side detail pane. The detail fetches a
+// single goal + its children + evaluations, and shows them as
+// badges / cards. The sidebar list refreshes every 5s; the open
+// detail re-fetches every 5s so live state changes are visible.
+
+const goalState = {
+  /** Currently selected goal id. `null` means the detail pane is
+   *  closed. Persists across refreshes so re-renders don't blank
+   *  the pane. */
+  selectedId: null,
+  /** Last known detail payload, used as a render cache. */
+  detail: null,
+};
+
+function truncateObjective(text, n = 90) {
+  if (!text) return "";
+  if (text.length <= n) return text;
+  return text.slice(0, n - 1) + "…";
+}
+
+function statusPillClass(status) {
+  // The class key matches both `is-<status>` for the pill and the
+  // section title. Used by both the sidebar row and the detail
+  // pane; keep in sync with styles.css.
+  return "is-" + (status || "pending");
+}
+
+async function refreshGoals() {
+  try {
+    const j = await api("/v1/goals");
+    const goals = j.goals || [];
+    state.goals = goals;
+    const list = $("goal-list");
+    const label = $("goals-label");
+    if (label) label.textContent = "goals (" + goals.length + ")";
+    list.innerHTML = "";
+    if (goals.length === 0) {
+      list.appendChild(el("div", { class: "sidebar-empty" }, "none"));
+    } else {
+      for (const g of goals) {
+        const row = el("div", {
+          class: "goal-row" + (g.id === goalState.selectedId ? " is-active" : ""),
+          "data-goal-id": g.id,
+        }, [
+          el("div", { class: "goal-row-top" }, [
+            el("span", { class: "goal-row-status " + statusPillClass(g.status) }, g.status || "pending"),
+            el("span", { class: "goal-row-id" }, g.id.length > 14 ? g.id.slice(0, 12) + "…" : g.id),
+            el("span", { class: "goal-row-loop" }, "[" + (g.loopStatus || "pending") + "]"),
+          ]),
+          el("div", { class: "goal-row-objective" }, truncateObjective(g.objective, 100)),
+          el("div", { class: "goal-row-meta" }, [
+            el("span", {}, (g.stepsTaken || 0) + "/" + (g.maxSteps || "?") + " steps"),
+            el("span", {}, formatAgo(g.updatedAt || g.createdAt)),
+          ]),
+        ]);
+        row.style.cursor = "pointer";
+        row.title = "Click to view goal detail\n" + (g.objective || "");
+        row.addEventListener("click", () => selectGoal(g.id));
+        list.appendChild(row);
+      }
+    }
+    // If we have a selected goal, refresh its detail in place so
+    // live state machine moves (pending → planning → executing →
+    // …) appear in the detail pane without requiring another
+    // click. The detail refresh is best-effort — failures here
+    // shouldn't break the sidebar.
+    if (goalState.selectedId) {
+      void refreshGoalDetail();
+    }
+  } catch (e) { console.error("goals:", e); }
+}
+
+async function selectGoal(id) {
+  goalState.selectedId = id;
+  // Re-render the sidebar so the row is highlighted.
+  void refreshGoals();
+  // Open the detail pane + show a placeholder until the fetch
+  // returns.
+  const detailEl = $("goal-detail");
+  if (detailEl) detailEl.hidden = false;
+  document.querySelector(".app")?.classList.add("is-goal-open");
+  const body = $("goal-detail-body");
+  if (body) {
+    body.innerHTML = "";
+    body.appendChild(el("div", { class: "sidebar-empty" }, "loading…"));
+  }
+  await refreshGoalDetail();
+}
+
+async function refreshGoalDetail() {
+  const id = goalState.selectedId;
+  if (!id) return;
+  try {
+    const j = await api("/v1/goals?id=" + encodeURIComponent(id));
+    goalState.detail = j;
+    renderGoalDetail(j);
+  } catch (e) {
+    console.error("goal detail:", e);
+    const body = $("goal-detail-body");
+    if (body && goalState.selectedId === id) {
+      body.innerHTML = "";
+      body.appendChild(el("div", { class: "goal-detail-empty" }, "failed to load: " + (e?.message || e)));
+    }
+  }
+}
+
+function renderGoalDetail({ goal, children }) {
+  const body = $("goal-detail-body");
+  if (!body) return;
+  body.innerHTML = "";
+  if (!goal) {
+    body.appendChild(el("div", { class: "goal-detail-empty" }, "goal not found"));
+    return;
+  }
+
+  // Header
+  body.appendChild(el("div", { class: "goal-detail-id" }, goal.id));
+
+  // Objective
+  body.appendChild(el("div", { class: "goal-detail-objective" }, goal.objective || "(no objective)"));
+
+  // Badges row
+  const badges = el("div", { class: "goal-detail-badges" }, [
+    el("span", { class: "goal-detail-badge is-status-" + (goal.status || "pending") }, goal.status || "pending"),
+    el("span", { class: "goal-detail-badge is-loop" }, "loop: " + (goal.loopStatus || "pending")),
+  ]);
+  if (typeof goal.currentIteration === "number" && goal.currentIteration > 0) {
+    badges.appendChild(el("span", { class: "goal-detail-badge is-iter" }, "iter " + goal.currentIteration));
+  }
+  if (goal.model) badges.appendChild(el("span", { class: "goal-detail-badge" }, "model: " + goal.model));
+  if (goal.providerId) badges.appendChild(el("span", { class: "goal-detail-badge" }, "provider: " + goal.providerId));
+  body.appendChild(badges);
+
+  // Metadata KV block
+  const meta = el("dl", { class: "goal-detail-kv" });
+  appendKv(meta, "created", formatAgo(goal.createdAt) + " ago");
+  appendKv(meta, "updated", formatAgo(goal.updatedAt) + " ago");
+  appendKv(meta, "steps", (goal.stepsTaken || 0) + " / " + (goal.maxSteps || "?"));
+  if (goal.parentGoalId) appendKv(meta, "parent", goal.parentGoalId);
+  body.appendChild(wrapSection("overview", meta));
+
+  // Plan
+  if (goal.finalText) {
+    body.appendChild(wrapSection(
+      "plan / latest output",
+      el("div", { class: "goal-detail-plan" }, goal.finalText),
+    ));
+  } else {
+    body.appendChild(wrapSection(
+      "plan / latest output",
+      el("div", { class: "goal-detail-empty" }, "(no output yet)"),
+    ));
+  }
+
+  // Success criteria (the world's "deliverables" — what the agent
+  // is judged against).
+  const sc = goal.successCriteria;
+  if (sc && Array.isArray(sc.deliverables) && sc.deliverables.length > 0) {
+    const scEl = el("div", { class: "goal-detail-kv" });
+    for (const d of sc.deliverables) {
+      appendKv(scEl, "✓", d);
+    }
+    body.appendChild(wrapSection("world state — success criteria", scEl));
+  } else {
+    body.appendChild(wrapSection(
+      "world state — success criteria",
+      el("div", { class: "goal-detail-empty" }, "(no success criteria)"),
+    ));
+  }
+
+  // Evaluations
+  const evals = Array.isArray(goal.evaluations) ? goal.evaluations : [];
+  if (evals.length > 0) {
+    const evalsEl = el("div");
+    for (const ev of evals) {
+      const top = el("div", { class: "goal-detail-eval-top" }, [
+        el("span", { class: "goal-detail-eval-score " + (ev.passed ? "is-passed" : "is-failed") }, "score " + (ev.score ?? 0) + "%"),
+        el("span", {}, "iter " + (ev.iteration ?? "?")),
+        el("span", {}, formatAgo(ev.createdAt) + " ago"),
+      ]);
+      const card = el("div", { class: "goal-detail-eval" }, [top, el("div", { class: "goal-detail-eval-feedback" }, ev.feedback || "")]);
+      evalsEl.appendChild(card);
+    }
+    body.appendChild(wrapSection("evaluations (" + evals.length + ")", evalsEl));
+  } else {
+    body.appendChild(wrapSection(
+      "evaluations",
+      el("div", { class: "goal-detail-empty" }, "(no evaluations yet)"),
+    ));
+  }
+
+  // Children
+  const kids = Array.isArray(children) ? children : [];
+  if (kids.length > 0) {
+    const kidsEl = el("div", { class: "goal-detail-children" });
+    for (const k of kids) {
+      const card = el("div", { class: "goal-detail-child" }, [
+        el("div", { class: "goal-detail-child-top" }, [
+          el("span", { class: "goal-row-status " + statusPillClass(k.status) }, k.status || "pending"),
+          el("span", { class: "goal-row-loop" }, "[" + (k.loopStatus || "pending") + "]"),
+          el("span", {}, k.id.length > 14 ? k.id.slice(0, 12) + "…" : k.id),
+        ]),
+        el("div", { class: "goal-detail-child-obj" }, truncateObjective(k.objective, 120)),
+      ]);
+      card.addEventListener("click", () => selectGoal(k.id));
+      kidsEl.appendChild(card);
+    }
+    body.appendChild(wrapSection("sub-goals (" + kids.length + ")", kidsEl));
+  }
+}
+
+function wrapSection(title, ...children) {
+  const sec = el("section", { class: "goal-detail-section" });
+  sec.appendChild(el("div", { class: "goal-detail-section-title" }, title));
+  for (const c of children) sec.appendChild(c);
+  return sec;
+}
+
+function appendKv(dl, key, value) {
+  dl.appendChild(el("dt", {}, key));
+  dl.appendChild(el("dd", {}, value));
+}
+
+function closeGoalDetail() {
+  goalState.selectedId = null;
+  goalState.detail = null;
+  const detailEl = $("goal-detail");
+  if (detailEl) detailEl.hidden = true;
+  document.querySelector(".app")?.classList.remove("is-goal-open");
+  // Re-render the sidebar so the highlight clears.
+  void refreshGoals();
+}
+
+// ---------- Delegations panel ----------
+//
+// Bottom strip listing active + recent delegation runs. Hidden
+// when there are none (so the chat takes the full vertical
+// space). Mirrors `GET /v1/delegations` which is fed by the
+// DelegationManager.
+
+async function refreshDelegations() {
+  try {
+    const j = await api("/v1/delegations");
+    const runs = j.delegations || [];
+    state.delegations = runs;
+    const strip = $("delegations-strip");
+    const list = $("delegations-list");
+    const count = $("delegations-count");
+    if (!strip || !list || !count) return;
+    count.textContent = String(runs.length);
+    if (runs.length === 0) {
+      strip.hidden = true;
+      list.innerHTML = "";
+      return;
+    }
+    strip.hidden = false;
+    list.innerHTML = "";
+    for (const r of runs) {
+      const when = r.completedAt
+        ? "ended " + formatAgo(r.completedAt) + " ago"
+        : r.startedAt
+          ? "started " + formatAgo(r.startedAt) + " ago"
+          : "queued";
+      list.appendChild(el("div", { class: "delegation-row" }, [
+        el("span", { class: "delegation-row-kind" }, r.kind || "?"),
+        el("span", { class: "delegation-row-status is-" + (r.status || "queued") }, r.status || "queued"),
+        el("span", { class: "delegation-row-when" }, when),
+        el("span", { class: "delegation-row-chain", title: chainToString(r.parentChain) }, chainToString(r.parentChain)),
+      ]));
+    }
+  } catch (e) { console.error("delegations:", e); }
+}
+
+function chainToString(chain) {
+  if (!Array.isArray(chain) || chain.length === 0) return "— root —";
+  // Show root → leaf (reversed from the API's leaf → root order).
+  const reversed = [...chain].reverse();
+  return reversed.map((link) => {
+    const kindClass = "is-" + (link.kind || "external");
+    const nibble = (link.id || "").length > 8 ? (link.id || "").slice(0, 8) : (link.id || "?");
+    return el("span", {}, [
+      el("span", { class: "delegation-row-chain-kink " + kindClass }, link.kind || "external"),
+      el("span", { class: "delegation-row-chain-nibble" }, nibble),
+    ]);
+  }).reduce((acc, node, i) => {
+    if (i > 0) acc.push(el("span", { class: "delegation-row-chain-sep" }, "→"));
+    acc.push(node);
+    return acc;
+  }, []);
+}
+
 function formatUSD(n) {
   if (n < 0.01) return "$" + n.toFixed(4);
   if (n < 1) return "$" + n.toFixed(3);
@@ -648,7 +944,7 @@ function formatAgo(t) {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshStatus(), refreshSessions(), refreshAgents(), refreshUsage(), refreshTodo()]);
+  await Promise.all([refreshStatus(), refreshSessions(), refreshAgents(), refreshUsage(), refreshTodo(), refreshGoals(), refreshDelegations()]);
   try {
     const cmds = await api("/v1/commands");
     state.slashNames = cmds.commands || [];
@@ -2106,6 +2402,14 @@ async function maybeShowOnboard() {
   setInterval(refreshSessions, 15000);
   setInterval(refreshAgents, 30000);
   setInterval(refreshTodo, 10000);
+  // Goals + delegations panels. The 5s cadence mirrors the goal
+  // state machine's heartbeat — fast enough that an active
+  // planning → executing transition feels live, slow enough to
+  // not hammer the goal store.
+  setInterval(refreshGoals, 5000);
+  setInterval(refreshDelegations, 5000);
+  // Close button on the goal detail pane.
+  $("goal-detail-close")?.addEventListener("click", closeGoalDetail);
   // First-run onboarding. Mirrors /onboard (slash) and ch onboard
   // (CLI) so all three surfaces give the same setup flow. The
   // wizard stays dismissable; the localStorage key suppresses it

@@ -30,6 +30,10 @@
         <div class="sidebar-list" id="agents-list"><div class="sidebar-empty">none</div></div>
       </div>
       <div class="sidebar-section">
+        <div class="sidebar-label" id="goals-label">goals</div>
+        <div class="sidebar-list" id="goal-list"><div class="sidebar-empty">none</div></div>
+      </div>
+      <div class="sidebar-section">
         <div class="sidebar-label" id="todo-label">todo</div>
         <div class="sidebar-list sidebar-todo" id="todo-list"><div class="sidebar-empty">(empty)</div></div>
         <form class="sidebar-todo-form" id="todo-form">
@@ -60,6 +64,7 @@
     </aside>
 
     <main class="main">
+
       <header class="header">
         <div class="header-left">
           <span class="header-title">CodingHarness</span>
@@ -78,6 +83,22 @@
         <div class="message message-system">
           <div class="message-prefix">·</div>
           <div class="message-body">Welcome to CodingHarness. Type a prompt or <code>/help</code> for commands.</div>
+        </div>
+      </div>
+
+      <!--
+        Delegations strip. Collapsed by default (`.delegations-strip` is
+        hidden when empty). Lives at the bottom of the chat area,
+        above the composer, and lists active + recent delegation
+        runs. Mirrors the data served by `GET /v1/delegations`.
+      -->
+      <div class="delegations-strip" id="delegations-strip" hidden>
+        <div class="delegations-strip-header">
+          <span class="delegations-strip-title">delegations</span>
+          <span class="delegations-strip-count" id="delegations-count">0</span>
+        </div>
+        <div class="delegations-strip-list" id="delegations-list">
+          <div class="sidebar-empty">no delegations</div>
         </div>
       </div>
 
@@ -141,6 +162,22 @@
         </div>
       </form>
     </main>
+
+    <!--
+      Goal detail pane (right-side). Hidden by default; the
+      `app.is-goal-open` class on .app toggles the third grid
+      column. Clicking a goal in the left sidebar populates it
+      with the goal's plan, evaluations, and worldState summary.
+    -->
+    <aside class="goal-detail" id="goal-detail" hidden>
+      <div class="goal-detail-header">
+        <div class="goal-detail-eyebrow">goal detail</div>
+        <button class="goal-detail-close" id="goal-detail-close" type="button" title="close">×</button>
+      </div>
+      <div class="goal-detail-body" id="goal-detail-body">
+        <div class="sidebar-empty">pick a goal from the sidebar</div>
+      </div>
+    </aside>
   </div>
 
   <div class="approval-modal" id="approval-modal" hidden>

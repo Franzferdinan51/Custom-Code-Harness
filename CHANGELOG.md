@@ -4,6 +4,7 @@ All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
 
+
 ## Unreleased — Goals (revert + semantic replan + multi-mission)
 
 Two related changes to the goal lifecycle land in the same release:
@@ -155,6 +156,58 @@ Two related changes to the goal lifecycle land in the same release:
   entries in consensus mode, and the synthesizer's system
   prompt includes the voice weights. All 9 pre-existing council
   test cases stay green.
+
+## Unreleased — Web UI panels (goalList + delegations)
+
+- **feat(web): goalList + delegations panels**
+  (`src/server.ts`, `src/web/{index.html,styles.css,app.js}`,
+  `src/__tests__/web-panels.test.ts`): adds two new read-only panels
+  to the web UI. The **goals panel** lives in the left sidebar
+  beneath the active sub-agents list — each goal renders as a
+  clickable row showing status, loop status, id, truncated
+  objective, steps taken, and time-ago. Clicking a row opens the
+  **right-side goal detail pane** (a third grid column), which
+  surfaces the plan / latest output, success criteria (the goal's
+  "world state"), evaluation history (with score + pass/fail
+  coloring), and a list of sub-goals (also clickable for
+  navigation). The **delegations panel** is a bottom strip above
+  the composer that lists active + recent `DelegationRun`s with
+  their kind, status (color-coded + pulsing for `running`),
+  start/end timestamps, and a parent chain that walks back through
+  other delegations and goal-store entries. Two new HTTP
+  endpoints power the panels:
+    - `GET /v1/goals` — list (or `?id=<id>` for one + its
+      children, or `?active=1` for only pending + in_progress).
+      Response envelope matches the rest of `/v1/*`:
+      `{ goals: GoalRecord[] }` or
+      `{ goal: GoalRecord, children: GoalRecord[] }`. The store
+      auto-loads `goals.json` on boot, so the panel populates
+      immediately.
+    - `GET /v1/delegations` — list `DelegationRun`s. The raw
+      `DelegationRun` handle has a `result()` Promise and an
+      `events()` AsyncIterable (neither JSON-serializable), so the
+      endpoint maps each run to a plain object carrying only
+      `id`, `kind`, `status`, `parentId`, `parentChain` (a
+      leaf→root walk that also resolves parent goals from the
+      `GoalStore`), `startedAt`, `completedAt`, `createdAt`. No
+      mutation endpoints — the manager is driven by `/goal`,
+      `/spawn`, and the approval flow, not by the panel.
+  Both panels use the existing dark-mode CSS variables
+  (`--bg`, `--fg`, `--cyan`, `--green`, `--red`, `--yellow`,
+  `--magenta`, `--border`, etc.) and the existing `.row` /
+  `.sidebar-list` / `.sidebar-empty` patterns where they fit.
+  The grid template gets a 3rd column (`.app.is-goal-open` →
+  `260px 1fr 360px`) when a goal is selected and reverts when
+  the detail pane is closed. Refresh cadence is 5s for both
+  panels (matches the goal state machine's heartbeat). The
+  delegations strip auto-hides when the manager is empty, so the
+  composer reclaims the bottom of the chat. A new
+  `src/__tests__/web-panels.test.ts` (6 tests) spawns the real
+  `ch serve` on a free port, pre-seeds `goals.json`, and asserts
+  the response shape for both endpoints (empty case, seeded
+  parent + child goals, `?id=<id>` detail with children, 404 on
+  unknown id, `?active=1` filtering). All 430 tests pass;
+  `npm run typecheck` is clean.
 
 ## Unreleased — Delegation
 

@@ -3,6 +3,59 @@
 All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased — Goals (revert + semantic replan)
+
+- **feat(goals): /revert CLI + semantic identical-replan guard**
+  (`src/agent/goals.ts`, `src/cli.ts`,
+  `src/__tests__/goals-semantic-replan.test.ts`,
+  `src/__tests__/goals-cli.test.ts`): ships the Q4 revert
+  granularity recommendation and the Phase-2 semantic
+  replan guard from
+  `plans/plan_phase1/notes/agnt-port-plan.md` §6.2 Q4 and
+  §6.1 Risk 4. Two changes:
+
+  1. **`ch goals revert <id> --to <n>`** — wires the Q4
+     recommendation: revert to a specific `currentIteration`.
+     The CLI parses `--to` (and the equals form `--to=N`),
+     defaults to 1 ("revert the last step"), and rejects
+     non-positive integers as a usage error. The store's
+     `revert(id, to, opts)` now accepts an optional
+     `opts.targetIteration`; the existing `currentIteration: 0`
+     default is preserved for backward compatibility. The
+     subcommand is in the `ch goals` help text and in the
+     `ch help` "Inspect & manage" group. `--json` emits the
+     reverted record.
+
+  2. **Semantic identical-replan guard** — replaces the
+     surface-text check in `runGoalStateMachine`'s re-planning
+     branch with a normalized comparison: lowercase, whitespace
+     strip, token sort, then compare. Two new helpers,
+     `normalizeForSemanticCompare(s)` and
+     `isSemanticallyIdentical(a, b)`, plus a stable
+     `SEMANTIC_IDENTICAL_REPLAN_REASON` constant. When the
+     runner detects a semantically identical plan on a
+     re-planning iteration, it aborts with
+     `status="failed"`, `loopStatus="failed"`, and writes the
+     reason to a new optional `GoalRecord.lastError` field
+     (also recorded as an evaluation with feedback carrying
+     the same reason). This catches the common LLM failure
+     mode where the planner regenerates the same plan in
+     different surface form ("Run tests" vs "run  tests"),
+     which the old byte-equal check missed.
+
+  New tests: 6 in `goals-semantic-replan.test.ts` (helpers +
+  state-machine integration, including the canonical
+  "Run tests" / "run  tests" case) and 13 in
+  `goals-cli.test.ts` (direct `GoalStore.revert` with
+  stubbed records + end-to-end subprocess tests of the CLI
+  command, default, equals form, usage errors, runtime
+  errors, and JSON output). One pre-existing test
+  (`goals: runGoalStateMachine reaches re-planning on
+  failed evaluation`) was updated to produce distinct plans
+  on each iteration — the old stub's identical-content
+  plans now correctly trigger the guard, which is the
+  intended behavior.
+
 ## Unreleased — Delegation
 
 - **feat(delegation): discriminated union over worker kinds (agent,

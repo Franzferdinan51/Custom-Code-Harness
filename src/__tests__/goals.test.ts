@@ -603,8 +603,17 @@ test("goals: runGoalStateMachine reaches re-planning on failed evaluation", asyn
 
   let planningCalls = 0;
   let execCalls = 0;
+  // The semantic identical-replan guard (see
+  // `goals-semantic-replan.test.ts`) fires when two consecutive
+  // plans normalize to the same form. To exercise the re-planning
+  // path on a *failed evaluation* — the original intent of this
+  // test — the stub must produce a different plan each iteration.
+  const PLANS = ["initial plan", "revised plan with new angle"];
   const stub: GoalRunAgentFn = async (phase) => {
-    if (phase === "planning") { planningCalls += 1; return { content: "plan", steps: 1 }; }
+    if (phase === "planning") {
+      planningCalls += 1;
+      return { content: PLANS[planningCalls - 1]!, steps: 1 };
+    }
     execCalls += 1;
     // First execution: no magic phrase. Second execution: has it.
     if (execCalls === 1) return { content: "first attempt — nothing here", steps: 1 };

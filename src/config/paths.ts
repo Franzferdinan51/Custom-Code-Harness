@@ -34,7 +34,19 @@ export const paths = {
   get cron() { return join(home(), "cron"); },
   get memory() { return join(home(), "memory"); },
   get context() { return join(home(), "context"); },
+  /** Legacy single-file v1/v2 location. New code reads/writes the
+   *  per-mission state via `goalsMissionFile(mission)` instead.
+   *  Kept here as a sentinel so the legacy migration can detect
+   *  and move v1/v2 data on first access. */
   get goals() { return join(home(), "goals.json"); },
+  /** Directory holding the per-mission goal stores. Created
+   *  lazily by the GoalStore constructor. */
+  get goalsDir() { return join(home(), "goals"); },
+  /** State file for the given mission. New missions
+   *  start at `$CH_HOME/goals/<mission>/state.json`. */
+  goalsMissionFile(mission: string): string {
+    return join(home(), "goals", mission, "state.json");
+  },
 } as const;
 
 export function ensurePaths(): void {

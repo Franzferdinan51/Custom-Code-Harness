@@ -14,6 +14,7 @@
 
 import type { Loop, LoopContext } from "./loop.js";
 import {
+  DEFAULT_MISSION,
   GoalStore,
   runGoalStateMachine,
   type GoalRecord,
@@ -29,6 +30,11 @@ export interface GoalLoopInput {
   providerId?: string;
   successCriteria?: { deliverables: string[]; qualityChecks?: string[] };
   parentGoalId?: string;
+  /** Mission id. The default GoalStore (when `store` is unset) is
+   *  constructed for this mission, and any new goal records are
+   *  stamped with it. Defaults to `DEFAULT_MISSION` ("default").
+   *  Ignored when `store` is provided. */
+  mission?: string;
   /** The runAgent bridge. If not supplied, the loop expects an
    *  external bridge (typically wired by the CLI or the delegation
    *  manager) and the run will be a no-op dispatch. */
@@ -61,7 +67,7 @@ export function goalLoop(): GoalLoop {
     kind: "goal",
     description: "plan → execute → evaluate → replan state machine (drives one objective)",
     async run(input: GoalLoopInput, ctx: LoopContext): Promise<GoalLoopOutput> {
-      const store = input.store ?? new GoalStore();
+      const store = input.store ?? new GoalStore({ mission: input.mission ?? DEFAULT_MISSION });
       const goal = input.goal ?? store.add({
         objective: input.objective,
         maxSteps: input.maxIterations ?? 8,

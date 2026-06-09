@@ -3,6 +3,53 @@
 All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased — Goals
+
+- **feat(goals): multi-mission support + `goals/` directory split**
+  (`src/agent/goals.ts`, `src/agent/loops/mission.ts`,
+  `src/agent/loops/goal.ts`, `src/agent/council.ts`,
+  `src/config/paths.ts`, `src/runtime.ts`, `src/cli.ts`,
+  `src/__tests__/goals-mission.test.ts`): adds the Q2 + Q10
+  pieces — multiple missions per process, one active at a time,
+  scoped to a per-mission state file. The runtime carries the
+  active mission; the CLI exposes it via `--mission <id>` on
+  `ch goal`, `ch goals`, and `ch council`.
+  - **`GoalStore({ mission })`** (`src/agent/goals.ts`):
+    per-mission isolation. Two stores for two missions see
+    two different files (`$CH_HOME/goals/<mission>/state.json`)
+    and never share records. New records are stamped with the
+    active mission. The legacy `{ file }` option is preserved
+    as a test escape hatch (no per-mission path, no migration).
+  - **Directory split** (`src/config/paths.ts`): `paths.goals`
+    is kept as a sentinel for the legacy single-file. New reads
+    and writes go through `paths.goalsMissionFile(mission)`.
+    The default mission triggers a one-time migration on
+    first access: a `$CH_HOME/goals.json` v1/v2 file is moved
+    to `$CH_HOME/goals/legacy/state.json` (records stamped
+    with `mission: "legacy"`) and the original is unlinked.
+  - **`--mission <id>` CLI flag** (`src/cli.ts`): added to
+    `buildContext` and forwarded through `SubcommandContext`
+    to the runtime. `ch goal`, `ch goals`, and `ch council`
+    accept it; the help text is updated. `ch goals list` now
+    prints `Goals in mission "<id>" (N):` so the active
+    mission is visible in the output. The `ch council` /
+    `councilAsGoalLoop` path also threads `mission` through
+    so a council deliberation shows up in the same mission
+    as the goal flow that spawned it.
+  - **`runtime.mission`** (`src/runtime.ts`): the active mission
+    is surfaced as a public readonly on `HarnessRuntime`,
+    defaulting to `DEFAULT_MISSION` ("default"). The runtime
+    constructs its `GoalStore` with `{ mission: this.mission }`
+    so all per-mission behavior flows from a single source.
+  - **13 new tests** (`src/__tests__/goals-mission.test.ts`)
+    covering: per-mission file isolation, cross-mission
+    invisibility, mission stamps round-tripping through
+    disk, the `<direct>` test escape hatch, the legacy
+    v1/v2 single-file migration (default-mission only),
+    no-clobber when the "legacy" mission already exists,
+    v1 `loopStatus = "pending"` backfill, and the path
+    shape (`$CH_HOME/goals/<mission>/state.json`).
+
 ## Unreleased — Delegation
 
 - **feat(delegation): discriminated union over worker kinds (agent,

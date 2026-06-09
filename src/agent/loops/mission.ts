@@ -19,7 +19,7 @@
 // whether to run, resume, or stop.
 
 import type { Loop, LoopContext } from "./loop.js";
-import { GoalStore, type GoalRecord, type GoalState } from "../goals.js";
+import { GoalStore, DEFAULT_MISSION, type GoalRecord, type GoalState } from "../goals.js";
 import { goalLoop, type GoalLoop, type GoalLoopInput, type GoalLoopOutput } from "./goal.js";
 
 export interface MissionInput {
@@ -34,7 +34,13 @@ export interface MissionInput {
   /** Max iterations for the inner goal loop. Forwarded to a fresh
    *  goal only; resumed goals keep their original cap. */
   maxIterations?: number;
-  /** Optional store. Defaults to a fresh GoalStore. */
+  /** Mission id. The default GoalStore (when `store` is unset) is
+   *  constructed for this mission, and any new goal records are
+   *  stamped with it. Defaults to `DEFAULT_MISSION` ("default").
+   *  Ignored when `store` is provided — the caller has already
+   *  chosen the store. */
+  mission?: string;
+  /** Optional store. Defaults to a fresh `new GoalStore({ mission })`. */
   store?: GoalStore;
   /** Optional: forwarded to the GoalLoop. */
   runAgent?: GoalLoopInput["runAgent"];
@@ -60,7 +66,7 @@ export function missionLoop(): MissionLoop {
     kind: "mission",
     description: "perpetual driver — owns the long-running GoalLoop and survives restarts",
     async run(input: MissionInput, ctx: LoopContext): Promise<MissionOutput> {
-      const store = input.store ?? new GoalStore();
+      const store = input.store ?? new GoalStore({ mission: input.mission ?? DEFAULT_MISSION });
       let mode: "created" | "resumed" | "noop" = "noop";
       let goal: GoalRecord | null = null;
       if (input.resumeId) {

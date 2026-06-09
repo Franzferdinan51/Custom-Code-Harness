@@ -30,6 +30,13 @@ export interface RuntimeOptions {
   ephemeral?: boolean;
   /** Skip AGENTS.md/CLAUDE.md loading. */
   noContext?: boolean;
+  /** Active mission id. The runtime constructs its GoalStore
+   *  scoped to this mission; sub-goals created during a run are
+   *  stamped with the same id. Defaults to `DEFAULT_MISSION`
+   *  ("default") — the v1/v2 single-file structure is migrated
+   *  to the "legacy" mission on first access, so "default" always
+   *  starts fresh. */
+  mission?: string;
 }
 
 export interface RuntimeOutputHandler {
@@ -77,7 +84,13 @@ export class HarnessRuntime implements SlashRuntime {
   readonly skills: SkillRegistry;
   readonly memory: MemoryStore;
   readonly tools: ToolRegistry;
-  /** Persisted goal store. */
+  /** Active mission for this runtime. Imported from `DEFAULT_MISSION`
+   *  indirectly via the GoalStore — surfaced here so callers can
+   *  show "mission: <id>" in their UI / logs without reaching
+   *  into the store. */
+  readonly mission: string;
+  /** Persisted goal store. Scoped to `this.mission` — see
+   *  RuntimeOptions.mission. */
   readonly goalStore: GoalStore;
   /** Sub-agents spawned during this session. */
   readonly subagentHistory: Array<{ name: string; prompt: string; status: string; at: number; cost: number; steps: number }> = [];
@@ -139,7 +152,8 @@ export class HarnessRuntime implements SlashRuntime {
     this.settings = loadSettings();
     this.providerRegistry = new ProviderRegistry(this.settings);
     this.subagents = new SubAgentManager(this.providerRegistry, this.settings, { cwd: this.cwd });
-    this.goalStore = new GoalStore();
+    this.mission = opts.mission ?? "default";
+    this.goalStore = new GoalStore({ mission: this.mission });
     this.delegations = new DelegationManager({
       providers: this.providerRegistry,
       settings: this.settings,

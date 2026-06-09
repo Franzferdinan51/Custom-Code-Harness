@@ -5,7 +5,36 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## [Unreleased]
 
-### Added
+### Added — REPL
+
+- **Codex/Claude-Code/DuckHive-style streaming REPL replaces the
+  OpenTUI TUI as the default** (`src/ui/repl-v2.ts`,
+  `src/cli.ts`, `src/__tests__/repl.test.ts`): the new `ch`,
+  `ch chat`, `ch tui`, and `ch repl` surfaces all default to a thin
+  streaming REPL in the spirit of Codex CLI / Claude Code /
+  OpenClaude / DuckHive. Layout matches `plans/plan_phase1/notes/
+  agnt-port-plan.md` §4: a 1-line header, a scrolling transcript of
+  user / assistant / thinking / plan / tool / info / error entries,
+  a multi-line `ch › ` prompt at the bottom, and a 1-line status
+  footer (`<model> · <tokens> · <steps> · <wallclock> · session · /help`).
+  Multi-line input uses `\` + Enter to continue and Enter alone to
+  send. Slash commands route through the same `BUILTIN_REGISTRY`
+  the legacy TUI used, so the two surfaces can't drift. Tool calls
+  render as inline `[tool] name k=v k=v` callout boxes that appear
+  in-stream, not in a side panel. Uses `node:readline` only — zero
+  new dependencies. The legacy four-pane OpenTUI TUI is still on
+  disk and reachable via `ch tui --legacy` (or `CH_FORCE_TUI=1`).
+  Honors `CH_FORCE_REPL=1` to force the new REPL and
+  `CH_FORCE_TUI=1` to force the legacy TUI (per the spec's
+  test matrix in §4.8).
+
+- **Phase-1 AGI-loop porting blueprint** (`plans/plan_phase1/notes/
+  agnt-port-plan.md`): 679-line spike document covering goal
+  lifecycle (§1), sub-agent delegation union (§2), loop
+  hierarchy (§3), REPL simplification spec (§4, the source of
+  truth for this entry), backwards-compatibility plan (§5), and
+  risks / open questions (§6). Branch `phase1/spike`; commits
+  `c6af9b6` and `f814eaa`.
 
 - **`/redo` slash command + `HarnessRuntime.undoLastTurn()` /
   `redoLastTurn()` pair + redo stack** (`src/runtime.ts`,

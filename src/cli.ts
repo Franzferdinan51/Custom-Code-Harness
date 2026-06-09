@@ -37,7 +37,10 @@ interface SubcommandContext {
   maxSteps?: string;
   port?: string;
   host?: string;
+  /** Force the simple line-based REPL (`ch repl --simple`, `--no-tui`). */
   noTui?: boolean;
+  /** Force the legacy OpenTUI TUI (`ch tui --legacy`, `CH_FORCE_TUI=1`). */
+  legacy?: boolean;
   noOpen?: boolean;
   // Per-subcommand flag (used by `ch mcp`):
   stdio?: boolean;
@@ -55,17 +58,17 @@ function registerSubcommand(name: string, description: string, usage: string, ru
   SUBCOMMANDS.set(name, { description, usage, run });
 }
 
-registerSubcommand("chat", "Start an interactive chat session (the default — uses the TUI when available).",
-  "ch chat [--cwd <path>] [--provider <id>] [--model <name>] [-c | -r | -s <id>] [--no-tui]",
+registerSubcommand("chat", "Start an interactive chat session. Default uses the streaming REPL; pass --legacy for the OpenTUI TUI, --no-tui for the simple line REPL.",
+  "ch chat [--cwd <path>] [--provider <id>] [--model <name>] [-c | -r | -s <id>] [--legacy | --no-tui]",
   async (ctx) => { return startReplSession(ctx); });
 
-registerSubcommand("repl", "Force the simple line-based REPL (no TUI). Useful for piping or old terminals.",
-  "ch repl [--cwd <path>] [--provider <id>] [--model <name>] [-c | -r | -s <id>]",
-  async (ctx) => { return startReplSession({ ...ctx, noTui: true }); });
+registerSubcommand("repl", "Start the streaming REPL (the new default). Pass --no-tui for the simple line REPL, --legacy for the OpenTUI TUI.",
+  "ch repl [--cwd <path>] [--provider <id>] [--model <name>] [-c | -r | -s <id>] [--legacy | --no-tui]",
+  async (ctx) => { return startReplSession(ctx); });
 
-registerSubcommand("tui", "Force the full TUI (auto-detected by default in a TTY).",
-  "ch tui",
-  async (ctx) => { return startReplSession({ ...ctx, noTui: false }); });
+registerSubcommand("tui", "Start the streaming REPL. Pass --legacy for the OpenTUI TUI. Env: CH_FORCE_TUI=1 forces legacy, CH_FORCE_REPL=1 forces the streaming REPL.",
+  "ch tui [--legacy]",
+  async (ctx) => { return startReplSession(ctx); });
 
 registerSubcommand("run", "Quick one-shot: run a single prompt and exit.",
   "ch run <prompt>  [-p, --print] [--provider <id>] [--model <name>] [--cwd <path>]",
@@ -281,6 +284,8 @@ function showHelp(cmd?: string): number {
   lines.push("  OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL");
   lines.push("  LMSTUDIO_API_KEY, LMSTUDIO_BASE_URL, LMSTUDIO_MODEL, LM_API_TOKEN");
   lines.push("  CH_HOME (default ~/.codingharness)");
+  lines.push("  CH_FORCE_TUI=1  force the legacy OpenTUI TUI (for CI / scripts)");
+  lines.push("  CH_FORCE_REPL=1 force the new streaming REPL");
   lines.push("  CODINGHARNESS_DEBUG=1 for verbose logging");
   lines.push("  NO_COLOR=1 to disable ANSI");
   lines.push("");
@@ -350,6 +355,7 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
         port: { type: "string" },
         host: { type: "string" },
         "no-tui": { type: "boolean" },
+        legacy: { type: "boolean" },
         "no-open": { type: "boolean" },
         check: { type: "boolean" },
         channel: { type: "string" },
@@ -384,6 +390,7 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
     port: parsed.values.port ? String(parsed.values.port) : undefined,
     host: parsed.values.host ? String(parsed.values.host) : undefined,
     noTui: !!parsed.values["no-tui"],
+    legacy: !!parsed.values.legacy,
     noOpen: !!parsed.values["no-open"],
     stdio: !!parsed.values.stdio,
     approveBash: !!parsed.values["approve-bash"],
@@ -420,8 +427,19 @@ async function startReplSession(ctx: SubcommandContext & { initialPrompt?: strin
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
 
-  // Decide TUI vs simple REPL.
-  const wantTui = !ctx.noTui && isTuiCapable();
+  // Decide which surface to launch. Order of precedence:
+  //   1. Env vars:  CH_FORCE_TUI=1 → legacy OpenTUI TUI
+  //                 CH_FORCE_REPL=1 → streaming REPL (forces TTY-bypass)
+  //   2. CLI flags: --legacy → OpenTUI TUI; --no-tui → simple line REPL
+  //   3. TTY:       simple REPL on pipe; streaming REPL on TTY;
+  //                 OpenTUI TUI on TTY if user explicitly opted in.
+  // The new default is the streaming REPL — same UX shape as Codex /
+  // Claude Code / DuckHive. The OpenTUI four-pane TUI is still on disk
+  // and reachable via `ch tui --legacy` (or `CH_FORCE_TUI=1`).
+  const forceTui = process.env.CH_FORCE_TUI === "1";
+  const forceRepl = process.env.CH_FORCE_REPL === "1";
+  const wantLegacy = ctx.legacy || forceTui;
+  const wantSimple = ctx.noTui || (forceRepl && !isTuiCapable() && process.stdin.isTTY === false);
 
   const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
 
@@ -437,11 +455,27 @@ async function startReplSession(ctx: SubcommandContext & { initialPrompt?: strin
     if (list[0]) { try { await runtime.setSession(list[0].id); } catch { /* ignore */ } }
   }
 
-  if (wantTui) {
+  if (wantLegacy) {
+    if (!isTuiCapable()) {
+      // Legacy OpenTUI requires a real TTY. Fall back to the streaming
+      // REPL so the user still gets an interactive surface.
+      return runNewRepl(runtime, ctx);
+    }
     return runTui(runtime, ctx);
   }
 
-  return runSimpleRepl(runtime, ctx);
+  if (wantSimple) {
+    return runSimpleRepl(runtime, ctx);
+  }
+
+  // Default: new streaming REPL. The driver itself detects a pipe and
+  // falls back to the simple line REPL (so piping stdin still works).
+  return runNewRepl(runtime, ctx);
+}
+
+async function runNewRepl(runtime: HarnessRuntime, ctx: SubcommandContext & { initialPrompt?: string }): Promise<number> {
+  const { runReplV2 } = await import("./ui/repl-v2.js");
+  return runReplV2(runtime, { cwd: ctx.cwd, initialPrompt: ctx.initialPrompt });
 }
 
 async function runSimpleRepl(runtime: HarnessRuntime, ctx: SubcommandContext & { initialPrompt?: string }): Promise<number> {
@@ -1479,6 +1513,7 @@ async function runLegacyFlagMode(argv: string[]): Promise<number> {
         session: { type: "string", short: "s" },
         "no-session": { type: "boolean" },
         "no-tui": { type: "boolean" },
+        legacy: { type: "boolean" },
         cwd: { type: "string" },
         provider: { type: "string" },
         model: { type: "string" },
@@ -1516,7 +1551,7 @@ async function runLegacyFlagMode(argv: string[]): Promise<number> {
     const stdin = (await readStdin()).trim();
     if (stdin) return runOneShot({ args: [stdin], cwd: String(opts.cwd ?? process.cwd()), ephemeral: !!opts["no-session"], provider: opts.provider ? String(opts.provider) : undefined, model: opts.model ? String(opts.model) : undefined, sessionId: opts.session ? String(opts.session) : undefined, json: !!opts.json }, "agent");
   }
-  return startReplSession({ args: [], cwd: String(opts.cwd ?? process.cwd()), ephemeral: !!opts["no-session"], provider: opts.provider ? String(opts.provider) : undefined, model: opts.model ? String(opts.model) : undefined, sessionId: opts.session ? String(opts.session) : undefined, cont: !!opts.continue, resume: opts.resume ? String(opts.resume) : undefined, noTui: !!opts["no-tui"] });
+  return startReplSession({ args: [], cwd: String(opts.cwd ?? process.cwd()), ephemeral: !!opts["no-session"], provider: opts.provider ? String(opts.provider) : undefined, model: opts.model ? String(opts.model) : undefined, sessionId: opts.session ? String(opts.session) : undefined, cont: !!opts.continue, resume: opts.resume ? String(opts.resume) : undefined, noTui: !!opts["no-tui"], legacy: !!opts.legacy });
 }
 
 async function startServer(runtime: import("./runtime.js").HarnessRuntime, opts: { port: number; host: string }): Promise<void> {

@@ -385,6 +385,8 @@ export class DelegationManager {
 
 ## 3. Loop Hierarchy (5 tiers)
 
+> **Confirmed by orchestrator (2026-06-09):** Council lives at Tier 2 (Goal) — `ch council` becomes a `GoalDelegation` with `successCriteria` and a `plan` of `agent` tasks. The "council shows up in `ch goals list`" behavior is a *feature*. Track 1 implements this; track 3 (tui-expert) only needs to know the goal record shape, not a separate council path.
+
 This collapses what agnt-gg splits across `OrchestratorService`, `TaskOrchestrator`, `goal-runner`, and the per-task `executeTool` into a single stack. The big idea: **make council a kind of goal loop, not a parallel system.**
 
 | Tier | What it is | agnt-gg equivalent | Our file (current) | Our file (target) | Diff in one sentence |

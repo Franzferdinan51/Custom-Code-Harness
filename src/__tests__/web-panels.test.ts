@@ -160,8 +160,8 @@ test("GET /v1/goals returns the seeded goals with the expected shape", async () 
         },
       ],
     };
-    mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "goals.json"), JSON.stringify(goalsJson, null, 2), "utf-8");
+    mkdirSync(join(home, "goals", "default"), { recursive: true });
+    writeFileSync(join(home, "goals", "default", "state.json"), JSON.stringify(goalsJson, null, 2), "utf-8");
 
     const { port, kill } = await startServer(home);
     try {
@@ -233,8 +233,8 @@ test("GET /v1/goals?id=<id> returns the goal + its children + evaluations", asyn
         },
       ],
     };
-    mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "goals.json"), JSON.stringify(goalsJson, null, 2), "utf-8");
+    mkdirSync(join(home, "goals", "default"), { recursive: true });
+    writeFileSync(join(home, "goals", "default", "state.json"), JSON.stringify(goalsJson, null, 2), "utf-8");
 
     const { port, kill } = await startServer(home);
     try {
@@ -279,8 +279,8 @@ test("GET /v1/goals?active=1 returns only pending + in_progress goals", async ()
         { id: "g-failed", objective: "failed", status: "failed", loopStatus: "failed", createdAt: now - 5_000, updatedAt: now - 1_000, maxSteps: 4, stepsTaken: 4 },
       ],
     };
-    mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, "goals.json"), JSON.stringify(goalsJson, null, 2), "utf-8");
+    mkdirSync(join(home, "goals", "default"), { recursive: true });
+    writeFileSync(join(home, "goals", "default", "state.json"), JSON.stringify(goalsJson, null, 2), "utf-8");
 
     const { port, kill } = await startServer(home);
     try {

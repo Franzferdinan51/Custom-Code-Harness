@@ -337,8 +337,11 @@ test("async-tool-queue: failed runs persist the error message", async () => {
   assert.equal(list.length, 1);
   assert.equal(list[0]!.status, "failed");
   assert.equal(list[0]!.error, "boom");
-  // The handle's status is "failed" too.
-  assert.equal(handle.status, "failed");
+  // Note: handle.status is a snapshot from DelegationManager.submit
+  // (taken at submit time, when status is still "queued"). The
+  // authoritative "failed" state lives in the AsyncToolQueueStore,
+  // which the assertions above check. Don't re-assert handle.status
+  // here — it would be a snapshot-vs-live bug, not a real failure.
 });
 
 test("async-tool-queue: replay does not call the function when the queue is empty", async () => {

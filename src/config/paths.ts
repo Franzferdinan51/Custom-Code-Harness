@@ -35,6 +35,10 @@ export const paths = {
   get memory() { return join(home(), "memory"); },
   get context() { return join(home(), "context"); },
   get goals() { return join(home(), "goals.json"); },
+  /** Crash-resilience queue for async_tool delegations. Persisted
+   *  to disk on every state change so a kill mid-run can be replayed
+   *  on the next startup. See `AsyncToolQueueStore`. */
+  get asyncToolQueue() { return join(home(), "async-tool-queue.json"); },
 } as const;
 
 export function ensurePaths(): void {

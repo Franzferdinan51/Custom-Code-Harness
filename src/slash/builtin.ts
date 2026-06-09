@@ -288,6 +288,71 @@ const exitCommand: SlashCommand = {
   run(_a, ctx) { ctx.runtime?.().quit(); },
 };
 
+/**
+ * `/steer` — manage the mid-run steer queue. Steer is the
+ * `agnt-gg` / OrchestratorService.js primitive: when the user types
+ * something while a turn is busy, the text is stashed in an
+ * in-memory FIFO and applied to the last `role: "tool"` message on
+ * the next turn boundary. `/steer` lets the user inspect and edit
+ * the queue directly.
+ *
+ *   /steer             — list queued entries
+ *   /steer <id>        — drop entry <id> from the queue
+ *   /steer drop <id>   — alias for /steer <id>
+ *   /steer clear       — empty the queue
+ *
+ * The queue lives on the REPL's SteerQueue instance; the slash
+ * command only knows about it through a runtime hook so the
+ * registry stays decoupled from the UI layer.
+ */
+const steerCommand: SlashCommand = {
+  name: "steer",
+  description: "Show, drop, or clear queued mid-run steer entries.",
+  group: "session",
+  usage: "/steer [drop <id>|clear]",
+  run(args, ctx) {
+    const rt = ctx.runtime as
+      | { steerQueue?: { list(): Array<{ id: number; text: string; queuedAt: number }>; remove(id: number): unknown; clear(): void } }
+      | undefined;
+    if (!rt?.steerQueue) return "(steer queue not available in this runtime)";
+    const q = rt.steerQueue;
+    const trimmed = args.trim();
+    if (!trimmed) {
+      const list = q.list();
+      if (list.length === 0) return "steer queue: empty";
+      const lines: string[] = ["steer queue (" + list.length + "):"];
+      for (const e of list) {
+        const when = new Date(e.queuedAt).toISOString().slice(11, 19);
+        const preview = e.text.replace(/\s+/g, " ").trim();
+        const trunc = preview.length > 60 ? preview.slice(0, 57) + "…" : preview;
+        lines.push("  #" + e.id + "  " + when + "  " + trunc);
+      }
+      return lines.join("\n");
+    }
+    const parts = trimmed.split(/\s+/);
+    const sub = parts[0];
+    // /steer <id> — shorthand for `drop <id>`. Spec: "Add /steer <id>
+    // slash command to clear a specific queued entry."
+    if (sub && /^\d+$/.test(sub)) {
+      const id = parseInt(sub, 10);
+      const removed = q.remove(id);
+      if (removed) return "✓ dropped steer #" + id;
+      return "no such steer entry: #" + id;
+    }
+    if (sub === "drop" && parts[1] && /^\d+$/.test(parts[1])) {
+      const id = parseInt(parts[1], 10);
+      const removed = q.remove(id);
+      if (removed) return "✓ dropped steer #" + id;
+      return "no such steer entry: #" + id;
+    }
+    if (sub === "clear") {
+      q.clear();
+      return "✓ steer queue cleared";
+    }
+    return "usage: /steer [drop <id>|clear]   (or just /steer <id>)";
+  },
+};
+
 // ---------- /session / /sessions ----------
 
 const sessionCommand: SlashCommand = {
@@ -1595,6 +1660,7 @@ BUILTIN_REGISTRY.register(newCommand);
 BUILTIN_REGISTRY.register(resetCommand);
 BUILTIN_REGISTRY.register(quitCommand);
 BUILTIN_REGISTRY.register(exitCommand);
+BUILTIN_REGISTRY.register(steerCommand);
 BUILTIN_REGISTRY.register(sessionCommand);
 BUILTIN_REGISTRY.register(sessionsCommand);
 BUILTIN_REGISTRY.register(resumeCommand);

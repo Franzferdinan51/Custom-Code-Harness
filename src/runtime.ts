@@ -125,6 +125,25 @@ export class HarnessRuntime implements SlashRuntime {
     return () => { if (this.outputHandler === fn) this.outputHandler = null; };
   }
 
+  /** Attach the host's mid-run steer queue. The REPL owns the
+   *  SteerQueue; this just exposes a narrow view so the `/steer`
+   *  slash command can inspect / drop / clear entries without
+   *  importing the UI layer. The runtime never mutates the queue —
+   *  it's a one-way binding. */
+  setSteerQueue(q: NonNullable<SlashRuntime["steerQueue"]> | null): () => void {
+    this._steerQueue = q;
+    return () => { if (this._steerQueue === q) this._steerQueue = null; };
+  }
+  private _steerQueue: NonNullable<SlashRuntime["steerQueue"]> | null = null;
+
+  /** Public view of the steer queue, matching the `SlashRuntime.steerQueue`
+   *  shape. Returns `undefined` when no host has attached a queue
+   *  (legacy CLI, tests, desktop, etc.) so the `/steer` slash command
+   *  can short-circuit with a friendly message. */
+  get steerQueue(): NonNullable<SlashRuntime["steerQueue"]> | undefined {
+    return this._steerQueue ?? undefined;
+  }
+
   setGoalActivity(state: GoalActivityState | null): void {
     this.goalActivity = state ? { ...state } : null;
   }

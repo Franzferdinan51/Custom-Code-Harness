@@ -26,12 +26,15 @@
 // runtime.
 
 import { EventEmitter } from "node:events";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { log } from "../util/logger.js";
 import { runGoalStateMachine, type GoalRecord, type GoalState, type GoalStore } from "./goals.js";
 import type { GoalRunAgentFn, RunGoalOptions } from "./goals.js";
 import type { Settings } from "../config/settings.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import { SubAgentManager, type SubAgentResult } from "./subagent.js";
+import { paths } from "../config/paths.js";
 
 // ---------- The union ----------
 
@@ -223,6 +226,224 @@ export interface DelegationRuntimeDeps {
     context: HumanApprovalDelegation["context"];
     timeoutSeconds?: number;
   }) => Promise<{ decision: "allow" | "deny"; reason?: string }>;
+  /** Async-tool queue store. Optional. When set, async_tool
+   *  delegations are persisted to disk so a kill mid-run can be
+   *  replayed on the next startup. The constructor of
+   *  `DelegationManager` will call `store.replayPending(...)` (if a
+   *  replayer is also wired) to drain the queue. */
+  asyncToolQueue?: AsyncToolQueueStore;
+  /**
+   * Function to actually execute an async tool. The harness is
+   * crash-resistant across restarts: pending async_tool delegations
+   * are persisted to disk and replayed on the next startup.
+   * Therefore the function MUST be idempotent — calling it twice
+   * with the same `(toolName, args)` must produce the same
+   * observable result, with no duplicate side effects on the
+   * second call. The AsyncToolQueueStore uses the delegation id +
+   * toolName + args as the dedup key.
+   *
+   * Idempotency contract (callers MUST honor):
+   *   - Pure functions: trivially idempotent. No state to dedupe.
+   *   - Side-effectful functions: callers are expected to check
+   *     whether the work has already been done (e.g. by looking up
+   *     a record by some derived key) and short-circuit if so.
+   *   - The function should not throw on a "duplicate" detection —
+   *     return the existing result instead.
+   *
+   * When unset, the manager falls back to the legacy in-memory
+   * echo (Phase 1 behavior).
+   */
+  executeFunction?: AsyncToolExecuteFn;
+  /**
+   * Custom file path for the async-tool queue. Defaults to
+   * `$CH_HOME/async-tool-queue.json`. Tests pass a per-fixture tmp
+   * file here to keep state isolated.
+   */
+  asyncToolQueueFile?: string;
+}
+
+/** Signature of the function that actually executes an async tool.
+ *  See `DelegationRuntimeDeps.executeFunction` for the idempotency
+ *  contract. */
+export type AsyncToolExecuteFn = (
+  toolName: string,
+  args: Record<string, unknown>,
+) => Promise<unknown>;
+
+// ---------- AsyncToolQueueStore ----------
+//
+// Crash-resilience for the async_tool delegation kind. The store is
+// a tiny JSON file under $CH_HOME that records every entry with its
+// status. On every state change the file is rewritten atomically
+// (temp + rename). On startup, the DelegationManager scans the file
+// for entries stuck in "pending" or "running" and replays them.
+//
+// The store deliberately does NOT know how to run the tool — it
+// only persists state. The replay happens in the manager, which
+// owns the executeFunction.
+
+export type AsyncToolQueueStatus = "pending" | "running" | "completed" | "failed";
+
+export interface AsyncToolQueueEntry {
+  /** Delegation id. Stable across restarts. */
+  id: string;
+  /** Tool name. */
+  toolName: string;
+  /** Tool args. */
+  args: Record<string, unknown>;
+  status: AsyncToolQueueStatus;
+  /** ms-since-epoch when the entry was added. */
+  queuedAt: number;
+  /** ms-since-epoch when the entry was last advanced to "running". */
+  startedAt?: number;
+  /** ms-since-epoch when the entry reached a terminal status. */
+  completedAt?: number;
+  /** Successful result (terminal status: "completed"). */
+  result?: unknown;
+  /** Error message (terminal status: "failed"). */
+  error?: string;
+}
+
+export interface AsyncToolQueueStoreOptions {
+  /** Path to the JSON file. Defaults to `paths.asyncToolQueue`. */
+  file?: string;
+}
+
+/** Persisted async-tool queue. Reads the JSON file on construction
+ *  and rewrites it on every mutation. Safe to construct multiple
+ *  times against the same file — atomic temp+rename ensures
+ *  concurrent writers don't corrupt the file.
+ *
+ *  Schema (v1):
+ *
+ *      {
+ *        "version": 1,
+ *        "entries": [AsyncToolQueueEntry, ...]
+ *      }
+ *
+ *  Future versions can add new fields; readers must tolerate unknown
+ *  ones. The store never deletes entries on its own — completed /
+ *  failed entries stay in the file for audit until the user calls
+ *  `purge()`.
+ */
+export class AsyncToolQueueStore {
+  readonly file: string;
+  private entries: AsyncToolQueueEntry[] = [];
+
+  constructor(opts: AsyncToolQueueStoreOptions = {}) {
+    this.file = opts.file ?? paths.asyncToolQueue;
+    this.entries = this.readPersisted(this.file);
+  }
+
+  /** Add a new entry in "pending" state. Returns the entry as
+   *  persisted. */
+  add(input: { id: string; toolName: string; args: Record<string, unknown> }): AsyncToolQueueEntry {
+    const entry: AsyncToolQueueEntry = {
+      id: input.id,
+      toolName: input.toolName,
+      args: input.args,
+      status: "pending",
+      queuedAt: Date.now(),
+    };
+    this.entries.push(entry);
+    this.writePersisted();
+    return entry;
+  }
+
+  /** Mark an entry as "running". Idempotent: a second call is a
+   *  no-op. */
+  markRunning(id: string, at: number = Date.now()): void {
+    const e = this.entries.find((x) => x.id === id);
+    if (!e) return;
+    if (e.status === "running" || e.status === "completed" || e.status === "failed") return;
+    e.status = "running";
+    e.startedAt = at;
+    this.writePersisted();
+  }
+
+  /** Mark an entry as "completed" with a result. */
+  markCompleted(id: string, result: unknown, at: number = Date.now()): void {
+    const e = this.entries.find((x) => x.id === id);
+    if (!e) return;
+    e.status = "completed";
+    e.completedAt = at;
+    e.result = result;
+    delete e.error;
+    this.writePersisted();
+  }
+
+  /** Mark an entry as "failed" with an error message. */
+  markFailed(id: string, error: string, at: number = Date.now()): void {
+    const e = this.entries.find((x) => x.id === id);
+    if (!e) return;
+    e.status = "failed";
+    e.completedAt = at;
+    e.error = error;
+    delete e.result;
+    this.writePersisted();
+  }
+
+  /** Remove a specific entry by id. Returns true when an entry was
+   *  removed. */
+  remove(id: string): boolean {
+    const before = this.entries.length;
+    this.entries = this.entries.filter((e) => e.id !== id);
+    if (this.entries.length === before) return false;
+    this.writePersisted();
+    return true;
+  }
+
+  /** All entries (snapshot). */
+  list(): AsyncToolQueueEntry[] {
+    return [...this.entries];
+  }
+
+  /** Pending + running entries — the ones that the manager should
+   *  consider for replay on startup. */
+  listPending(): AsyncToolQueueEntry[] {
+    return this.entries.filter((e) => e.status === "pending" || e.status === "running");
+  }
+
+  /** Drop every terminal entry (completed / failed) from the file.
+   *  Returns the number of entries removed. */
+  purge(): number {
+    const before = this.entries.length;
+    this.entries = this.entries.filter((e) => e.status === "pending" || e.status === "running");
+    const removed = before - this.entries.length;
+    if (removed > 0) this.writePersisted();
+    return removed;
+  }
+
+  /** Wipe the file. Used by tests; rarely useful in production. */
+  clear(): void {
+    this.entries = [];
+    this.writePersisted();
+  }
+
+  // ---------- internals ----------
+
+  private readPersisted(file: string): AsyncToolQueueEntry[] {
+    if (!existsSync(file)) return [];
+    try {
+      const raw = readFileSync(file, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.entries)) {
+        return parsed.entries.filter((e: unknown) => e && typeof e === "object" && "id" in (e as Record<string, unknown>));
+      }
+      return [];
+    } catch (e) {
+      log.warn("async-tool-queue: failed to parse " + file + " — starting empty (" + (e as Error).message + ")");
+      return [];
+    }
+  }
+
+  private writePersisted(): void {
+    mkdirSync(dirname(this.file), { recursive: true });
+    const tmp = this.file + ".tmp";
+    const payload = JSON.stringify({ version: 1, entries: this.entries }, null, 2);
+    writeFileSync(tmp, payload, "utf-8");
+    renameSync(tmp, this.file);
+  }
 }
 
 // ---------- The manager ----------
@@ -251,6 +472,11 @@ export class DelegationManager {
     this.deps.goalStore.subscribe({
       onEnter: (state, goal) => this.onGoalEnter(state, goal),
     });
+    // Crash-resilience: replay any async_tool entries that were
+    // pending / running when the previous process died. The
+    // AsyncToolQueueStore writes the file atomically on every state
+    // change, so even a SIGKILL leaves a coherent record.
+    this.replayAsyncToolQueue();
   }
 
   /** The primary contract. Submit a delegation; return a handle
@@ -521,19 +747,109 @@ export class DelegationManager {
     signal: AbortSignal,
     emit: (ev: DelegationEvent) => void,
   ): Promise<{ value: DelegationResult; cancelled: boolean }> {
-    // Phase 1: single-shot. The schedule field is reserved for
-    // periodic re-runs (Phase 2: matches agnt-gg's
-    // `_interval` / `_stopAfter` / `_duration`).
     emit({ kind: "log", line: "[async_tool] " + work.toolName });
-    const result: DelegationResult = {
-      kind: "async_tool",
-      toolName: work.toolName,
-      iterations: 1,
-      result: { echoed: work.toolName, args: work.args, at: Date.now() },
-    };
-    if (signal.aborted) return { value: result, cancelled: true };
-    emit({ kind: "progress", at: Date.now(), ratio: 1, note: "single-shot complete" });
-    return { value: result, cancelled: false };
+    // Two paths:
+    //   1. With a store + executeFunction (crash-resilient): the
+    //      entry is added to the store before run, marked running,
+    //      then completed/failed when the function returns. If the
+    //      manager is killed mid-run, the file has the entry in
+    //      "running" state and the next startup will replay it
+    //      (see `replayAsyncToolQueue`).
+    //   2. Without a store (legacy in-memory): echo result, like
+    //      Phase 1.
+    if (!this.deps.asyncToolQueue || !this.deps.executeFunction) {
+      // Legacy in-memory path. Kept for backward compatibility with
+      // the Phase 1 tests and any host that doesn't wire the store.
+      const result: DelegationResult = {
+        kind: "async_tool",
+        toolName: work.toolName,
+        iterations: 1,
+        result: { echoed: work.toolName, args: work.args, at: Date.now() },
+      };
+      if (signal.aborted) return { value: result, cancelled: true };
+      emit({ kind: "progress", at: Date.now(), ratio: 1, note: "single-shot complete" });
+      return { value: result, cancelled: false };
+    }
+    return this.runAsyncToolPersisted(work, signal, emit);
+  }
+
+  /** Crash-resilient async_tool path. Writes the entry to the
+   *  AsyncToolQueueStore before run, then runs `executeFunction`,
+   *  then records the terminal state. The function MUST be
+   *  idempotent — see the `executeFunction` doc on
+   *  `DelegationRuntimeDeps`. */
+  private async runAsyncToolPersisted(
+    work: AsyncToolDelegation,
+    signal: AbortSignal,
+    emit: (ev: DelegationEvent) => void,
+  ): Promise<{ value: DelegationResult; cancelled: boolean }> {
+    const store = this.deps.asyncToolQueue!;
+    const exec = this.deps.executeFunction!;
+    const id = work.id ?? newDelegationId();
+    // Add (or adopt) the entry. The replay path may have already
+    // added it as "running" — `add` is not idempotent (it would
+    // duplicate), so we use a check first.
+    let entry = store.list().find((e) => e.id === id);
+    if (!entry) entry = store.add({ id, toolName: work.toolName, args: work.args });
+    store.markRunning(id);
+    emit({ kind: "log", line: "[async_tool] persisted entry " + id + " (" + entry.status + ")" });
+
+    if (signal.aborted) {
+      store.markFailed(id, "cancelled before run");
+      return { value: { kind: "async_tool", toolName: work.toolName, iterations: 1, result: { cancelled: true } }, cancelled: true };
+    }
+    try {
+      const result = await exec(work.toolName, work.args);
+      if (signal.aborted) {
+        store.markFailed(id, "cancelled after run");
+        return { value: { kind: "async_tool", toolName: work.toolName, iterations: 1, result }, cancelled: true };
+      }
+      store.markCompleted(id, result);
+      emit({ kind: "progress", at: Date.now(), ratio: 1, note: "single-shot complete" });
+      return { value: { kind: "async_tool", toolName: work.toolName, iterations: 1, result }, cancelled: false };
+    } catch (e) {
+      const msg = (e as Error).message;
+      store.markFailed(id, msg);
+      throw e;
+    }
+  }
+
+  /** On startup, scan the queue for entries stuck in pending / running
+   *  and re-run them. The executeFunction MUST be idempotent — see
+   *  the doc on `DelegationRuntimeDeps.executeFunction`. Each replay
+   *  is fire-and-forget at the manager level (the AsyncToolQueueStore
+   *  records the result), but we await the function for ordering
+   *  with the constructor so tests can assert the result
+   *  deterministically. */
+  private replayAsyncToolQueue(): void {
+    const store = this.deps.asyncToolQueue;
+    const exec = this.deps.executeFunction;
+    if (!store || !exec) return;
+    const pending = store.listPending();
+    if (pending.length === 0) return;
+    log.info("async-tool-queue: replaying " + pending.length + " pending entr" + (pending.length === 1 ? "y" : "ies"));
+    for (const entry of pending) {
+      // Replay is best-effort and detached: the manager is already
+      // up; we just want the function to run and record its result.
+      // The caller never sees the replay's result — the originating
+      // `submit()` handle has long since resolved (or been dropped
+      // when the previous process died).
+      void this.runReplay(entry, store, exec);
+    }
+  }
+
+  private async runReplay(
+    entry: AsyncToolQueueEntry,
+    store: AsyncToolQueueStore,
+    exec: AsyncToolExecuteFn,
+  ): Promise<void> {
+    store.markRunning(entry.id);
+    try {
+      const result = await exec(entry.toolName, entry.args);
+      store.markCompleted(entry.id, result);
+    } catch (e) {
+      store.markFailed(entry.id, (e as Error).message);
+    }
   }
 
   // ---- human_approval ----
@@ -588,10 +904,13 @@ export class DelegationManager {
     return {
       id: r.id,
       kind: r.work.kind,
-      status: r.status,
+      // Live read so callers see status / startedAt / completedAt
+      // progress as the run advances. The internal run is mutated by
+      // the runner promise; the handle's getters forward to it.
+      get status() { return r.status; },
       parentId: r.parentId,
-      startedAt: r.startedAt,
-      completedAt: r.completedAt,
+      get startedAt() { return r.startedAt; },
+      get completedAt() { return r.completedAt; },
       result: () => r.result,
       cancel: async () => { r.controller.abort(); },
       events: () => this.iterateEvents(r),

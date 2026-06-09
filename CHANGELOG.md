@@ -100,8 +100,35 @@ Two related changes to the goal lifecycle land in the same release:
     disk, the `<direct>` test escape hatch, the legacy
     v1/v2 single-file migration (default-mission only),
     no-clobber when the "legacy" mission already exists,
-    v1 `loopStatus = "pending"` backfill, and the path
-    shape (`$CH_HOME/goals/<mission>/state.json`).
+     v1 `loopStatus = "pending"` backfill, and the path
+     shape (`$CH_HOME/goals/<mission>/state.json`).
+
+## Unreleased — OpenTUI optional
+
+- **chore(deps): move @opentui/core to optionalDependencies** +
+  **refactor(tui): make @opentui/core load lazily**
+  (`package.json`, `package-lock.json`, `src/cli.ts`, `src/ui/tui-app.ts`):
+  the OpenTUI-based legacy TUI is reachable via `ch tui --legacy` (or
+  `CH_FORCE_TUI=1`) and is not on the default code path — the default
+  REPL is the streaming REPL. Move `@opentui/core` from `dependencies`
+  to `optionalDependencies` so `npm install` succeeds on
+  minimal/server installs that don't need the TUI. Combined with the
+  refactor, loading `cli.ts` / `tui-app.ts` no longer transitively
+  requires the package: the `createTui` import in `tui-app.ts` is now
+  a dynamic `await import()` inside `runTui`, and `cli.ts` wraps the
+  `runTui()` call with a try/catch that falls back to the streaming
+  REPL with a clear warning when the package is missing. Verified:
+  `npm run typecheck` clean, `npm test` (bun) shows the same
+  pre-existing `test() inside another test()` limitation as `main`
+  (filtered: 39/39 pass across tui, cli-wireup, council, loops,
+  doctor), `npm run build` produces `dist/cli.js` with zero static
+  imports of `@opentui/core`, and `ch --help` works with the package
+  uninstalled. Users who explicitly run `ch tui --legacy` on a
+  minimal install see a one-line warning:
+  `warning: the legacy OpenTUI TUI requires @opentui/core, which is
+  not installed. Falling back to the streaming REPL. To enable the
+  legacy TUI, run: npm install @opentui/core` (or use
+   `ch repl` / `ch repl --no-tui`).
 
 ## Unreleased — Delegation
 

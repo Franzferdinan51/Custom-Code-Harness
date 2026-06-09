@@ -15,6 +15,8 @@
 //   POST /v1/session                — { id? } start or resume
 //   GET  /v1/usage                  — { inputTokens, outputTokens, cost, topModel }
 //   GET  /v1/commands               — list of slash commands
+//   GET  /v1/goals                  — list of goals (?id=<id> for one + children, ?active=1 for active)
+//   GET  /v1/delegations            — list of active + recent delegation runs (kind, status, parent chain)
 //   GET  /v1/settings               — current settings
 //   POST /v1/settings               — { provider, model, baseUrl, apiKey, approval, thinking } update
 //   GET  /v1/provider/catalog       — provider catalog with auth modes (mirrors /provider list)
@@ -378,6 +380,80 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
           group: cmd.group ?? "other",
         }));
         sendJson(res, 200, { commands: commandMeta.map((cmd) => cmd.name), items: commandMeta });
+        return;
+      }
+      if (req.method === "GET" && path === "/v1/goals") {
+        // GoalStore snapshot for the web UI panels.
+        //   - default:                       list all goals (most recent first)
+        //   - ?id=<goalId>                    single goal + its children + evaluations
+        //   - ?active=1                       only pending + in_progress goals
+        // Response envelope (matches the rest of /v1/*):
+        //   { goals: GoalRecord[] } | { goal: GoalRecord, children: GoalRecord[] }
+        const urlObj = new URL(req.url ?? "", "http://localhost");
+        const id = urlObj.searchParams.get("id");
+        const activeOnly = urlObj.searchParams.get("active") === "1";
+        const all = activeOnly ? runtime.goalStore.listActive() : runtime.goalStore.list();
+        if (id) {
+          const goal = runtime.goalStore.get(id);
+          if (!goal) {
+            sendError(res, 404, "goal not found: " + id);
+            return;
+          }
+          const children = runtime.goalStore.listChildren(id);
+          sendJson(res, 200, { goal, children });
+          return;
+        }
+        sendJson(res, 200, { goals: all });
+        return;
+      }
+      if (req.method === "GET" && path === "/v1/delegations") {
+        // DelegationManager snapshot for the web UI panels.
+        // Lists active + recent delegation runs. The `DelegationRun`
+        // handle has a `result()` Promise and an `events()`
+        // AsyncIterable — neither is JSON-serializable — so we map
+        // to a plain object that only carries the metadata the
+        // web UI needs: id, kind, status, parentId, parentChain,
+        // startedAt, completedAt, createdAt.
+        const runs = runtime.delegations.list();
+        // Pre-seed the goal store so we can walk goal parents.
+        const goalById = new Map<string, { id: string; loopStatus: string }>();
+        for (const g of runtime.goalStore.list()) goalById.set(g.id, { id: g.id, loopStatus: g.loopStatus });
+        const out = runs.map((r) => {
+          const chain: Array<{ id: string; kind: string; status: string }> = [];
+          const seen = new Set<string>();
+          let cur: string | undefined = r.parentId;
+          while (cur && !seen.has(cur)) {
+            seen.add(cur);
+            // Look up the current parent. Could be another delegation
+            // run (find its parentId via the runs list), or a goal
+            // in the goal store (the most common parent for
+            // sub-goal delegations), or some external thing.
+            const parentRun = runs.find((x) => x.id === cur);
+            if (parentRun) {
+              chain.push({ id: parentRun.id, kind: parentRun.kind, status: parentRun.status });
+              cur = parentRun.parentId;
+            } else {
+              const asGoal = goalById.get(cur);
+              if (asGoal) {
+                chain.push({ id: asGoal.id, kind: "goal", status: asGoal.loopStatus });
+              } else {
+                chain.push({ id: cur, kind: "external", status: "unknown" });
+              }
+              cur = undefined;
+            }
+          }
+          return {
+            id: r.id,
+            kind: r.kind,
+            status: r.status,
+            parentId: r.parentId,
+            parentChain: chain,
+            startedAt: r.startedAt,
+            completedAt: r.completedAt,
+            createdAt: (r as { createdAt?: number }).createdAt,
+          };
+        });
+        sendJson(res, 200, { delegations: out });
         return;
       }
       if (req.method === "GET" && path === "/v1/settings") {

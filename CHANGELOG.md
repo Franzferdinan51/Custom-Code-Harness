@@ -3,6 +3,7 @@
 All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+
 ## Unreleased — Goals (revert + semantic replan + multi-mission)
 
 Two related changes to the goal lifecycle land in the same release:
@@ -129,6 +130,31 @@ Two related changes to the goal lifecycle land in the same release:
   not installed. Falling back to the streaming REPL. To enable the
   legacy TUI, run: npm install @opentui/core` (or use
    `ch repl` / `ch repl --no-tui`).
+
+## Unreleased — Council
+
+- **feat(council): 9 deliberation voices (was 4)**
+  (`src/agent/council.ts`, `src/__tests__/council.test.ts`): the
+  built-in council grows from 4 to 9 voices by adding 5
+  deliberation perspectives tailored to a multi-agent coding
+  harness — `security` (The Sentinel, weight 1.2), `performance`
+  (The Tuner, weight 1.0), `dx` (The Advocate, weight 0.8),
+  `qa` (The Verifier, weight 1.0), and `domain` (The Domain
+  Expert, weight 0.9). `Councilor` now carries an optional
+  `name` (display name) and `weight` (deliberation weight);
+  weights surface in the synthesizer's system prompt as a
+  `"Voice weights:"` line so synthesis can lean on higher-weight
+  voices. `DEFAULT_COUNCIL_ROSTER` is unchanged (3 voices) to
+  preserve the existing minimal default; callers opt into the
+  full 8-deliberator council by passing the new voices
+  explicitly. A table comment above `BUILTIN_COUNCILORS`
+  documents all 9 voices. 4 new tests assert the count is 9,
+  every voice has a non-empty system prompt + name + positive
+  weight, the new voices have distinct prompts, the full
+  8-deliberator roster + synthesizer produces 9 transcript
+  entries in consensus mode, and the synthesizer's system
+  prompt includes the voice weights. All 9 pre-existing council
+  test cases stay green.
 
 ## Unreleased — Delegation
 

@@ -18,11 +18,31 @@
 // same primitive to the TUI/REPL runtime surface.
 
 export type CouncilMode = "consensus" | "adversarial";
-export type CouncilorRole = "skeptic" | "builder" | "researcher" | "synthesizer";
+/** 9 built-in deliberation voices. The synthesizer is special — it
+ *  always runs last and integrates the other 8. The other 8 are
+ *  the deliberators and may all be present in a roster. */
+export type CouncilorRole =
+  | "skeptic"
+  | "builder"
+  | "researcher"
+  | "security"
+  | "performance"
+  | "dx"
+  | "qa"
+  | "domain"
+  | "synthesizer";
 
 export interface Councilor {
   role: CouncilorRole;
+  /** Human-readable display name (e.g. "The Sentinel"). Used in
+   *  transcripts and the synthesizer prompt so a generic role
+   *  string isn't surfaced to the LLM. */
+  name?: string;
   systemPrompt: string;
+  /** Deliberation weight — the synthesizer uses this to bias the
+   *  final answer toward higher-weight voices. Default 1.0.
+   *  Higher = stronger signal in synthesis. */
+  weight?: number;
   model?: string;
   providerId?: string;
   /** Tool allowlist override. Inherits parent if undefined. */
@@ -81,12 +101,53 @@ export interface CouncilDeps {
   }): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }>;
 }
 
+/* -----------------------------------------------------------------------
+ * Built-in councilor voices (9 total)
+ * -----------------------------------------------------------------------
+ *
+ *  # | role        | display name      | weight | perspective
+ * ---|-------------|-------------------|--------|---------------------------------
+ *  1 | skeptic     | The Skeptic       |   1.0  | Challenge assumptions, surface
+ *    |             |                   |        | risks, pressure-test answers
+ *  2 | builder     | The Builder       |   1.0  | Concrete actionable steps, no
+ *    |             |                   |        | hedging, smallest viable plan
+ *  3 | researcher  | The Researcher    |   1.0  | Facts, evidence, what's known
+ *    |             |                   |        | vs unknown, lay of the land
+ *  4 | security    | The Sentinel      |   1.2  | Threat model, secrets, auth,
+ *    |             |                   |        | injection, blast radius
+ *  5 | performance | The Tuner         |   1.0  | Latency, throughput, memory,
+ *    |             |                   |        | hot paths, scaling
+ *  6 | dx          | The Advocate      |   0.8  | Developer + end-user ergonomics,
+ *    |             |                   |        | onboarding, cognitive load
+ *  7 | qa          | The Verifier      |   1.0  | Test coverage, edge cases,
+ *    |             |                   |        | repro steps, assertions
+ *  8 | domain      | The Domain Expert |   0.9  | Subject-matter context the
+ *    |             |                   |        | question is rooted in
+ *  9 | synthesizer | The Synthesizer   |   1.5  | Integrates the 8 above into
+ *    |             |                   |        | a final, coherent answer
+ *
+ *  Notes:
+ *  - The synthesizer is special: it always runs LAST and gets the
+ *    verbatim transcript of the other 8. It is NOT in
+ *    `DEFAULT_COUNCIL_ROSTER` (which is the 3-voice minimal default).
+ *  - Weights surface in the synthesizer's system prompt as a
+ *    "voice weights" line so the final answer can lean on
+ *    higher-weight voices.
+ *  - Each system prompt starts with a unique uppercase marker
+ *    (SKEPTIC / BUILDER / RESEARCHER / SENTINEL / TUNER / ADVOCATE /
+ *    VERIFIER / DOMAIN EXPERT / SYNTHESIZER) so callers can identify
+ *    a voice from its system prompt alone — see
+ *    `src/__tests__/council.test.ts` `makeStubDeps`.
+ * ----------------------------------------------------------------------- */
+
 /** Built-in councilor definitions. The system prompts are short
  *  and intentionally adversarial: each one is a voice in the
  *  deliberation, not a free-form assistant. */
 export const BUILTIN_COUNCILORS: Record<CouncilorRole, Councilor> = {
   skeptic: {
     role: "skeptic",
+    name: "The Skeptic",
+    weight: 1.0,
     systemPrompt:
       "You are the SKEPTIC on a council. Given a question, your job is to " +
       "challenge assumptions, surface risks, point out what is missing or " +
@@ -96,6 +157,8 @@ export const BUILTIN_COUNCILORS: Record<CouncilorRole, Councilor> = {
   },
   builder: {
     role: "builder",
+    name: "The Builder",
+    weight: 1.0,
     systemPrompt:
       "You are the BUILDER on a council. Given a question, your job is to " +
       "produce a concrete, actionable answer. Prefer specifics over " +
@@ -105,6 +168,8 @@ export const BUILTIN_COUNCILORS: Record<CouncilorRole, Councilor> = {
   },
   researcher: {
     role: "researcher",
+    name: "The Researcher",
+    weight: 1.0,
     systemPrompt:
       "You are the RESEARCHER on a council. Given a question, your job is " +
       "to gather and summarize the relevant facts: what is known, what is " +
@@ -112,13 +177,81 @@ export const BUILTIN_COUNCILORS: Record<CouncilorRole, Councilor> = {
       "Be concise. Do NOT propose a final answer — only the lay of the land. " +
       "End with: COUNCILOR: researcher DONE.",
   },
+  security: {
+    role: "security",
+    name: "The Sentinel",
+    weight: 1.2,
+    systemPrompt:
+      "You are the SENTINEL on a council, voicing the SECURITY perspective. " +
+      "Given a question, your job is to identify attack surfaces, threat " +
+      "models, secret leakage, auth/authz gaps, injection risks, supply " +
+      "chain risks, and blast radius. Be specific about what could go wrong " +
+      "and how to defend against it. Cite concrete mitigations, not vague " +
+      "worries. Do NOT propose the final answer — only the security lens. " +
+      "End with: COUNCILOR: security DONE.",
+  },
+  performance: {
+    role: "performance",
+    name: "The Tuner",
+    weight: 1.0,
+    systemPrompt:
+      "You are the TUNER on a council, voicing the PERFORMANCE perspective. " +
+      "Given a question, your job is to flag latency, throughput, memory " +
+      "footprint, allocations, hot paths, and scaling concerns. Prefer " +
+      "concrete measurements or rough orders of magnitude over vague " +
+      "hand-waving. Note when 'correct but slow' is the real risk. Do NOT " +
+      "propose the final answer — only the performance lens. " +
+      "End with: COUNCILOR: performance DONE.",
+  },
+  dx: {
+    role: "dx",
+    name: "The Advocate",
+    weight: 0.8,
+    systemPrompt:
+      "You are the ADVOCATE on a council, voicing the DEVELOPER and END-USER " +
+      "EXPERIENCE perspective. Given a question, your job is to surface " +
+      "ergonomics, error messages, onboarding friction, accessibility, and " +
+      "cognitive load — for the human using the system AND the developer " +
+      "extending it. Prefer concrete UX moments over abstract principles. " +
+      "Do NOT propose the final answer — only the DX/UX lens. " +
+      "End with: COUNCILOR: dx DONE.",
+  },
+  qa: {
+    role: "qa",
+    name: "The Verifier",
+    weight: 1.0,
+    systemPrompt:
+      "You are the VERIFIER on a council, voicing the TESTING/QA " +
+      "perspective. Given a question, your job is to ask: how would we " +
+      "test this? What edge cases are uncovered? How do we reproduce " +
+      "failures? What assertions would prove the answer right? Prefer " +
+      "concrete repro steps and assertion lists over platitudes. Do NOT " +
+      "propose the final answer — only the testing/QA lens. " +
+      "End with: COUNCILOR: qa DONE.",
+  },
+  domain: {
+    role: "domain",
+    name: "The Domain Expert",
+    weight: 0.9,
+    systemPrompt:
+      "You are the DOMAIN EXPERT on a council. Given a question, your job " +
+      "is to anchor the answer in the specific subject-matter context — " +
+      "the libraries, APIs, protocols, standards, ecosystem norms, and " +
+      "historical precedents the question is rooted in. Name the things a " +
+      "generic answer would miss; flag where the question itself rests on " +
+      "a false premise. Do NOT propose the final answer — only the domain " +
+      "lens. End with: COUNCILOR: domain DONE.",
+  },
   synthesizer: {
     role: "synthesizer",
+    name: "The Synthesizer",
+    weight: 1.5,
     systemPrompt:
       "You are the SYNTHESIZER on a council. You are given the verbatim " +
       "outputs of the other councilors. Your job is to produce the " +
       "FINAL ANSWER: a single coherent response that integrates the " +
-      "evidence and addresses the strongest critiques. Do not hedge. " +
+      "evidence and addresses the strongest critiques. Lean on the higher-" +
+      "weight voices more than the lower-weight ones. Do not hedge. " +
       "Do not list the councilors' names. Just answer. " +
       "End with: COUNCILOR: synthesizer DONE.",
   },
@@ -228,7 +361,8 @@ export async function runCouncil(
   const synthesizerSystem =
     config.synthesizerSystemPrompt ??
     BUILTIN_COUNCILORS.synthesizer.systemPrompt +
-      "\n\nCouncil size: " + roster.length + " councilors, " + maxRounds + " round(s).";
+      "\n\nCouncil size: " + roster.length + " councilors, " + maxRounds + " round(s). " +
+      "\nVoice weights: " + roster.map((c) => c.role + "=" + (c.weight ?? 1.0)).join(", ");
   const synth = await deps.spawn({
     system: synthesizerSystem,
     prompt: synthesizerPrompt,

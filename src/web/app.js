@@ -1213,13 +1213,28 @@ async function resumeSession(id) {
 }
 
 // ---------- Provider select (grouped catalog) ----------
+//
+// The pure tier-grouping helper lives in `onboard-helpers.js`
+// (loaded as a classic script before this file). We pull it off
+// the global here so the same logic is testable in Node without
+// a DOM library, and the <optgroup> DOM assembly stays in this
+// file where the `el()` helper is in scope.
 
-const PROVIDER_GROUP_LABELS = {
+const OnboardHelpers = (typeof window !== "undefined" && window.OnboardHelpers) || null;
+const PROVIDER_GROUP_LABELS = OnboardHelpers?.PROVIDER_GROUP_LABELS || {
   primary: "Default (local)",
-  hosted: "Hosted (OpenAI, Grok, MiniMax, Codex, …)",
+  hosted: "Hosted (OpenAI, Grok, MiniMax, Codex, \u2026)",
   local: "Local alternatives",
 };
-const PROVIDER_TIER_ORDER = ["primary", "hosted", "local"];
+const PROVIDER_TIER_ORDER = OnboardHelpers?.PROVIDER_TIER_ORDER || ["primary", "hosted", "local"];
+const groupProvidersByTier = OnboardHelpers?.groupProvidersByTier || function (presets) {
+  const byTier = { primary: [], hosted: [], local: [] };
+  for (const preset of presets || []) {
+    const tier = preset && preset.tier && byTier[preset.tier] ? preset.tier : "hosted";
+    byTier[tier].push(preset);
+  }
+  return byTier;
+};
 
 function labelForProviderOption(preset, profiles, labelMode) {
   if (labelMode === "defaultModel") {
@@ -1234,11 +1249,7 @@ function fillProviderSelect(select, presets, profiles, options = {}) {
   const { labelMode = "configured", groupOrder = null } = options;
   select.innerHTML = "";
   const seen = new Set();
-  const byTier = { primary: [], hosted: [], local: [] };
-  for (const preset of presets) {
-    const tier = preset.tier && byTier[preset.tier] ? preset.tier : "hosted";
-    byTier[tier].push(preset);
-  }
+  const byTier = groupProvidersByTier(presets);
   for (const tier of PROVIDER_TIER_ORDER) {
     let items = byTier[tier];
     if (!items.length) continue;
@@ -1509,38 +1520,67 @@ $("setting-auth-launch").addEventListener("click", async () => {
 });
 
 // Fetch the running server's /v1/models and let the user pick one.
-async function discoverProviderModels() {
-  const providerId = $("setting-provider").value;
-  const meta = $("setting-models-meta");
-  const sel = $("setting-discovered-models");
-  if (meta) meta.textContent = "Querying " + providerId + " /v1/models...";
-  if (sel) { sel.hidden = true; sel.innerHTML = ""; }
+//
+// Shared between the settings modal's "fetch /v1/models" button
+// and the first-run onboarding wizard's step 3. Pass in the
+// target <select>, the status line, and a callback for when the
+// user picks a model. Returns the resulting list (or [] on
+// failure) so callers can chain a follow-up POST /v1/settings
+// without re-fetching.
+async function fetchProviderModels({ providerId, select, meta, onPick, currentModel }) {
+  if (!select) return [];
+  if (meta) meta.textContent = "Querying " + (providerId || "(none)") + " /v1/models...";
+  select.innerHTML = "";
+  select.hidden = true;
+  if (!providerId) {
+    if (meta) meta.textContent = "no provider selected";
+    return [];
+  }
   try {
     const r = await api("/v1/provider/models?id=" + encodeURIComponent(providerId));
     if (r.error) {
       if (meta) meta.textContent = "could not list models: " + r.error;
-      return;
+      return [];
     }
     const models = r.models || [];
     if (models.length === 0) {
       if (meta) meta.textContent = "no models returned (server may be offline or /v1/models not exposed)";
-      return;
+      return [];
     }
-    if (!sel) return;
-    sel.innerHTML = "";
-    sel.appendChild(el("option", { value: "" }, "(pick a model — current is " + ($("setting-model").value || "(unset)") + ")"));
-    for (const m of models) sel.appendChild(el("option", { value: m }, m));
-    sel.hidden = false;
+    const placeholder = "(pick a model — current is " + (currentModel || "(unset)") + ")";
+    select.appendChild(el("option", { value: "" }, placeholder));
+    for (const m of models) select.appendChild(el("option", { value: m }, m));
+    select.hidden = false;
     if (meta) meta.textContent = models.length + " model(s) available from " + providerId;
-    sel.onchange = () => {
-      if (sel.value) {
-        $("setting-model").value = sel.value;
-        if (meta) meta.textContent = "set model = " + sel.value;
-      }
-    };
+    if (typeof onPick === "function") {
+      select.onchange = () => {
+        if (select.value && onPick(select.value)) {
+          if (meta) meta.textContent = "set model = " + select.value;
+        }
+      };
+    }
+    return models;
   } catch (e) {
     if (meta) meta.textContent = "request failed: " + e.message;
+    return [];
   }
+}
+
+function discoverProviderModels() {
+  // Settings-modal wrapper around the shared helper. The wizard
+  // calls fetchProviderModels directly with its own elements so
+  // the same HTTP call + DOM dance lives in one place.
+  const providerId = $("setting-provider").value;
+  return fetchProviderModels({
+    providerId,
+    select: $("setting-discovered-models"),
+    meta: $("setting-models-meta"),
+    currentModel: $("setting-model").value,
+    onPick: (model) => {
+      $("setting-model").value = model;
+      return true;
+    },
+  });
 }
 $("setting-discover-models")?.addEventListener("click", discoverProviderModels);
 $("setting-codex-login")?.addEventListener("click", async () => {
@@ -1598,8 +1638,26 @@ const onboardEnvHint = $("onboard-env-hint");
 const onboardTestBtn = $("onboard-test");
 const onboardResult = $("onboard-result");
 const onboardSkipBtn = $("onboard-skip");
+const onboardKeyStep = document.querySelector('.onboard-step[data-step="key"]');
+const onboardSteps = document.querySelector(".onboard-steps");
+const onboardSuccess = $("onboard-success");
+const onboardSuccessProvider = $("onboard-success-provider");
+const onboardSuccessModel = $("onboard-success-model");
+const onboardSuccessBaseurl = $("onboard-success-baseurl");
+const onboardOpenChatBtn = $("onboard-open-chat");
+const onboardFinishBtn = $("onboard-finish");
+const onboardDiscover = $("onboard-discover");
+const onboardDiscoverSel = $("onboard-discovered-models");
+const onboardDiscoverMeta = $("onboard-discover-meta");
+const onboardSubtitle = $("onboard-subtitle");
+
+const ONBOARD_SEEN_STORAGE_KEY = "ch.onboardSeenAt";
+const ONBOARD_SEEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
 let onboardCatalog = null;
 let onboardCatalogGroups = null;
+let onboardLastChosenModel = null;
+let onboardLastBaseUrl = null;
 
 async function loadOnboardCatalog() {
   try {
@@ -1643,20 +1701,53 @@ function syncOnboardMeta() {
     : "Stored locally in settings.json — never sent anywhere except this provider.";
   const codexOAuth = id === "codex" && (p.authModes || []).includes("oauth");
   const optionalAuth = (p.authModes || []).includes("optional");
+  const apiKeyRequired = (p.authModes || []).includes("apiKey");
+  // Codex uses OAuth — show the sign-in button, hide the key input.
+  // Optional-auth providers (LM Studio, vLLM) hide the key input and
+  // we mark step 2 as "skipped" so the user knows it was intentional.
+  // apiKey-only providers keep the input visible.
   const loginBtn = $("onboard-codex-login");
   if (loginBtn) loginBtn.hidden = !codexOAuth;
   if (onboardApiKey) {
-    onboardApiKey.hidden = codexOAuth;
-    onboardApiKey.placeholder = optionalAuth ? "API key (optional for LM Studio)" : "paste API key";
+    const hideInput = codexOAuth || optionalAuth;
+    onboardApiKey.hidden = hideInput;
+    onboardApiKey.placeholder = optionalAuth
+      ? "API key (optional for " + (p.label || id) + ")"
+      : "paste API key";
   }
   if (onboardTestBtn) onboardTestBtn.hidden = codexOAuth;
+  if (onboardKeyStep) {
+    const skipKey = codexOAuth || optionalAuth;
+    onboardKeyStep.classList.toggle("is-skipped", skipKey);
+  }
+  if (onboardSubtitle) {
+    onboardSubtitle.textContent = codexOAuth
+      ? "Let's set up a provider so the agent can do things. Sign in with ChatGPT, then we'll test it."
+      : optionalAuth
+        ? "Let's set up a provider so the agent can do things. " + (p.label || id) + " doesn't need a key — just save and test."
+        : "Let's set up a provider so the agent can do things. Three quick steps.";
+  }
+  if (onboardApiKey) onboardApiKey.dataset.required = apiKeyRequired ? "true" : "false";
+  if (onboardApiKey) onboardApiKey.dataset.envVar = envVar || "";
 }
 
 function showOnboard() {
   if (!onboardModal) return;
   onboardResult.textContent = "";
   onboardResult.className = "onboard-result";
+  resetOnboardSuccess();
   onboardModal.hidden = false;
+}
+
+function resetOnboardSuccess() {
+  if (onboardSuccess) onboardSuccess.hidden = true;
+  if (onboardDiscover) onboardDiscover.hidden = true;
+  if (onboardDiscoverSel) {
+    onboardDiscoverSel.innerHTML = "";
+    onboardDiscoverSel.onchange = null;
+  }
+  if (onboardDiscoverMeta) onboardDiscoverMeta.textContent = "";
+  if (onboardSteps) onboardSteps.style.display = "";
 }
 
 function closeOnboard() {
@@ -1664,7 +1755,10 @@ function closeOnboard() {
   onboardModal.hidden = true;
   // Persist the "I've seen this" hint so we don't auto-open again
   // on every refresh. Users can still summon it via the sidebar.
-  try { localStorage.setItem("ch.onboardSeenAt", String(Date.now())); } catch {}
+  try { localStorage.setItem(ONBOARD_SEEN_STORAGE_KEY, String(Date.now())); } catch {}
+  // Restore the wizard body so the next "open" shows the steps
+  // rather than the success state.
+  resetOnboardSuccess();
 }
 
 onboardSkipBtn?.addEventListener("click", closeOnboard);
@@ -1672,11 +1766,19 @@ onboardProviderSel?.addEventListener("change", syncOnboardMeta);
 $("onboard-codex-login")?.addEventListener("click", async () => {
   onboardResult.className = "onboard-result";
   onboardResult.textContent = "Starting ChatGPT sign-in…";
+  resetOnboardSuccess();
   try {
     const r = await api("/v1/provider/login/codex", { method: "POST", body: { openBrowser: true } });
     showOnboardOk("✓ signed in with ChatGPT. model: " + (r.model || "(default)"));
     await refreshAll();
-    setTimeout(closeOnboard, 1800);
+    // Skip the manual model-discover step for OAuth — the runtime
+    // already knows the model. Go straight to the success state.
+    await showOnboardSuccess({
+      provider: "codex",
+      providerLabel: "OpenAI / Codex",
+      model: r.model || "(default)",
+      baseUrl: providerPresetById("codex")?.defaultBaseUrl || "",
+    });
   } catch (e) {
     showOnboardError("Codex login failed: " + (e.message || "unknown error"));
   }
@@ -1704,29 +1806,90 @@ onboardTestBtn?.addEventListener("click", async () => {
   if (!provider) { showOnboardError("pick a provider first"); return; }
   const preset = onboardCatalog?.find((p) => p.id === provider);
   const optionalAuth = (preset?.authModes || []).includes("optional");
-  if (!optionalAuth && (!apiKey || apiKey.length < 8)) { showOnboardError("paste a key (≥8 chars)"); return; }
+  const apiKeyRequired = (preset?.authModes || []).includes("apiKey");
+  const isCodexOauth = provider === "codex" && (preset?.authModes || []).includes("oauth");
+  if (isCodexOauth) {
+    showOnboardError("use the 'Sign in with ChatGPT' button above");
+    return;
+  }
+  if (apiKeyRequired && (!apiKey || apiKey.length < 8)) { showOnboardError("paste a key (≥8 chars)"); return; }
   if (apiKey && apiKey.length > 0 && apiKey.length < 8) { showOnboardError("key is too short (≥8 chars)"); return; }
   onboardTestBtn.disabled = true;
   onboardTestBtn.textContent = "saving & testing…";
   onboardResult.className = "onboard-result";
   onboardResult.textContent = "";
+  resetOnboardSuccess();
+  let savedModel = model;
+  let savedBaseUrl = preset?.defaultBaseUrl || "";
   try {
     const r = await api("/v1/provider/set-key", {
       method: "POST",
       body: { provider, apiKey, model: model || undefined },
     });
-    if (r.diag?.ok) {
-      showOnboardOk(
-        "✓ saved. diag: " + r.diag.firstByteMs + "ms first byte, " +
-        r.diag.totalMs + "ms total. default model: " + r.model
-      );
-      // Refresh everything so the new state shows up immediately.
-      await refreshAll();
-      // Close after a short pause so the user sees the result.
-      setTimeout(closeOnboard, 1800);
-    } else {
+    if (!r.diag?.ok) {
       showOnboardError("diag failed: " + (r.diag?.error || "no response") + " — key saved, but the connection test failed. Re-run to overwrite.");
+      return;
     }
+    savedModel = r.model || savedModel || preset?.defaultModel || "";
+    showOnboardOk(
+      "✓ saved. diag: " + r.diag.firstByteMs + "ms first byte, " +
+      r.diag.totalMs + "ms total. default model: " + savedModel
+    );
+    // Refresh everything so the new state shows up immediately.
+    await refreshAll();
+    // Step 3b — fetch the live model list and let the user pick one.
+    const baseUrl = preset?.defaultBaseUrl || "";
+    const models = await fetchProviderModels({
+      providerId: provider,
+      select: onboardDiscoverSel,
+      meta: onboardDiscoverMeta,
+      currentModel: savedModel,
+      onPick: async (chosen) => {
+        // Save the chosen model + baseUrl back to settings so the
+        // next agent run picks it up.
+        savedModel = chosen;
+        try {
+          await api("/v1/settings", {
+            method: "POST",
+            body: { provider, model: chosen, baseUrl: baseUrl || undefined },
+          });
+        } catch (e) {
+          if (onboardDiscoverMeta) onboardDiscoverMeta.textContent = "saved: " + chosen + " (settings save failed: " + e.message + ")";
+        }
+        return true;
+      },
+    });
+    if (onboardDiscover) onboardDiscover.hidden = false;
+    if (models.length === 0) {
+      // No /v1/models endpoint — fall back to the default model
+      // returned by set-key and go straight to the success state.
+      if (onboardDiscoverMeta) onboardDiscoverMeta.textContent = "no live model list — using " + savedModel;
+    } else {
+      // Pre-select the default model (or the first item).
+      const defaultModel = preset?.defaultModel || savedModel || models[0];
+      const pick = models.includes(defaultModel) ? defaultModel : models[0];
+      if (pick) {
+        onboardDiscoverSel.value = pick;
+        savedModel = pick;
+        // Persist the pre-selection immediately.
+        try {
+          await api("/v1/settings", {
+            method: "POST",
+            body: { provider, model: pick, baseUrl: baseUrl || undefined },
+          });
+        } catch { /* best-effort */ }
+      }
+      if (onboardDiscoverMeta) onboardDiscoverMeta.textContent =
+        "default: " + (pick || "(none)") + " — pick a different one or stay";
+    }
+    onboardLastChosenModel = savedModel;
+    onboardLastBaseUrl = baseUrl;
+    await showOnboardSuccess({
+      provider,
+      providerLabel: preset?.label || provider,
+      model: savedModel,
+      baseUrl: baseUrl,
+    });
   } catch (e) {
     showOnboardError("save failed: " + (e?.message || "network error"));
   } finally {
@@ -1734,6 +1897,21 @@ onboardTestBtn?.addEventListener("click", async () => {
     onboardTestBtn.textContent = "save & test";
   }
 });
+
+/** Reveal the success state with the configured values and wire
+ *  the "open chat" / "close" buttons. Hides the 3-step list so
+ *  the user isn't staring at a wizard they just finished. */
+async function showOnboardSuccess({ provider, providerLabel, model, baseUrl }) {
+  if (!onboardSuccess) return;
+  if (onboardSteps) onboardSteps.style.display = "none";
+  if (onboardSuccessProvider) onboardSuccessProvider.textContent = providerLabel || provider || "—";
+  if (onboardSuccessModel) onboardSuccessModel.textContent = model || "(default)";
+  if (onboardSuccessBaseurl) {
+    onboardSuccessBaseurl.textContent = baseUrl || "(provider default)";
+    onboardSuccessBaseurl.title = baseUrl || "";
+  }
+  onboardSuccess.hidden = false;
+}
 
 function showOnboardOk(text) {
   onboardResult.className = "onboard-result ok";
@@ -1744,6 +1922,16 @@ function showOnboardError(text) {
   onboardResult.textContent = text;
 }
 
+onboardOpenChatBtn?.addEventListener("click", () => {
+  closeOnboard();
+  // Focus the composer so the user can start typing immediately.
+  setComposerMode(state.composerMode, { focusInput: true });
+  inputEl?.focus();
+  showInfo("You're set up. Start typing — the model is " + (onboardLastChosenModel || "the default") + ".");
+});
+
+onboardFinishBtn?.addEventListener("click", closeOnboard);
+
 async function maybeShowOnboard() {
   // Show the wizard only when:
   //   1. The user has never seen it (or saw it >30 days ago), AND
@@ -1751,9 +1939,8 @@ async function maybeShowOnboard() {
   //      info banner is the trigger).
   if (state.provider === "—") {
     let seenAt = 0;
-    try { seenAt = parseInt(localStorage.getItem("ch.onboardSeenAt") || "0", 10) || 0; } catch {}
-    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
-    if (Date.now() - seenAt > thirtyDays) {
+    try { seenAt = parseInt(localStorage.getItem(ONBOARD_SEEN_STORAGE_KEY) || "0", 10) || 0; } catch {}
+    if (Date.now() - seenAt > ONBOARD_SEEN_TTL_MS) {
       await loadOnboardCatalog();
       populateOnboardProviderSelect();
       showOnboard();

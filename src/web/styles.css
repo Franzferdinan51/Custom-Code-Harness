@@ -1414,6 +1414,13 @@ html, body {
   border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 12px;
 }
+.onboard-step.is-skipped {
+  opacity: 0.45;
+}
+.onboard-step.is-skipped .onboard-step-hint::after {
+  content: " (skipped — no credential needed for this provider)";
+  color: var(--fg-faint);
+}
 .onboard-step-num {
   flex-shrink: 0;
   width: 28px;
@@ -1519,6 +1526,86 @@ html, body {
 }
 .onboard-result.ok { color: var(--fg-green, #7ed4a3); }
 .onboard-result.err { color: var(--fg-red, #ff6b6b); }
+
+/* Model discovery row inside step 3 — mirrors the
+ * settings-modal "discover models" block so the two
+ * surfaces share the same mental model. */
+.onboard-discover {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.onboard-discover[hidden] { display: none; }
+.onboard-discover label {
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.onboard-discover-meta {
+  font-size: 11px;
+  color: var(--fg-faint);
+  line-height: 1.5;
+}
+
+/* Success state — replaces the test/discover controls
+ * once the wizard has saved a key, fetched the model list,
+ * and persisted the chosen model. */
+.onboard-success {
+  margin: 4px 0 18px;
+  padding: 18px;
+  border: 1px solid rgba(126, 212, 163, 0.32);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top left, rgba(126, 212, 163, 0.12), transparent 40%),
+    linear-gradient(180deg, rgba(24, 30, 41, 0.98), rgba(12, 16, 23, 0.98));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.onboard-success[hidden] { display: none; }
+.onboard-success-eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--green);
+}
+.onboard-success-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+.onboard-success-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.onboard-success-label {
+  flex-shrink: 0;
+  width: 84px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-faint);
+}
+.onboard-success-value {
+  color: var(--fg);
+  word-break: break-all;
+}
+.onboard-success-value-mono {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  font-size: 12px;
+  color: var(--cyan);
+}
+.onboard-success-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
 .onboard-footer {
   display: flex;
   align-items: center;

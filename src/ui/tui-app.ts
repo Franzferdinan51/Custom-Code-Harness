@@ -1,10 +1,16 @@
 // TUI application: wires the TUI primitives to the HarnessRuntime.
 // This is the "REPL" when running in a TTY — the user sees a
 // full-screen TUI instead of a line-based REPL.
+//
+// @opentui/core is loaded LAZILY here so the package can live in
+// optionalDependencies. The default REPL path (ch --help, ch run,
+// the streaming REPL, etc.) never triggers the dynamic import below
+// and therefore never tries to resolve @opentui/core. Users who
+// explicitly opt into the legacy TUI via `ch tui --legacy` or
+// CH_FORCE_TUI=1 pay the load cost; users on minimal installs do not.
 
 import type { HarnessRuntime } from "../runtime.js";
 import type { Tui } from "./tui.js";
-import { createTui } from "./tui.js";
 import { BUILTIN_REGISTRY } from "../slash/builtin.js";
 import { tryParseSlash } from "../slash/registry.js";
 import { runAgent, DEFAULT_LIMITS } from "../agent/loop.js";
@@ -17,6 +23,9 @@ export function isTuiCapable(): boolean {
 
 /** Run the TUI. Returns when the user quits. */
 export async function runTui(runtime: HarnessRuntime, ctx: { cwd: string; initialPrompt?: string }): Promise<number> {
+  // Lazy load: tui.ts pulls in @opentui/core (and its native FFI binding).
+  // We only want that on the user's explicit opt-in.
+  const { createTui } = await import("./tui.js");
   const slashNames = BUILTIN_REGISTRY.names();
   const tui: Tui = createTui({
     slashNames,

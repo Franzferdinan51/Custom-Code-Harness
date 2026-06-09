@@ -476,7 +476,27 @@ async function startReplSession(ctx: SubcommandContext & { initialPrompt?: strin
       // REPL so the user still gets an interactive surface.
       return runNewRepl(runtime, ctx);
     }
-    return runTui(runtime, ctx);
+    try {
+      return await runTui(runtime, ctx);
+    } catch (e) {
+      // @opentui/core lives in optionalDependencies. If the user installed
+      // the package without it, the lazy dynamic import in tui-app.ts will
+      // throw ERR_MODULE_NOT_FOUND the first time --legacy is requested.
+      // Fall back to the streaming REPL with a clear warning so the user
+      // knows how to recover.
+      const msg = (e as Error)?.message ?? String(e);
+      if (/Cannot find (?:module|package) ['"]@opentui\/core['"]|ERR_MODULE_NOT_FOUND.*@opentui/.test(msg)) {
+        process.stderr.write(
+          c.yellow("warning: ") +
+          "the legacy OpenTUI TUI requires @opentui/core, which is not installed.\n" +
+          "        Falling back to the streaming REPL. To enable the legacy TUI, run:\n" +
+          "          npm install @opentui/core\n" +
+          "        (or: `ch repl` for the streaming REPL, `ch repl --no-tui` for the line REPL)\n"
+        );
+        return runNewRepl(runtime, ctx);
+      }
+      throw e;
+    }
   }
 
   if (wantSimple) {

@@ -1650,6 +1650,17 @@ const onboardDiscover = $("onboard-discover");
 const onboardDiscoverSel = $("onboard-discovered-models");
 const onboardDiscoverMeta = $("onboard-discover-meta");
 const onboardSubtitle = $("onboard-subtitle");
+// Auth mode selector + OAuth-token input. Both default to hidden; the
+// wizard shows them only when the selected provider advertises more
+// than one auth mode in its preset (e.g. xai/grok/minimax with
+// authModes: ["oauth", "apiKey"]).
+const onboardAuthModesRow = $("onboard-auth-modes");
+const onboardAuthModeRadios = () => Array.from(document.querySelectorAll('input[name="onboard-auth-mode"]'));
+const onboardAuthModeOauthOption = $("onboard-auth-mode-oauth-option");
+const onboardAuthModeOauthLabel = $("onboard-auth-mode-oauth-label");
+const onboardOauthRow = $("onboard-oauth-row");
+const onboardOauthToken = $("onboard-oauth-token");
+const onboardOauthLink = $("onboard-oauth-link");
 
 const ONBOARD_SEEN_STORAGE_KEY = "ch.onboardSeenAt";
 const ONBOARD_SEEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -1665,8 +1676,13 @@ async function loadOnboardCatalog() {
     onboardCatalog = r.providers || [];
     onboardCatalogGroups = r.groups || null;
   } catch (e) {
+    // Surface the failure so the user can report it. Previously the
+    // wizard silently fell back to an empty dropdown, which made
+    // "empty dropdown" reports impossible to diagnose.
     onboardCatalog = [];
     onboardCatalogGroups = null;
+    console.error("onboard: failed to load provider catalog", e);
+    showOnboardError("couldn't load provider list: " + (e?.message || e) + " — try refreshing or check the server log.");
   }
 }
 
@@ -1681,12 +1697,23 @@ function populateOnboardProviderSelect() {
   syncOnboardMeta();
 }
 
+/**
+ * Show the auth input that matches the selected provider + auth mode.
+ *
+ * Provider-agnostic: replaces the previous codex-only hardcode. For
+ * providers with `authModes: ["oauth", "apiKey"]` (codex, xai, grok,
+ * minimax) the wizard shows a small segmented control. When OAuth is
+ * selected, codex renders the device-code button and the other three
+ * render a paste-token input + a "Get a token" link to the provider's
+ * auth docs.
+ */
 function syncOnboardMeta() {
   const id = onboardProviderSel.value;
   const p = onboardCatalog?.find((x) => x.id === id);
   if (!p) {
     onboardProviderMeta.textContent = "";
     onboardEnvHint.textContent = "";
+    setOnboardAuthModeSelector(null);
     return;
   }
   const authModes = (p.authModes || []).join(" / ");
@@ -1696,12 +1723,78 @@ function syncOnboardMeta() {
     (p.authDocsUrl ? " · " + p.authDocsUrl : "");
   onboardModel.placeholder = p.defaultModel ? "(default: " + p.defaultModel + ")" : "model";
   const envVar = (p.apiKeyEnv || [])[0];
+  const oauthEnvVar = (p.oauthTokenEnv || [])[0];
   onboardEnvHint.textContent = envVar
     ? "Or set " + envVar + " in your shell and restart — whichever is easier."
     : "Stored locally in settings.json — never sent anywhere except this provider.";
-  const codexOAuth = id === "codex" && (p.authModes || []).includes("oauth");
-  const optionalAuth = (p.authModes || []).includes("optional");
-  const apiKeyRequired = (p.authModes || []).includes("apiKey");
+  const modes = p.authModes || [];
+  const supportsOauth = modes.includes("oauth");
+  const supportsApiKey = modes.includes("apiKey");
+  const optionalAuth = modes.includes("optional");
+  const apiKeyRequired = supportsApiKey && !optionalAuth && !supportsOauth;
+  const defaultMode = p.defaultAuthMode && modes.includes(p.defaultAuthMode)
+    ? p.defaultAuthMode
+    : (supportsOauth ? "oauth" : (supportsApiKey ? "apiKey" : "optional"));
+  setOnboardAuthModeSelector({ provider: p, modes, defaultMode, supportsOauth, supportsApiKey, optionalAuth });
+  applyOnboardAuthMode(p);
+  if (onboardApiKey) onboardApiKey.dataset.required = apiKeyRequired ? "true" : "false";
+  if (onboardApiKey) onboardApiKey.dataset.envVar = envVar || "";
+  if (onboardOauthToken) onboardOauthToken.dataset.envVar = oauthEnvVar || "";
+}
+
+/**
+ * Show / hide the segmented auth mode control based on how many
+ * modes the selected provider actually advertises. The label on the
+ * OAuth option is provider-specific so users know which OAuth they're
+ * picking (e.g. "xAI OAuth" vs "ChatGPT OAuth").
+ */
+function setOnboardAuthModeSelector(opts) {
+  if (!onboardAuthModesRow) return;
+  if (!opts) {
+    onboardAuthModesRow.hidden = true;
+    if (onboardAuthModeOauthOption) onboardAuthModeOauthOption.hidden = true;
+    return;
+  }
+  const showSelector = (opts.supportsOauth && opts.supportsApiKey);
+  onboardAuthModesRow.hidden = !showSelector;
+  if (onboardAuthModeOauthOption) {
+    onboardAuthModeOauthOption.hidden = !opts.supportsOauth;
+  }
+  if (onboardAuthModeOauthLabel) {
+    // Generic label is fine for hosted providers with no device-code
+    // flow. Codex gets a more specific label via applyOnboardAuthMode.
+    onboardAuthModeOauthLabel.textContent = "OAuth";
+  }
+  // Sync the radio to the provider's default auth mode.
+  for (const r of onboardAuthModeRadios()) {
+    r.checked = r.value === opts.defaultMode;
+  }
+}
+
+function currentOnboardAuthMode() {
+  for (const r of onboardAuthModeRadios()) {
+    if (r.checked) return r.value;
+  }
+  return "apiKey";
+}
+
+/**
+ * Render the right input/button for the selected provider + auth mode.
+ *
+ * Visibility matrix:
+ *   - optional auth (LM Studio, vLLM): hide step 2 entirely
+ *   - codex + oauth: device-code button
+ *   - non-codex + oauth: OAuth token input + provider link
+ *   - apiKey mode: API key input
+ */
+function applyOnboardAuthMode(p) {
+  const id = p?.id || onboardProviderSel.value;
+  const mode = currentOnboardAuthMode();
+  const isCodex = id === "codex";
+  const codexOAuth = isCodex && mode === "oauth" && (p?.authModes || []).includes("oauth");
+  const nonCodexOauth = !isCodex && mode === "oauth" && (p?.authModes || []).includes("oauth");
+  const showApiKey = mode === "apiKey" && (p?.authModes || []).includes("apiKey");
+  const optionalAuth = (p?.authModes || []).includes("optional");
   // Codex uses OAuth — show the sign-in button, hide the key input.
   // Optional-auth providers (LM Studio, vLLM) hide the key input and
   // we mark step 2 as "skipped" so the user knows it was intentional.
@@ -1709,11 +1802,26 @@ function syncOnboardMeta() {
   const loginBtn = $("onboard-codex-login");
   if (loginBtn) loginBtn.hidden = !codexOAuth;
   if (onboardApiKey) {
-    const hideInput = codexOAuth || optionalAuth;
-    onboardApiKey.hidden = hideInput;
+    onboardApiKey.hidden = !(showApiKey || optionalAuth);
     onboardApiKey.placeholder = optionalAuth
-      ? "API key (optional for " + (p.label || id) + ")"
+      ? "API key (optional for " + (p?.label || id) + ")"
       : "paste API key";
+  }
+  if (onboardOauthRow) {
+    onboardOauthRow.hidden = !nonCodexOauth;
+  }
+  if (onboardOauthLink) {
+    const launch = p?.authLaunchUrl || p?.authDocsUrl || "";
+    if (nonCodexOauth && launch) {
+      onboardOauthLink.href = launch;
+      onboardOauthLink.textContent = "Get a token at " + (new URL(launch).host) + " →";
+      onboardOauthLink.hidden = false;
+    } else {
+      onboardOauthLink.hidden = true;
+    }
+  }
+  if (onboardAuthModeOauthLabel) {
+    onboardAuthModeOauthLabel.textContent = isCodex ? "ChatGPT OAuth" : (p?.label ? p.label + " OAuth" : "OAuth");
   }
   if (onboardTestBtn) onboardTestBtn.hidden = codexOAuth;
   if (onboardKeyStep) {
@@ -1721,14 +1829,16 @@ function syncOnboardMeta() {
     onboardKeyStep.classList.toggle("is-skipped", skipKey);
   }
   if (onboardSubtitle) {
-    onboardSubtitle.textContent = codexOAuth
-      ? "Let's set up a provider so the agent can do things. Sign in with ChatGPT, then we'll test it."
-      : optionalAuth
-        ? "Let's set up a provider so the agent can do things. " + (p.label || id) + " doesn't need a key — just save and test."
-        : "Let's set up a provider so the agent can do things. Three quick steps.";
+    if (codexOAuth) {
+      onboardSubtitle.textContent = "Let's set up a provider so the agent can do things. Sign in with ChatGPT, then we'll test it.";
+    } else if (optionalAuth) {
+      onboardSubtitle.textContent = "Let's set up a provider so the agent can do things. " + (p?.label || id) + " doesn't need a key — just save and test.";
+    } else if (mode === "oauth") {
+      onboardSubtitle.textContent = "Let's set up a provider so the agent can do things. Paste your " + (p?.label || id) + " OAuth token — get one at the provider's site, then we'll test it.";
+    } else {
+      onboardSubtitle.textContent = "Let's set up a provider so the agent can do things. Three quick steps.";
+    }
   }
-  if (onboardApiKey) onboardApiKey.dataset.required = apiKeyRequired ? "true" : "false";
-  if (onboardApiKey) onboardApiKey.dataset.envVar = envVar || "";
 }
 
 function showOnboard() {
@@ -1763,6 +1873,12 @@ function closeOnboard() {
 
 onboardSkipBtn?.addEventListener("click", closeOnboard);
 onboardProviderSel?.addEventListener("change", syncOnboardMeta);
+for (const r of onboardAuthModeRadios()) {
+  r.addEventListener("change", () => {
+    const p = onboardCatalog?.find((x) => x.id === onboardProviderSel.value);
+    applyOnboardAuthMode(p);
+  });
+}
 $("onboard-codex-login")?.addEventListener("click", async () => {
   onboardResult.className = "onboard-result";
   onboardResult.textContent = "Starting ChatGPT sign-in…";
@@ -1801,19 +1917,29 @@ $("attach-input")?.addEventListener("change", async (e) => {
 
 onboardTestBtn?.addEventListener("click", async () => {
   const provider = onboardProviderSel.value;
-  const apiKey = onboardApiKey.value;
   const model = onboardModel.value.trim();
   if (!provider) { showOnboardError("pick a provider first"); return; }
   const preset = onboardCatalog?.find((p) => p.id === provider);
   const optionalAuth = (preset?.authModes || []).includes("optional");
-  const apiKeyRequired = (preset?.authModes || []).includes("apiKey");
-  const isCodexOauth = provider === "codex" && (preset?.authModes || []).includes("oauth");
+  const supportsOauth = (preset?.authModes || []).includes("oauth");
+  const supportsApiKey = (preset?.authModes || []).includes("apiKey");
+  const mode = currentOnboardAuthMode();
+  const isCodexOauth = provider === "codex" && mode === "oauth";
   if (isCodexOauth) {
     showOnboardError("use the 'Sign in with ChatGPT' button above");
     return;
   }
-  if (apiKeyRequired && (!apiKey || apiKey.length < 8)) { showOnboardError("paste a key (≥8 chars)"); return; }
-  if (apiKey && apiKey.length > 0 && apiKey.length < 8) { showOnboardError("key is too short (≥8 chars)"); return; }
+  const apiKey = onboardApiKey.value;
+  const oauthToken = onboardOauthToken?.value || "";
+  // Validate per mode. OAuth tokens are typically opaque strings the
+  // same length as an API key, so the 8-char floor is fine.
+  if (mode === "oauth") {
+    if (!oauthToken || oauthToken.length < 8) { showOnboardError("paste an OAuth token (≥8 chars)"); return; }
+  } else if (supportsApiKey && !optionalAuth) {
+    if (!apiKey || apiKey.length < 8) { showOnboardError("paste a key (≥8 chars)"); return; }
+  } else if (apiKey && apiKey.length > 0 && apiKey.length < 8) {
+    showOnboardError("key is too short (≥8 chars)"); return;
+  }
   onboardTestBtn.disabled = true;
   onboardTestBtn.textContent = "saving & testing…";
   onboardResult.className = "onboard-result";
@@ -1822,12 +1948,30 @@ onboardTestBtn?.addEventListener("click", async () => {
   let savedModel = model;
   let savedBaseUrl = preset?.defaultBaseUrl || "";
   try {
-    const r = await api("/v1/provider/set-key", {
-      method: "POST",
-      body: { provider, apiKey, model: model || undefined },
-    });
+    let r;
+    if (mode === "oauth") {
+      // OAuth path: save token + authMode via /v1/settings (it handles
+      // both apiKey and oauthToken), then run /v1/diag separately.
+      // We normalize the response to { diag, model } so the rest of
+      // the handler stays uniform with the set-key path.
+      const saveRes = await api("/v1/settings", {
+        method: "POST",
+        body: { provider, oauthToken, authMode: "oauth", model: model || undefined },
+      });
+      if (!saveRes?.ok) {
+        showOnboardError("settings save failed");
+        return;
+      }
+      const diag = await api("/v1/diag").catch((e) => ({ ok: false, error: e.message || String(e), firstByteMs: 0, totalMs: 0 }));
+      r = { diag, model: model || preset?.defaultModel || "" };
+    } else {
+      r = await api("/v1/provider/set-key", {
+        method: "POST",
+        body: { provider, apiKey, model: model || undefined },
+      });
+    }
     if (!r.diag?.ok) {
-      showOnboardError("diag failed: " + (r.diag?.error || "no response") + " — key saved, but the connection test failed. Re-run to overwrite.");
+      showOnboardError("diag failed: " + (r.diag?.error || "no response") + " — credential saved, but the connection test failed. Re-run to overwrite.");
       return;
     }
     savedModel = r.model || savedModel || preset?.defaultModel || "";

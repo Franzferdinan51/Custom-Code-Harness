@@ -140,6 +140,40 @@ test("/v1/provider/catalog lists all built-in providers with auth modes", async 
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
+test("/v1/provider/catalog exposes OAuth + authLaunchUrl for xai/grok/minimax (first-run wizard needs them)", async () => {
+  // Regression: the first-run wizard used to hardcode the OAuth
+  // button to codex only, so picking xai/grok/minimax left the
+  // user with no way to actually use OAuth even though the preset
+  // advertised it. The catalog now exposes both authModes and
+  // authLaunchUrl, so the wizard can render a paste-token path
+  // and link to the provider's auth page.
+  const home = mkdtempSync(join(tmpdir(), "ch-cat-oauth-"));
+  try {
+    const { port, kill } = await startServer(home);
+    try {
+      const r = await getJson<{
+        providers: Array<{
+          id: string;
+          authModes: string[];
+          defaultAuthMode: string;
+          oauthTokenEnv?: string[];
+          authLaunchUrl?: string;
+        }>;
+      }>(`http://127.0.0.1:${port}/v1/provider/catalog`);
+      assert.equal(r.status, 200);
+      for (const want of ["xai", "grok", "minimax"]) {
+        const p = r.body.providers.find((x) => x.id === want);
+        assert.ok(p, "catalog missing " + want);
+        assert.ok(p.authModes.includes("oauth"), want + " should advertise oauth");
+        assert.ok(p.authModes.includes("apiKey"), want + " should advertise apiKey");
+        assert.equal(p.defaultAuthMode, "oauth", want + " should default to oauth");
+        assert.ok(Array.isArray(p.oauthTokenEnv) && p.oauthTokenEnv.length > 0, want + " should expose oauthTokenEnv");
+        assert.ok(typeof p.authLaunchUrl === "string" && p.authLaunchUrl.startsWith("http"), want + " should expose authLaunchUrl");
+      }
+    } finally { kill(); }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
 test("/v1/provider/models returns an empty list when the server is unreachable", async () => {
   const home = mkdtempSync(join(tmpdir(), "ch-models-"));
   try {

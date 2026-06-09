@@ -35,6 +35,57 @@ All notable changes to CodingHarness are documented here. Format follows
   regression check that the `agent` kind still produces the same
   `SubAgentManager.spawn()` result.
 
+## Unreleased — Onboard OAuth
+
+- **fix(onboard): make the first-run wizard provider-agnostic so
+  xai/grok/minimax can actually use OAuth**
+  (`src/web/app.js`, `src/web/index.html`, `src/web/styles.css`):
+  the wizard used to hardcode the "Sign in with ChatGPT"
+  device-code button to `codex` only. Picking `xai`, `grok`, or
+  `minimax` (all of which advertise `authModes: ["oauth",
+  "apiKey"]` with `defaultAuthMode: "oauth"`) left the user
+  with an API-key-only form and no path to use OAuth. The fix
+  replaces the codex-only branch with a small segmented control
+  ("API key" / "OAuth") that's shown for any provider that
+  advertises both modes. The Codex path keeps its device-code
+  button; the other three render an OAuth-token paste input
+  with a "Get a token at <authLaunchUrl>" link to the
+  provider's auth docs. The selected mode is honoured by the
+  "save & test" button — OAuth saves via `/v1/settings` with
+  `oauthToken` + `authMode: "oauth"` and then runs `/v1/diag`;
+  apiKey continues to use `/v1/provider/set-key`. The OAuth
+  option's label is provider-specific ("ChatGPT OAuth",
+  "xAI OAuth", "MiniMax OAuth", "Grok OAuth") so the user
+  always knows which auth they're picking. Also surfaces
+  catalog-fetch failures inside the wizard (previously the
+  dropdown silently went empty with no diagnostic) so future
+  "empty dropdown" reports are diagnosable from a screenshot.
+
+- **fix(server): serve `/onboard-helpers.js`**
+  (`src/server.ts`): the hardcoded static-asset allowlist at
+  the top of the request handler listed `styles.css`, `app.js`,
+  and the favicons but not `onboard-helpers.js`, so the browser
+  was 404ing the helper file on every page load. The wizard's
+  tiered optgroups fell back to inline defaults, masking the
+  bug. Now `/onboard-helpers.js` is served alongside the other
+  static assets.
+
+- **fix(onboard-helpers): avoid duplicate-const SyntaxError and
+  remove the broken `export { ... }` block**
+  (`src/web/onboard-helpers.js`): the file declared
+  `PROVIDER_GROUP_LABELS` and `PROVIDER_TIER_ORDER` at top
+  level, then the trailing `export { ... }` block made it a
+  hard SyntaxError when loaded as a classic script (which is
+  how the browser loads it via `<script src=...>`). The error
+  aborted the rest of `app.js`, so the wizard's first-run
+  detection never ran — the dropdown stayed empty and the
+  catalog fetch never happened. Wrapped the file in an IIFE
+  so the constants are scoped and the file works as both a
+  classic script (for the browser) and a CommonJS module (for
+  the `web-onboard-helpers.test.ts` test that imports the
+  helpers). The unit test still passes (425/425 in the full
+  suite).
+
 ## Unreleased — Goals
 
 - **feat(goals): real lifecycle state machine (plan→execute→evaluate→re-plan)**

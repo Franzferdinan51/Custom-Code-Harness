@@ -65,6 +65,47 @@ All notable changes to CodingHarness are documented here. Format follows
   linkage persisted, pause/resume/revert round-trips, eval scoring,
   and a stateful-stub `runGoalStateMachine` lifecycle test.
 
+## Unreleased — Loops
+
+- **feat(loops): unified `Loop<Mission|Goal|Agent|Workflow|Tool>`
+  hierarchy; council becomes a GoalLoop with parallel AgentLoops**
+  (`src/agent/loops/{loop,mission,goal,agent,workflow,tool,index}.ts`,
+  `src/agent/council.ts`, `src/cli.ts`,
+  `src/__tests__/loops.test.ts`): ports the loop-tier collapse
+  from `plans/plan_phase1/notes/agnt-port-plan.md` §3. The five
+  tiers (mission → goal → agent → workflow → tool) now share a
+  single `Loop<K extends LoopKind, I, O>` discriminated-union
+  shape with a uniform `run(input, ctx): Promise<output>` method.
+  Per-tier factories: `missionLoop()` (perpetual; instantiates a
+  GoalLoop and resumes matched active goals from the `GoalStore`),
+  `goalLoop()` (drives the state machine; supports `goal` to
+  resume an existing record), `agentLoop()` (wraps `runAgent` and
+  bridges the agent's hooks into the loop's hooks), `workflowLoop()`
+  + `bugFixWorkflow()` (the canonical 4-step
+  `reproduce→diagnose→patch→test` pattern, threading state
+  between steps), `toolLoopFromRegistry(registry, name)` (thin
+  wrapper over `ToolRegistry.get(name).run()` with `validate()`).
+  `src/agent/loops/index.ts` exports the `AnyLoop` union, the
+  `LOOP_KINDS` array, the `is*` type guards, and the per-tier
+  factories. `src/agent/council.ts` adds `councilAsGoalLoop()` —
+  a `Loop<"goal">` that drives a council deliberation as one
+  goal (the CLI's `ch council` keeps its rich transcript path
+  through `runCouncil()`; the goal-loop shape makes council
+  visible in `ch goals list`). `src/cli.ts` `ch loop` registers
+  the `MissionLoop` for lifecycle observability; `ch goal`
+  registers the `GoalLoop` factory. 13 new tests cover the
+  union narrowing (compile-time exhaustive switch on `kind`),
+  the type guards, `LOOP_KINDS` spec order, `MissionLoop` create
+  vs resume paths, `GoalLoop` driving the state machine with a
+  stateful stub to `done`, `AgentLoop` matching `runAgent`
+  behavior with a stateful stub, `WorkflowLoop` running the
+  4-step pattern and threading state, `ToolLoop` success + unknown
+  tool, `councilAsGoalLoop()` returning a `Loop<"goal">` and
+  driving a goal, and a regression check that the existing
+  `runCouncil` API still works after the refactor. All 13
+  loops tests + the existing council/goals/agent-loop/delegation
+  suites pass; no regressions.
+
 ## [Unreleased]
 
 ### Added

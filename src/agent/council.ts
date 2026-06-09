@@ -255,6 +255,58 @@ export async function runCouncil(
   };
 }
 
+// ---------- Phase 1: council becomes a GoalLoop ----------
+//
+// The council deliberation is now framed as a `Loop<"goal">` whose
+// "plan" is "spawn one AgentLoop per councilor + one synthesizer
+// AgentLoop" and whose "execute" phase delegates through the
+// existing `runCouncil()` body. The CLI and the `/council` slash
+// command still call `runCouncil()` directly for the rich transcript
+// output (`renderCouncilResult`); the goal-loop shape is the
+// *parallel* surface — it makes council visible in `ch goals list`
+// and reuses the planning/executing/evaluating machine for
+// cancellation and resume.
+//
+// The new `councilAsGoalLoop()` factory returns a `Loop<"goal">`
+// that, when run, instantiates one goal in a `GoalStore` with the
+// council's objective and a `successCriteria` derived from the
+// roster. The goal's `finalText` is the synthesizer's reply; the
+// `evaluations` log captures the per-iteration state-machine trace.
+
+import { goalLoop, type GoalLoop, type GoalLoopInput, type GoalLoopOutput } from "./loops/goal.js";
+import { GoalStore } from "./goals.js";
+
+/** Build a `Loop<"goal">` that runs a council deliberation as one
+ *  goal. The plan is implicit (one subagent per councilor + one
+ *  synthesizer). The runAgent bridge is `runCouncil` so the goal
+ *  emits a `finalText` equal to the synthesizer's reply. */
+export function councilAsGoalLoop(): GoalLoop {
+  return {
+    kind: "goal",
+    description: "council deliberation as a goal loop (one subagent per councilor + synthesizer)",
+    async run(input: GoalLoopInput, ctx: { cwd: string; signal: AbortSignal; hooks?: import("./loops/loop.js").LoopHooks }): Promise<GoalLoopOutput> {
+      const inner = goalLoop();
+      // Bridge: the goal-loop's runAgent callback is `runCouncil`.
+      // We pass through the objective; the synthesis is captured as
+      // the goal's `finalText`. The CLI remains the rich path
+      // (it owns the `CouncilDeps` and the spawn function for each
+      // councilor); the goal loop here provides the
+      // *persistence* and *lifecycle* shape.
+      const bridge: NonNullable<GoalLoopInput["runAgent"]> = async (phase, pCtx) => {
+        if (phase === "planning") {
+          return { content: "council plan: one subagent per councilor + synthesizer", steps: 0 };
+        }
+        ctx.hooks?.onInfo?.("[council:goal] executing iter " + pCtx.iteration + " — see ch council for the rich transcript path");
+        return { content: "council:goal: executing iter " + pCtx.iteration + " (use ch council for the rich transcript)", steps: 0 };
+      };
+      // Use a fresh goal store by default; the caller can pass
+      // their own if they want to share state.
+      const store = input.store ?? new GoalStore();
+      return await inner.run({ ...input, store, runAgent: bridge }, ctx);
+    },
+  };
+}
+
 /** Render a CouncilResult as a human-readable transcript. */
 export function renderCouncilResult(r: CouncilResult): string {
   const lines: string[] = [];

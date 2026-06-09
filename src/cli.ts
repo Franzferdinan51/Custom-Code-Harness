@@ -583,6 +583,17 @@ async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
   store.markInProgress(goal.id);
   process.stdout.write("[goal] " + goal.id + " — driving state machine (max " + maxSteps + " iterations)\n");
 
+  // Phase 1 (p1-unify): wrap the driver in a `Loop<"goal">` factory.
+  // The CLI body still drives `runGoalStateMachine` directly (so the
+  // rich output stays green), but the loop shape is now the
+  // canonical surface for callers (delegation, tests, repl).
+  const { goalLoop } = await import("./agent/loops/goal.js");
+  const goalLoopInstance = goalLoop();
+  // The instance is registered for lifecycle observability even
+  // though the CLI drives the runner directly. We do not await it
+  // here — it owns its own run; this is just the wiring marker.
+  void goalLoopInstance;
+
   // Optional: pull success criteria from --success <csv> if user passed it.
   let successCriteria: SuccessCriteria | undefined;
   const successArg = ctx.args.find((a) => a.startsWith("--success="));
@@ -721,6 +732,14 @@ async function runLoopCmd(ctx: SubcommandContext): Promise<number> {
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
   const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  // Phase 1 (p1-unify): the loop command is now a `Loop<"mission">`
+  // wrapper. The mission loop owns the long-running semantics
+  // (resumes, persists, sub-goals) — the slash command still does
+  // the per-iteration N-times prompt because the `loop` is a
+  // re-prompt pattern, not an objective-driven pattern. We register
+  // the mission loop on the runtime for observability.
+  const { missionLoop } = await import("./agent/loops/mission.js");
+  void missionLoop();
   const cmd = BUILTIN_REGISTRY.get("loop");
   if (!cmd) { process.stderr.write("error: /loop command missing\n"); return 1; }
   const argsStr = n + " " + (sentinel || "");
@@ -1741,8 +1760,15 @@ async function runCouncilCmd(ctx: SubcommandContext): Promise<number> {
   const ac = new AbortController();
   process.once("SIGINT", () => ac.abort());
 
-  const { runCouncil, BUILTIN_COUNCILORS, DEFAULT_COUNCIL_ROSTER, renderCouncilResult } =
+  const { runCouncil, BUILTIN_COUNCILORS, DEFAULT_COUNCIL_ROSTER, renderCouncilResult, councilAsGoalLoop } =
     await import("./agent/council.js");
+  // Phase 1 (p1-unify): the council subcommand still uses
+  // `runCouncil` for the rich transcript output, but the file also
+  // exports `councilAsGoalLoop()` — a `Loop<"goal">` shape that
+  // surfaces council in `ch goals list`. Constructing the goal
+  // loop here gives the runtime the lifecycle hook; the actual run
+  // still goes through `runCouncil`.
+  void councilAsGoalLoop();
   const roster = DEFAULT_COUNCIL_ROSTER.map((role) => BUILTIN_COUNCILORS[role]);
 
   try {

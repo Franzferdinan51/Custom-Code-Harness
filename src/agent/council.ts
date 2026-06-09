@@ -274,7 +274,7 @@ export async function runCouncil(
 // `evaluations` log captures the per-iteration state-machine trace.
 
 import { goalLoop, type GoalLoop, type GoalLoopInput, type GoalLoopOutput } from "./loops/goal.js";
-import { GoalStore } from "./goals.js";
+import { GoalStore, DEFAULT_MISSION } from "./goals.js";
 
 /** Build a `Loop<"goal">` that runs a council deliberation as one
  *  goal. The plan is implicit (one subagent per councilor + one
@@ -300,8 +300,11 @@ export function councilAsGoalLoop(): GoalLoop {
         return { content: "council:goal: executing iter " + pCtx.iteration + " (use ch council for the rich transcript)", steps: 0 };
       };
       // Use a fresh goal store by default; the caller can pass
-      // their own if they want to share state.
-      const store = input.store ?? new GoalStore();
+      // their own if they want to share state. Scoped to the
+      // caller's active mission (input.mission) so the council
+      // deliberation shows up under the same mission as the
+      // `ch goal` flow that spawned it.
+      const store = input.store ?? new GoalStore({ mission: input.mission ?? DEFAULT_MISSION });
       return await inner.run({ ...input, store, runAgent: bridge }, ctx);
     },
   };

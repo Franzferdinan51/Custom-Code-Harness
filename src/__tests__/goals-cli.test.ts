@@ -120,9 +120,11 @@ test("goals-cli: revert() with the same state and a target iteration is NOT a no
 // ---------- 2. End-to-end CLI tests (subprocess against an isolated goals.json) ----------
 
 /** Run a `ch goals ...` subprocess with a fresh, isolated
- *  CODINGHARNESS_HOME. Returns { stdout, stderr, status }. */
+ *  CODINGHARNESS_HOME. The CLI is invoked with `--mission legacy`
+ *  so it reads from the per-mission state file that
+ *  `seedGoalsJson` writes. Returns { stdout, stderr, status }. */
 function runChGoals(home: string, args: string[]): { stdout: string; stderr: string; status: number } {
-  const r = spawnSync("bun", ["src/cli.ts", "goals", ...args], {
+  const r = spawnSync("bun", ["src/cli.ts", "goals", "--mission", "legacy", ...args], {
     cwd: process.cwd(),
     encoding: "utf-8",
     env: { ...process.env, CODINGHARNESS_HOME: home, NO_COLOR: "1" },
@@ -134,11 +136,17 @@ function runChGoals(home: string, args: string[]): { stdout: string; stderr: str
   };
 }
 
-/** Pre-seed an isolated goals.json with a known terminal goal. */
+/** Pre-seed an isolated `$CH_HOME/goals/legacy/state.json` with a
+ *  known terminal goal. The path matches the per-mission layout
+ *  from Q10 (post-migration) — `seedGoalsJson` writes the v2
+ *  envelope directly to the file the CLI will read, so no
+ *  migration is needed. The legacy mission's normalization pass
+ *  in the GoalStore constructor stamps the goal with
+ *  `mission: "legacy"`. */
 function seedGoalsJson(home: string, goal: GoalRecord): string {
-  const dir = join(home, "goals");
+  const dir = join(home, "goals", "legacy");
   mkdirSync(dir, { recursive: true });
-  const file = join(home, "goals.json");
+  const file = join(dir, "state.json");
   writeFileSync(file, JSON.stringify({ version: 2, goals: [goal] }, null, 2), "utf-8");
   return file;
 }
@@ -157,8 +165,10 @@ test("goals-cli: `ch goals revert <id> --to 2` reverts a terminal goal to planni
     assert.match(r.stdout, /loopStatus=planning/);
 
     // The on-disk goal was actually updated: loopStatus="planning",
-    // currentIteration=2, status="in_progress".
-    const after = JSON.parse(readFileSync(file, "utf-8")) as { goals: GoalRecord[] };
+    // currentIteration=2, status="in_progress". The CLI's first
+    // default-mission access migrated the seeded legacy file to
+    // $CH_HOME/goals/legacy/state.json — read from there.
+    const after = JSON.parse(readFileSync(join(home, "goals", "legacy", "state.json"), "utf-8")) as { goals: GoalRecord[] };
     assert.equal(after.goals.length, 1);
     assert.equal(after.goals[0]!.loopStatus, "planning");
     assert.equal(after.goals[0]!.currentIteration, 2);
@@ -181,7 +191,7 @@ test("goals-cli: `ch goals revert <id> --to=2` parses the equals form", () => {
     assert.equal(r.status, 0, `revert --to=3 should exit 0 — stderr: ${r.stderr}`);
     assert.match(r.stdout, /to iteration 3/);
 
-    const after = JSON.parse(readFileSync(file, "utf-8")) as { goals: GoalRecord[] };
+    const after = JSON.parse(readFileSync(join(home, "goals", "legacy", "state.json"), "utf-8")) as { goals: GoalRecord[] };
     assert.equal(after.goals[0]!.currentIteration, 3);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -199,7 +209,7 @@ test("goals-cli: `ch goals revert <id>` (no --to) defaults to iteration 1", () =
     assert.equal(r.status, 0, `revert (no --to) should exit 0 — stderr: ${r.stderr}`);
     assert.match(r.stdout, /to iteration 1/);
 
-    const after = JSON.parse(readFileSync(file, "utf-8")) as { goals: GoalRecord[] };
+    const after = JSON.parse(readFileSync(join(home, "goals", "legacy", "state.json"), "utf-8")) as { goals: GoalRecord[] };
     assert.equal(after.goals[0]!.currentIteration, 1);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -214,8 +224,10 @@ test("goals-cli: `ch goals revert <id> --to 0` is rejected as a usage error", ()
     const r = runChGoals(home, ["revert", "goal-cli-zero", "--to", "0"]);
     assert.equal(r.status, 2, "--to 0 should be a usage error (exit 2)");
     assert.match(r.stderr, /--to must be a positive integer/);
-    // File should be unchanged — no revert happened.
-    const after = JSON.parse(readFileSync(join(home, "goals.json"), "utf-8")) as { goals: GoalRecord[] };
+    // File should be unchanged — no revert happened. After the
+    // migration triggered by the CLI, the goal lives in the
+    // "legacy" mission's state file, not the original single-file.
+    const after = JSON.parse(readFileSync(join(home, "goals", "legacy", "state.json"), "utf-8")) as { goals: GoalRecord[] };
     assert.equal(after.goals[0]!.loopStatus, "done", "loopStatus should still be 'done' after a rejected revert");
   } finally {
     rmSync(home, { recursive: true, force: true });

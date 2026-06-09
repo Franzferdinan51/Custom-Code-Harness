@@ -56,6 +56,12 @@ interface SubcommandContext {
    *  currentIteration). Parsed globally so parseArgs consumes the
    *  value and doesn't leak it into positional args. */
   to?: string;
+  /** Active mission id. Forwarded to `HarnessRuntime` so the
+   *  GoalStore is constructed with the right per-mission file
+   *  and the CLI surfaces the active mission in `ch info` /
+   *  `ch goals` output. When unset, the runtime defaults to
+   *  `DEFAULT_MISSION` ("default"). */
+  mission?: string;
 }
 
 const SUBCOMMANDS = new Map<string, { description: string; usage: string; run: SubcommandHandler }>();
@@ -88,7 +94,7 @@ registerSubcommand("code", "Code-focused agent. Like `agent` but with a code-edi
   async (ctx) => { return runOneShot(ctx, "code"); });
 
 registerSubcommand("goal", "Run the agent toward a high-level objective (multi-step, auto-planning).",
-  "ch goal <objective>  [--max-steps=N]  [--provider <id>] [--model <name>]",
+  "ch goal <objective>  [--max-steps=N]  [--provider <id>] [--model <name>]  [--mission <id>]",
   async (ctx) => { return runGoalCmd(ctx); });
 
 registerSubcommand("think", "Show or set the thinking level (off|minimal|low|medium|high|xhigh).",
@@ -208,11 +214,11 @@ registerSubcommand("export", "Export a session as a training-friendly JSONL traj
   async (ctx) => { return runExportCmd(ctx); });
 
 registerSubcommand("goals", "List, show, remove, revert, or clear persisted goals (Codex-style /goal lifecycle).",
-  "ch goals [list|show <id>|remove <id>|revert <id> [--to <n>]|clear] [--json]",
+  "ch goals [list|show <id>|remove <id>|revert <id> [--to <n>]|clear] [--json] [--mission <id>]",
   async (ctx) => { return runGoalsCmd(ctx); });
 
 registerSubcommand("council", "Run a multi-agent council deliberation on a question (consensus or adversarial).",
-  "ch council <question> [--mode consensus|adversarial] [--provider <id>] [--model <name>] [--rounds N] [--json]",
+  "ch council <question> [--mode consensus|adversarial] [--provider <id>] [--model <name>] [--rounds N] [--json] [--mission <id>]",
   async (ctx) => { return runCouncilCmd(ctx); });
 
 // ---------- Help / version ----------
@@ -373,6 +379,7 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
         "auth-choice": { type: "string" },
         "api-key": { type: "string" },
         to: { type: "string" },
+        mission: { type: "string" },
       },
       allowPositionals: true,
       strict: false,
@@ -407,6 +414,7 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
     authChoice: parsed.values["auth-choice"] ? String(parsed.values["auth-choice"]) : undefined,
     apiKey: parsed.values["api-key"] ? String(parsed.values["api-key"]) : undefined,
     to: parsed.values.to ? String(parsed.values.to) : undefined,
+    mission: parsed.values.mission ? String(parsed.values.mission) : undefined,
   };
 }
 
@@ -448,7 +456,7 @@ async function startReplSession(ctx: SubcommandContext & { initialPrompt?: strin
   const wantLegacy = ctx.legacy || forceTui;
   const wantSimple = ctx.noTui || (forceRepl && !isTuiCapable() && process.stdin.isTTY === false);
 
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
 
   if (ctx.sessionId) {
     try { await runtime.setSession(ctx.sessionId); }
@@ -526,7 +534,7 @@ async function runOneShot(ctx: SubcommandContext, mode: "run" | "agent" | "code"
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
 
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   if (ctx.sessionId) { try { await runtime.setSession(ctx.sessionId); } catch (e) { process.stderr.write(c.red("error: ") + (e as Error).message + "\n"); return 1; } }
 
   if (ctx.json) {
@@ -604,7 +612,7 @@ async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
   const settings = loadSettings();
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   const provider = runtime.providerRegistry.default();
   if (!provider) { process.stderr.write("error: no provider configured\n"); return 1; }
   const model = runtime.model();
@@ -711,7 +719,7 @@ async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
 
 async function runThinkCmd(ctx: SubcommandContext): Promise<number> {
   ensurePaths();
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   const cmd = BUILTIN_REGISTRY.get("think");
   if (!cmd) { process.stderr.write("error: /think command missing\n"); return 1; }
   const arg = ctx.args.join(" ").trim();
@@ -722,7 +730,7 @@ async function runThinkCmd(ctx: SubcommandContext): Promise<number> {
 
 async function runVerboseCmd(ctx: SubcommandContext): Promise<number> {
   ensurePaths();
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   const cmd = BUILTIN_REGISTRY.get("verbose");
   if (!cmd) { process.stderr.write("error: /verbose command missing\n"); return 1; }
   const arg = ctx.args.join(" ").trim();
@@ -733,7 +741,7 @@ async function runVerboseCmd(ctx: SubcommandContext): Promise<number> {
 
 async function runTraceCmd(ctx: SubcommandContext): Promise<number> {
   ensurePaths();
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   const cmd = BUILTIN_REGISTRY.get("trace");
   if (!cmd) { process.stderr.write("error: /trace command missing\n"); return 1; }
   const arg = ctx.args.join(" ").trim();
@@ -774,7 +782,7 @@ async function runLoopCmd(ctx: SubcommandContext): Promise<number> {
   const settings = loadSettings();
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   // Phase 1 (p1-unify): the loop command is now a `Loop<"mission">`
   // wrapper. The mission loop owns the long-running semantics
   // (resumes, persists, sub-goals) — the slash command still does
@@ -835,7 +843,7 @@ async function runWelcomeCmd(): Promise<number> {
 async function runOnboardCmd(ctx: SubcommandContext): Promise<number> {
   ensurePaths();
   const { HarnessRuntime } = await import("./runtime.js");
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   const providerId = ctx.provider ?? ctx.authChoice;
   const useOauth = !!ctx.oauth || (ctx.authChoice?.includes("oauth") ?? false);
 
@@ -925,7 +933,7 @@ async function runAttachCmd(ctx: SubcommandContext): Promise<number> {
 async function runProviderCmd(ctx: SubcommandContext): Promise<number> {
   ensurePaths();
   const { HarnessRuntime } = await import("./runtime.js");
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   const sub = ctx.args[0];
 
   // `ch provider list` — catalog.
@@ -1171,7 +1179,7 @@ async function runSkillCmd(ctx: SubcommandContext): Promise<number> {
   const settings = loadSettings();
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   const cmd = BUILTIN_REGISTRY.get("skill");
   if (!cmd) { process.stderr.write("error: /skill command missing\n"); return 1; }
   const out = await cmd.run([name, ...ctx.args.slice(1)].join(" "), { cwd: ctx.cwd, runtime: () => runtime });
@@ -1549,7 +1557,7 @@ async function runTreeCmd(ctx: SubcommandContext): Promise<number> {
   const settings = loadSettings();
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   try {
     await hydrateRuntimeSession(runtime, ctx);
   } catch (e) {
@@ -1568,7 +1576,7 @@ async function runForkCmd(ctx: SubcommandContext): Promise<number> {
   const settings = loadSettings();
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   try {
     await hydrateRuntimeSession(runtime, ctx);
   } catch (e) {
@@ -1587,7 +1595,7 @@ async function runForkCmd(ctx: SubcommandContext): Promise<number> {
  *  so the two surfaces can't drift. */
 async function runTodoCmd(ctx: SubcommandContext): Promise<number> {
   ensurePaths();
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   try {
     await hydrateRuntimeSession(runtime, ctx);
   } catch (e) {
@@ -1606,7 +1614,7 @@ async function runCompactCmd(ctx: SubcommandContext): Promise<number> {
   const settings = loadSettings();
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   try {
     await hydrateRuntimeSession(runtime, ctx);
   } catch (e) {
@@ -1700,21 +1708,22 @@ async function readStdin(): Promise<string> {
 
 async function runGoalsCmd(ctx: SubcommandContext): Promise<number> {
   ensurePaths();
-  const { GoalStore, formatGoalLine } = await import("./agent/goals.js");
-  const store = new GoalStore();
+  const { GoalStore, formatGoalLine, DEFAULT_MISSION } = await import("./agent/goals.js");
+  const mission = ctx.mission ?? DEFAULT_MISSION;
+  const store = new GoalStore({ mission });
   const sub = ctx.args[0];
 
   if (!sub || sub === "list") {
     const all = store.list();
     if (all.length === 0) {
-      process.stdout.write("(no goals — run `ch goal <objective>` to create one)\n");
+      process.stdout.write("(no goals in mission \"" + mission + "\" — run `ch goal <objective>` to create one)\n");
       return 0;
     }
     if (ctx.json) {
       process.stdout.write(JSON.stringify(all, null, 2) + "\n");
       return 0;
     }
-    process.stdout.write("Goals (" + all.length + "):\n");
+    process.stdout.write("Goals in mission \"" + mission + "\" (" + all.length + "):\n");
     for (const g of all) process.stdout.write("  " + formatGoalLine(g) + "\n");
     return 0;
   }
@@ -1777,7 +1786,7 @@ async function runGoalsCmd(ctx: SubcommandContext): Promise<number> {
     return 0;
   }
 
-  process.stderr.write("usage: ch goals [list|show <id>|remove <id>|revert <id> [--to <n>]|clear] [--json]\n");
+  process.stderr.write("usage: ch goals [list|show <id>|remove <id>|revert <id> [--to <n>]|clear] [--json] [--mission <id>]\n");
   return 2;
 }
 
@@ -1833,7 +1842,7 @@ async function runCouncilCmd(ctx: SubcommandContext): Promise<number> {
   const settings = loadSettings();
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
-  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral, mission: ctx.mission ?? "default" });
   const ac = new AbortController();
   process.once("SIGINT", () => ac.abort());
 

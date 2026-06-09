@@ -12,10 +12,19 @@
 // Schema is bumped from v1 → v2; v1 records load in-memory unchanged
 // (we just default `loopStatus` to "pending" when it's missing).
 
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { paths } from "../config/paths.js";
 import { log } from "../util/logger.js";
+
+/** Default mission id when no `--mission` is given. The legacy
+ *  v1/v2 single-file structure is migrated to a "legacy" mission on
+ *  first access, so "default" always starts fresh. */
+export const DEFAULT_MISSION = "default";
+/** Mission id used to hold records that were migrated from the
+ *  legacy $CH_HOME/goals.json single-file structure. Created
+ *  automatically on first access. */
+export const LEGACY_MISSION = "legacy";
 
 // ---------- Status (top-level lifecycle — backward compatible) ----------
 
@@ -252,10 +261,17 @@ export interface GoalRecord {
   successCriteria?: SuccessCriteria;
   /** History of evaluator runs. */
   evaluations?: GoalEvaluation[];
+  // ---------- Phase 2 additions (Q2 + Q10) ----------
+  /** Mission this goal belongs to. Set on creation from the active
+   *  runtime mission. Defaults to "default" when the field is
+   *  missing (v1/v2 records loaded from the legacy single file get
+   *  stamped "legacy" on migration — see GoalStore constructor). */
+  mission?: string;
   /** Optional: last human-readable failure reason (e.g. "semantic
    *  identical-replan detected"). Set by the runner when it aborts
    *  for a known, structured cause; null/empty for normal "evaluator
-   *  did not pass" failures. */
+   *  did not pass" failures. The runtime surfaces this in the CLI
+   *  status output. */
   lastError?: string;
 }
 
@@ -313,15 +329,111 @@ function writePersisted(file: string, goals: GoalRecord[]): void {
 
 // ---------- The store ----------
 
+export interface GoalStoreOptions {
+  /** Per-mission isolation. Two stores for two missions see two
+   *  different files and don't share records. Defaults to
+   *  `DEFAULT_MISSION` ("default"). Ignored when `file` is set. */
+  mission?: string;
+  /** Backward-compat / test escape hatch: use this exact file
+   *  path, bypass per-mission resolution AND skip the legacy
+   *  migration. Used by the test suite. */
+  file?: string;
+}
+
 export class GoalStore {
-  private file: string;
+  /** Active mission for this store. "<direct>" when the store was
+   *  constructed with an explicit `file` (test escape hatch). */
+  readonly mission: string;
+  /** The file this store reads from and writes to. Public for
+   *  tests and for the migration helpers. */
+  readonly file: string;
   private goals: GoalRecord[];
   private onEnter: LifecycleHook[] = [];
   private onExit: LifecycleHook[] = [];
 
-  constructor(opts: { file?: string } = {}) {
-    this.file = opts.file ?? paths.goals;
-    this.goals = readPersisted(this.file);
+  constructor(opts: GoalStoreOptions = {}) {
+    if (opts.file) {
+      // Test escape hatch — no per-mission path, no migration.
+      this.mission = "<direct>";
+      this.file = opts.file;
+      this.goals = this.normalizeMission(readPersisted(this.file));
+    } else {
+      const mission = opts.mission ?? DEFAULT_MISSION;
+      this.mission = mission;
+      this.file = paths.goalsMissionFile(mission);
+      // The default mission triggers the legacy v1/v2 → "legacy"
+      // mission migration on first access. Other missions never
+      // trigger migration (the legacy single file is the only
+      // data the migration reads).
+      if (this.mission === DEFAULT_MISSION) this.maybeMigrateLegacy();
+      this.goals = this.normalizeMission(readPersisted(this.file));
+    }
+  }
+
+  /** Stamp the store's mission on every record that doesn't have
+   *  one. Defensive: the per-mission state file should always
+   *  have records stamped on write, but older versions of the
+   *  store (or hand-edited files) might not. Records that DO
+   *  have a `mission` field are left alone — the field is the
+   *  source of truth for filtering. */
+  private normalizeMission(records: GoalRecord[]): GoalRecord[] {
+    if (this.mission === "<direct>") return records;
+    for (const r of records) {
+      if (!r.mission) r.mission = this.mission;
+    }
+    return records;
+  }
+
+  /** One-time migration: if the legacy $CH_HOME/goals.json exists
+   *  AND the "legacy" mission's state.json does not, move the
+   *  legacy records to $CH_HOME/goals/legacy/state.json and
+   *  unlink the original. The "legacy" mission then owns the old
+   *  data; the default mission starts empty.
+   *
+   *  This runs at most once per process per home dir — the
+   *  sentinel is the absence of the legacy mission's state file.
+   *  If the user manually deletes the legacy mission's state
+   *  file later, the migration will NOT re-fire (the unlink is
+   *  one-shot; we don't want to silently resurrect deleted data).
+   *  Errors are logged and swallowed — a broken legacy file
+   *  shouldn't prevent the default mission from loading. */
+  private maybeMigrateLegacy(): void {
+    const legacy = paths.goals;
+    if (!existsSync(legacy)) return;
+    const target = paths.goalsMissionFile(LEGACY_MISSION);
+    if (existsSync(target)) {
+      // Already migrated (or the user created their own "legacy"
+      // mission). Don't clobber; just unlink the old file.
+      try { unlinkSync(legacy); } catch (e) {
+        log.warn("goals: could not unlink legacy file after detecting existing legacy mission: " + (e as Error).message);
+      }
+      return;
+    }
+    let records: GoalRecord[] = [];
+    try {
+      const raw = readFileSync(legacy, "utf-8");
+      const parsed = JSON.parse(raw) as PersistedShape;
+      if (parsed && Array.isArray((parsed as { goals?: unknown }).goals)) {
+        records = (parsed.goals as GoalRecord[]).map((g) => {
+          const r = upgradeRecord(g);
+          // Stamp the legacy mission so the records are
+          // unambiguously owned by the legacy mission once
+          // re-read through a normal GoalStore({ mission: "legacy" }).
+          r.mission = LEGACY_MISSION;
+          return r;
+        });
+      }
+    } catch (e) {
+      log.warn("goals: failed to read legacy " + legacy + " during migration (" + (e as Error).message + ") — skipping");
+      return;
+    }
+    try {
+      writePersisted(target, records);
+      unlinkSync(legacy);
+      log.info("goals: migrated " + records.length + " legacy record(s) to " + target);
+    } catch (e) {
+      log.warn("goals: failed to write " + target + " during migration (" + (e as Error).message + ") — leaving legacy file in place");
+    }
   }
 
   // ---- subscriptions ----
@@ -393,6 +505,11 @@ export class GoalStore {
       currentIteration: 0,
       successCriteria: input.successCriteria,
       parentGoalId: input.parentGoalId,
+      // Stamp the active mission. The "<direct>" sentinel (test
+      // escape hatch) leaves the field undefined so the test
+      // record is "owned by no mission" — callers that need
+      // a real mission can pass it explicitly.
+      mission: this.mission === "<direct>" ? undefined : this.mission,
     };
     this.goals.push(rec);
     this.flush();

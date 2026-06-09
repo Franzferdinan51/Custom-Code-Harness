@@ -43,11 +43,17 @@ function makeStubDeps(opts: {
         return { text, usage: { inputTokens: 10, outputTokens: 5 } };
       }
       // Otherwise it's a regular councilor. The system prompt
-      // identifies the role — we look for the unique first word.
+      // identifies the role via a unique uppercase marker — see
+      // the table comment in `src/agent/council.ts`.
       const role: CouncilorRole =
         spawnOpts.system.includes("SKEPTIC") ? "skeptic" :
         spawnOpts.system.includes("BUILDER") ? "builder" :
         spawnOpts.system.includes("RESEARCHER") ? "researcher" :
+        spawnOpts.system.includes("SENTINEL") ? "security" :
+        spawnOpts.system.includes("TUNER") ? "performance" :
+        spawnOpts.system.includes("ADVOCATE") ? "dx" :
+        spawnOpts.system.includes("VERIFIER") ? "qa" :
+        spawnOpts.system.includes("DOMAIN EXPERT") ? "domain" :
         "synthesizer";
       const text = opts.perRole?.[role] ?? "[no reply for " + role + "]";
       opts.callLog?.push(role);
@@ -57,11 +63,116 @@ function makeStubDeps(opts: {
 }
 
 test("council: builtins are all present", () => {
-  for (const r of ["skeptic", "builder", "researcher", "synthesizer"] as CouncilorRole[]) {
+  for (const r of [
+    "skeptic",
+    "builder",
+    "researcher",
+    "security",
+    "performance",
+    "dx",
+    "qa",
+    "domain",
+    "synthesizer",
+  ] as CouncilorRole[]) {
     assert.ok(BUILTIN_COUNCILORS[r], "missing built-in: " + r);
     assert.ok(BUILTIN_COUNCILORS[r].systemPrompt.length > 50, r + " system prompt is suspiciously short");
   }
   assert.deepEqual(DEFAULT_COUNCIL_ROSTER, ["skeptic", "builder", "researcher"]);
+});
+
+test("council: 9 deliberation voices (was 4), each with name + system prompt + weight", () => {
+  const voices = Object.values(BUILTIN_COUNCILORS);
+  assert.equal(voices.length, 9, "council must ship 9 built-in voices");
+
+  const expectedRoles: CouncilorRole[] = [
+    "skeptic",
+    "builder",
+    "researcher",
+    "security",
+    "performance",
+    "dx",
+    "qa",
+    "domain",
+    "synthesizer",
+  ];
+  assert.deepEqual(
+    Object.keys(BUILTIN_COUNCILORS).sort(),
+    expectedRoles.slice().sort(),
+    "council must expose the 9 expected roles",
+  );
+
+  for (const v of voices) {
+    // Non-empty system prompt fragment (the test asks for >0; the
+    // older test asked for >50 — we keep the lower bar here so
+    // this is a pure presence check).
+    assert.ok(typeof v.systemPrompt === "string", v.role + " system prompt must be a string");
+    assert.ok(v.systemPrompt.length > 0, v.role + " system prompt is empty");
+    // Display name is set for every built-in voice.
+    assert.ok(typeof v.name === "string" && v.name.length > 0, v.role + " must have a non-empty display name");
+    // Weight is a positive number; default 1.0.
+    assert.ok(typeof v.weight === "number" && v.weight > 0, v.role + " must have a positive weight");
+  }
+});
+
+test("council: new voices have unique perspectives (system prompts are distinct)", () => {
+  const voices = Object.values(BUILTIN_COUNCILORS);
+  const prompts = new Set(voices.map((v) => v.systemPrompt));
+  assert.equal(prompts.size, voices.length, "every built-in voice must have a distinct system prompt");
+});
+
+test("council: full 8-voice deliberator roster + synthesizer runs in consensus mode", async () => {
+  const log: string[] = [];
+  const deps = makeStubDeps({ callLog: log });
+  // All 8 deliberators (synthesizer is injected automatically).
+  const deliberators: CouncilorRole[] = [
+    "skeptic",
+    "builder",
+    "researcher",
+    "security",
+    "performance",
+    "dx",
+    "qa",
+    "domain",
+  ];
+  const roster: Councilor[] = deliberators.map((r) => BUILTIN_COUNCILORS[r]);
+  const result = await runCouncil("Expand to 9?", {
+    mode: "consensus",
+    councilors: roster,
+    cwd: process.cwd(),
+  }, deps);
+
+  // 1 round × 8 deliberators + 1 synthesizer = 9 transcript entries.
+  assert.equal(result.transcript.length, 9, "1 round × 8 councilors + 1 synthesizer = 9 entries");
+  // All 8 deliberators + 1 synthesizer must appear in the call log.
+  const sorted = [...log].sort();
+  assert.deepEqual(
+    sorted,
+    [...deliberators, "synthesizer" as CouncilorRole].sort(),
+    "every deliberator and the synthesizer must be called exactly once",
+  );
+  // Synthesizer runs last.
+  assert.equal(result.transcript[result.transcript.length - 1]!.role, "synthesizer");
+});
+
+test("council: synthesizer system prompt includes the voice weights", async () => {
+  let capturedSystem = "";
+  const deps: CouncilDeps = {
+    spawn: async (opts) => {
+      if (opts.prompt.includes("Council transcript")) {
+        capturedSystem = opts.system;
+        return { text: "FINAL", usage: { inputTokens: 0, outputTokens: 0 } };
+      }
+      return { text: "ok", usage: { inputTokens: 0, outputTokens: 0 } };
+    },
+  };
+  const roster: Councilor[] = [
+    BUILTIN_COUNCILORS.skeptic,
+    BUILTIN_COUNCILORS.security, // weight 1.2 — non-default
+  ];
+  await runCouncil("Q", { mode: "consensus", councilors: roster, cwd: process.cwd() }, deps);
+  assert.match(capturedSystem, /Voice weights:/);
+  assert.match(capturedSystem, /skeptic=1/);
+  assert.match(capturedSystem, /security=1\.2/);
 });
 
 test("council: consensus mode runs 1 round + synthesizer", async () => {

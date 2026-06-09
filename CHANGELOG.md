@@ -223,6 +223,13 @@ All notable changes to CodingHarness are documented here. Format follows
     push/peek/drain, append-to-last-tool-result, kill
     mid-run → restart → replay, idempotency, and the
     failure path.
+  - 1-line test correction: restore the
+    `assert.equal(handle.status, "failed")` assertion in
+    `async-tool-queue.test.ts`. Originally removed in a
+    misread post-mortem; the assertion is correct under
+    the `DelegationRun` live-getter pattern from 0637a25
+    (toHandle's `get status() { return r.status; }`
+    forwards to the mutated internal state).
 
 ### Fixed
 

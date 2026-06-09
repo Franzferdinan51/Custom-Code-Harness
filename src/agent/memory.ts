@@ -1,67 +1,53 @@
-// Persistent memory store. Two files:
-//   - $CH_HOME/memory/MEMORY.md  (agent-curated, project-agnostic notes)
-//   - $CH_HOME/memory/USER.md    (user profile, written by /memory user)
+// Persistent memory store — v2.
 //
-// Append-only by default. Searches are simple substring matches; for
-// v1 we don't bother with embeddings or vector search.
+// Public API is unchanged from v1 (`read`, `append`, `search`,
+// `readUser`, `appendUser`) so callers in slash/builtin.ts,
+// runtime.ts, and the memory tool keep working. Internally we
+// delegate to `MemoryLayerStore` which adds:
+//   - BM25-ranked search across raw notes + lessons
+//   - a curated, deduplicated LESSONS section
+//   - a legacy substring fallback for files written before
+//     `## LESSONS` was introduced
+//
+// Embedding-based vector recall is intentionally out of scope.
+// See TODO(phase-1) in memory-layers.ts.
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
-import { paths } from "../config/paths.js";
-import { log } from "../util/logger.js";
+import { MemoryLayerStore } from "./memory-layers.js";
 
-function memoryFile(): string { return join(paths.memory, "MEMORY.md"); }
-function userFile(): string { return join(paths.memory, "USER.md"); }
-
-function ensureFile(f: string, header: string): void {
-  if (!existsSync(f)) {
-    try { writeFileSync(f, header + "\n", "utf-8"); } catch (e) { log.warn("memory init failed", e); }
-  }
-}
-
+/**
+ * The persisted memory store. Backed by a single MEMORY.md file
+ * under $CH_HOME/memory/.
+ */
 export class MemoryStore {
-  /** Read MEMORY.md. */
-  read(): string {
-    ensureFile(memoryFile(), "# Memory\n\nPersistent notes that survive across sessions. Updated by the agent via the memory tool or by `/memory add`.\n");
-    try { return readFileSync(memoryFile(), "utf-8"); } catch { return ""; }
-  }
+  private readonly inner = new MemoryLayerStore();
 
-  /** Append a timestamped entry to MEMORY.md. */
-  async append(text: string): Promise<void> {
-    ensureFile(memoryFile(), "# Memory\n\n");
-    const ts = new Date().toISOString().slice(0, 19).replace("T", " ");
-    const entry = "\n- " + ts + " — " + text.trim() + "\n";
-    try { appendFileSync(memoryFile(), entry, "utf-8"); }
-    catch (e) { log.error("memory append failed", e); throw e; }
-  }
+  /** Read the full MEMORY.md. */
+  read(): string { return this.inner.read(); }
 
-  /** Search: case-insensitive substring match, with line numbers. */
-  async search(query: string): Promise<string> {
-    const text = this.read();
-    if (!text) return "";
-    const lc = query.toLowerCase();
-    const lines = text.split("\n");
-    const hits: string[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      if ((lines[i] ?? "").toLowerCase().includes(lc)) {
-        hits.push(String(i + 1).padStart(4) + "  " + lines[i]);
-      }
-    }
-    return hits.length === 0 ? "" : hits.join("\n");
-  }
+  /** Append a timestamped entry to the raw-notes layer. */
+  async append(text: string): Promise<void> { await this.inner.append(text); }
 
-  /** Read USER.md. */
-  readUser(): string {
-    ensureFile(userFile(), "# User\n\nProfile of the user. Updated by the agent based on interactions.\n");
-    try { return readFileSync(userFile(), "utf-8"); } catch { return ""; }
-  }
+  /**
+   * BM25 search across RAW + LESSONS, with `note:` / `lesson:`
+   * prefixes. Falls back to substring match in legacy mode.
+   */
+  async search(query: string): Promise<string> { return await this.inner.search(query); }
 
-  /** Append to USER.md. */
-  async appendUser(text: string): Promise<void> {
-    ensureFile(userFile(), "# User\n\n");
-    const ts = new Date().toISOString().slice(0, 19).replace("T", " ");
-    const entry = "\n- " + ts + " — " + text.trim() + "\n";
-    try { appendFileSync(userFile(), entry, "utf-8"); }
-    catch (e) { log.error("user append failed", e); throw e; }
-  }
+  /** Read USER.md (unrelated to the layers refactor). */
+  readUser(): string { return this.inner.readUser(); }
+
+  /** Append a timestamped line to USER.md. */
+  async appendUser(text: string): Promise<void> { await this.inner.appendUser(text); }
 }
+
+// Re-export the layer types and helpers for callers that want
+// the full v2 surface (lessons, promotion, etc.).
+export { MemoryLayerStore } from "./memory-layers.js";
+export {
+  LESSONS_HEADER,
+  DEFAULT_TOP_K,
+  lessonFingerprint,
+  type Lesson,
+  type MemoryHit,
+  type AppendLessonOptions,
+} from "./memory-layers.js";

@@ -3,6 +3,36 @@
 All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased — Goals
+
+- **feat(goals): real lifecycle state machine (plan→execute→evaluate→re-plan)**
+  (`src/agent/goals.ts`, `src/cli.ts`, `src/__tests__/goals.test.ts`):
+  ports the AGI-loop shape from `agnt-gg/agnt` per
+  `plans/plan_phase1/notes/agnt-port-plan.md` §1. `goals.json` is
+  no longer a one-shot record. Each goal now lives in a `GoalState`
+  machine — `pending → planning → executing → evaluating →
+  re-planning → done | failed`, with `paused` orthogonal. New APIs
+  on `GoalStore`: `transition()`, `pause()`, `resume()`, `revert()`,
+  `spawnSubgoal()`, `subscribe({ onEnter, onExit })`,
+  `recordEvaluation()`. The store validates every state move through
+  `canTransition(from, to)` (throws `GoalTransitionError` on illegal
+  edges; a non-throwing `checkTransition()` is exported for CLI
+  guards). A simple `evaluate(goal)` pass/fail heuristic matches the
+  goal's `successCriteria.deliverables` keywords against the
+  agent's `finalText` (>= 70% hit = pass). `runGoalStateMachine()`
+  walks the state machine, calling a pluggable `GoalRunAgentFn` for
+  the planning + executing steps and `evaluate()` in between; on
+  `GOAL COMPLETE` / `GOAL BLOCKED` strings from the agent it
+  short-circuits to `done` / `failed`. `ch goal` (`runGoalCmd` in
+  `src/cli.ts`) now drives the state machine end-to-end against the
+  configured provider, calling `runAgent` from `src/agent/loop.ts`
+  on each iteration. Schema bumped from v1 → v2 in the persisted
+  envelope; v1 records load in-memory unchanged (defaults
+  `loopStatus = "pending"`). 22 new tests cover the legal/illegal
+  transition table, lifecycle hooks, subgoal spawn with parent
+  linkage persisted, pause/resume/revert round-trips, eval scoring,
+  and a stateful-stub `runGoalStateMachine` lifecycle test.
+
 ## [Unreleased]
 
 ### Added

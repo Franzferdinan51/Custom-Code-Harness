@@ -532,6 +532,22 @@ async function runOneShot(ctx: SubcommandContext, mode: "run" | "agent" | "code"
   return 0;
 }
 
+/**
+ * `ch goal` — drive the goal state machine end-to-end.
+ *
+ * Phase 1 (port from agnt-gg/agnt): the goal record is a real state
+ * machine, not a one-shot runner. We:
+ *   1. Create a new goal in the `pending` loop state.
+ *   2. Loop up to `maxSteps` iterations: planning → executing →
+ *      evaluating. After each iteration we call `evaluate(goal)` and
+ *      either advance to `done` (pass) or `re-planning` (fail). The
+ *      runner calls `runAgent` from `src/agent/loop.ts` for the
+ *      planning and executing steps.
+ *   3. On terminal state, mark `status` (complete | failed) and print.
+ *
+ * The state machine is the same code path used by the `/goal` slash
+ * command; the CLI just drives it directly without TTY capture.
+ */
 async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
   const objective = ctx.args.join(" ").trim();
   if (!objective) {
@@ -548,11 +564,95 @@ async function runGoalCmd(ctx: SubcommandContext): Promise<number> {
   if (ctx.provider) settings.defaultProvider = ctx.provider;
   if (ctx.model) settings.defaultModel = ctx.model;
   const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
-  const cmd = BUILTIN_REGISTRY.get("goal");
-  if (!cmd) { process.stderr.write("error: /goal command missing\n"); return 1; }
-  const out = await cmd.run(objective + " --max-steps=" + maxSteps, { cwd: ctx.cwd, runtime: () => runtime });
-  if (typeof out === "string" && out.length > 0) process.stdout.write(out + "\n");
-  return 0;
+  const provider = runtime.providerRegistry.default();
+  if (!provider) { process.stderr.write("error: no provider configured\n"); return 1; }
+  const model = runtime.model();
+  if (!model) { process.stderr.write("error: no model configured\n"); return 1; }
+
+  const { GoalStore, runGoalStateMachine, formatGoalLine } =
+    await import("./agent/goals.js");
+  const { runAgent, DEFAULT_LIMITS } = await import("./agent/loop.js");
+  type SuccessCriteria = import("./agent/goals.js").SuccessCriteria;
+  const store = new GoalStore();
+  const goal = store.add({
+    objective,
+    maxSteps,
+    model,
+    providerId: ctx.provider,
+  });
+  store.markInProgress(goal.id);
+  process.stdout.write("[goal] " + goal.id + " — driving state machine (max " + maxSteps + " iterations)\n");
+
+  // Optional: pull success criteria from --success <csv> if user passed it.
+  let successCriteria: SuccessCriteria | undefined;
+  const successArg = ctx.args.find((a) => a.startsWith("--success="));
+  if (successArg) {
+    successCriteria = {
+      deliverables: successArg.slice("--success=".length).split(",").map((s) => s.trim()).filter(Boolean),
+    };
+    store.update(goal.id, { successCriteria });
+  }
+
+  // Bridge to runAgent. We rebuild a fresh system prompt + a single
+  // user turn per state, so the model sees an isolated state.
+  const ac = new AbortController();
+  process.once("SIGINT", () => ac.abort());
+
+  const callAgent = async (phase: "planning" | "executing", context: { previousOutput?: string }): Promise<string> => {
+    const system = await runtime.buildSystemPrompt();
+    const prompt = phase === "planning"
+      ? [
+          "Goal mode: plan",
+          "Objective: " + objective,
+          "",
+          "Produce a numbered, minimal plan (3-7 steps) to achieve this in the current repository.",
+          "After the plan, write exactly: Ready to execute.",
+        ].join("\n")
+      : [
+          "Goal mode: execute",
+          "Objective: " + objective,
+          "Plan summary: " + (context.previousOutput ?? "(no plan)").slice(0, 500),
+          "",
+          "Continue from the plan and execute the next step in the repository.",
+          "If the objective is complete, say exactly: GOAL COMPLETE",
+          "If you cannot continue, say exactly: GOAL BLOCKED: <reason>",
+        ].join("\n");
+    const messages: Array<{ role: "user"; content: string }> = [{ role: "user", content: prompt }];
+    const result = await runAgent({
+      provider,
+      model,
+      system,
+      messages,
+      tools: runtime.tools,
+      cwd: ctx.cwd,
+      signal: ac.signal,
+      limits: { ...DEFAULT_LIMITS, maxSteps: 4, requestTimeoutMs: 30_000 },
+    });
+    return result.final.content;
+  };
+
+  try {
+    const final = await runGoalStateMachine(goal, {
+      store,
+      maxIterations: maxSteps,
+      onStateChange: (state, g) => {
+        process.stdout.write("[goal " + g.id + "] " + state + " (iter " + (g.currentIteration ?? 0) + "/" + maxSteps + ")\n");
+      },
+      runAgent: async (phase, ctx) => {
+        const content = await callAgent(phase, { previousOutput: ctx?.previousOutput });
+        return { content, steps: 1 };
+      },
+    });
+    process.stdout.write(formatGoalLine(final) + "\n");
+    if (final.finalText) {
+      process.stdout.write("\n  result:\n");
+      for (const line of final.finalText.split("\n")) process.stdout.write("    " + line + "\n");
+    }
+    return final.loopStatus === "done" ? 0 : 1;
+  } catch (e) {
+    process.stderr.write("error: " + (e as Error).message + "\n");
+    return 1;
+  }
 }
 
 async function runThinkCmd(ctx: SubcommandContext): Promise<number> {

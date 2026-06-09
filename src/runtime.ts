@@ -719,6 +719,29 @@ export class HarnessRuntime implements SlashRuntime {
       parts.push("");
     }
 
+    // Memory recall (3-layer BM25). Best-effort: any failure here
+    // is caught and logged, never throws. Uses the most recent
+    // user prompt as the query. We surface only the top 5 hits
+    // because the persistent memory block above already has the
+    // full text; recall is for the LLM's attention budget.
+    if (this.lastUserPrompt && this.lastUserPrompt.trim().length >= 4) {
+      try {
+        const { MemoryLayerStore } = await import("./agent/memory-layers.js");
+        const store = new MemoryLayerStore();
+        const recallHits = await store.search(this.lastUserPrompt, 5);
+        if (recallHits && recallHits.trim().length > 0) {
+          parts.push("# Memory recall (BM25, 3-layer)");
+          parts.push("Relevant notes from your persistent memory for this query:");
+          parts.push(recallHits.slice(0, 2_000));
+          parts.push("");
+        }
+      } catch (e) {
+        // Best-effort: a broken recall path must not break the
+        // agent loop.
+        try { (await import("./util/logger.js")).log.warn("memory-recall: " + (e as Error).message); } catch { /* ignore */ }
+      }
+    }
+
     // Skills catalog
     const skillsCatalog = await this.skills.catalogForPrompt();
     if (skillsCatalog) {

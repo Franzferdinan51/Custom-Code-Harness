@@ -690,7 +690,7 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
           new GoalStore().update(goalId, { status: "complete", stepsTaken: step, finalText: response.slice(0, 2000) });
         } catch { /* best-effort */ }
       }
-      return "goal complete in " + step + " step(s) [" + goalId + "]";
+      return "goal complete in " + step + " step(s)";
     }
     if (lc.includes("goal blocked")) {
       rt.setGoalActivity?.({
@@ -710,7 +710,7 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
           new GoalStore().update(goalId, { status: "blocked", stepsTaken: step, finalText: response.slice(0, 2000) });
         } catch { /* best-effort */ }
       }
-      return "goal blocked [" + goalId + "]";
+      return "goal blocked";
     }
   }
   rt.setGoalActivity?.({
@@ -730,7 +730,7 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
       new GoalStore().update(goalId, { status: "failed", stepsTaken: maxSteps });
     } catch { /* best-effort */ }
   }
-  return "goal did not complete within " + maxSteps + " steps [" + goalId + "]";
+  return "goal did not complete within " + maxSteps + " steps";
 }
 
 // ---------- /goals ----------
@@ -1617,6 +1617,32 @@ BUILTIN_REGISTRY.register(retryCommand);
 BUILTIN_REGISTRY.register(undoCommand);
 BUILTIN_REGISTRY.register(compactCommand);
 BUILTIN_REGISTRY.register(memoryCommand);
+
+// ---------- /recall ----------
+
+const recallCommand: SlashCommand = {
+  name: "recall",
+  description: "Search the 3-layer persistent memory (BM25-ranked) for relevant notes and lessons.",
+  group: "context",
+  usage: "/recall <query>",
+  async run(args, ctx) {
+    const query = args.trim();
+    if (!query) return "usage: /recall <query>";
+    try {
+      const { MemoryLayerStore } = await import("../agent/memory-layers.js");
+      const store = new MemoryLayerStore();
+      const hits = await store.search(query, 8);
+      if (!hits || hits.trim().length === 0) {
+        return "(no memory hits for: " + query + ")";
+      }
+      return "Recall for: " + query + "\n\n" + hits;
+    } catch (e) {
+      return "recall failed: " + (e as Error).message;
+    }
+  },
+};
+
+BUILTIN_REGISTRY.register(recallCommand);
 BUILTIN_REGISTRY.register(skillCommand);
 BUILTIN_REGISTRY.register(agentsCommand);
 BUILTIN_REGISTRY.register(cronCommand);

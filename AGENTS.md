@@ -46,6 +46,11 @@ A versatile terminal coding harness — multi-provider, extensible, crash-resist
 - Unit tests: `npm test` (bun — fast, runs OpenTUI FFI tests)
 - Tests must pass before merging to `main`
 - Add tests for every new behavior — see existing `src/__tests__/*.test.ts` files
+- **Fresh worktrees need `npm run build` before `npm test`.** `dist/` is
+  gitignored; several tests `spawn` `bun src/cli.ts serve` and that path
+  resolves through `dist/cli.js`. With no `dist/`, ~30 unrelated tests
+  fail with "Module not found". Run `npm install && npm run build` once
+  in a new worktree before `npm test`.
 - Test files that need a writable `~/.codingharness/` must set `process.env.CODINGHARNESS_HOME = tmp` and `mkdirSync` the subdirs (`sessions`, `logs`, `cache`, `extensions`, `prompts`, `skills`, `agents`, `cron`, `memory`, `context`) BEFORE importing modules that read `paths.*`
 - Stub providers in agent-loop tests must be stateful: yield tool calls on call 1, then `done` on call 2+ — otherwise the loop runs forever
 - Discriminated union types: `e.payload.kind` is the narrow discriminator, not `e.type` — the latter is a coarse label

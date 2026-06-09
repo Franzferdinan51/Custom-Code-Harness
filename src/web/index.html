@@ -315,7 +315,31 @@
           <div class="onboard-step-body" id="onboard-key-body">
             <div class="onboard-step-title">Save your key</div>
             <div class="onboard-step-hint" id="onboard-key-hint">Stored locally in <code>~/.codingharness/settings.json</code>. Never sent anywhere except to the provider.</div>
+            <!--
+              Auth mode selector. Only shown when the provider advertises
+              more than one auth mode (e.g. ["oauth","apiKey"]). Codex
+              uses OAuth's device-code flow; xai/grok/minimax accept a
+              pasted OAuth token (their device-code flows aren't wired
+              in the runtime yet, but the openai-compat provider can
+              use the token as a Bearer credential).
+            -->
+            <div class="onboard-auth-modes" id="onboard-auth-modes" role="radiogroup" aria-label="Authentication mode" hidden>
+              <label class="onboard-auth-mode-option">
+                <input type="radio" name="onboard-auth-mode" value="apiKey" />
+                <span>API key</span>
+              </label>
+              <label class="onboard-auth-mode-option" id="onboard-auth-mode-oauth-option" hidden>
+                <input type="radio" name="onboard-auth-mode" value="oauth" />
+                <span id="onboard-auth-mode-oauth-label">OAuth</span>
+              </label>
+            </div>
+            <!-- Codex-only: device-code OAuth button. Calls /v1/provider/login/codex. -->
             <button id="onboard-codex-login" class="onboard-btn onboard-btn-primary" type="button" hidden>Sign in with ChatGPT</button>
+            <!-- Non-codex OAuth: paste a token obtained from the provider's own auth flow. -->
+            <div id="onboard-oauth-row" hidden>
+              <input id="onboard-oauth-token" type="password" class="onboard-input" placeholder="paste OAuth token" autocomplete="off" />
+              <a id="onboard-oauth-link" class="onboard-env-hint" target="_blank" rel="noopener noreferrer" hidden>Get a token →</a>
+            </div>
             <input id="onboard-apikey" type="password" class="onboard-input" placeholder="paste API key" autocomplete="off" />
             <div class="onboard-model-row">
               <label>Model</label>

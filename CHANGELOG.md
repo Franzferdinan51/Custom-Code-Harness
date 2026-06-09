@@ -7,6 +7,42 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **Persisted `/goal` lifecycle (Codex-style goal tracking)**
+  (`src/agent/goals.ts`, `src/config/paths.ts`, `src/cli.ts`,
+  `src/slash/builtin.ts`,
+  `src/__tests__/goals.test.ts`): the existing `/goal`
+  slash command and `ch goal` CLI subcommand ran in-memory
+  only — once the run finished, the transcript, status, and
+  result evaporated. Goals are now persisted to
+  `$CH_HOME/goals.json` so the user can list past goals,
+  inspect their outcome, and recover mid-run goals after a
+  harness crash.
+  - **`GoalStore`** (`src/agent/goals.ts`, 182 LOC):
+    append-only `goals.json` with atomic tmp+rename writes.
+    Status lifecycle: `pending → in_progress → complete |
+    blocked | failed`. Public API: `add`, `update`, `get`,
+    `list`, `listActive`, `remove`, `clear`, `markInProgress`,
+    `recordStep`.
+  - **`ch goals` CLI subcommand** (`src/cli.ts`): `list`,
+    `show <id>`, `remove <id>`, `clear` (purges terminal
+    goals). `--json` flag for `list`. Same vocabulary as
+    DuckHive's persisted goal system.
+  - **`/goals` slash command** (`src/slash/builtin.ts`):
+    TUI/REPL equivalent. `list` shows active goals first
+    with a hint to `show` for terminal ones.
+  - **`runGoal` integration** (`src/slash/builtin.ts`):
+    creates the goal record at start, increments
+    `stepsTaken` on each step, marks `complete`/`blocked` at
+    end. Best-effort: a write failure prints a warning and
+    falls through to the existing in-memory run, so goal
+    mode still works on a read-only filesystem.
+  - **`paths.goals` config** (`src/config/paths.ts`): new
+    `goals.json` path under `$CH_HOME`.
+  - 16 unit tests in `src/__tests__/goals.test.ts` covering
+    add/update/remove/clear, status lifecycle, atomic write
+    recovery on corrupt file, id format, list sort order,
+    and terminal-goal filtering.
+
 - **First-class vllm + vllm-omni providers + live `/v1/models`
   discovery across all surfaces**
   (`src/providers/presets.ts`, `src/providers/registry.ts`,

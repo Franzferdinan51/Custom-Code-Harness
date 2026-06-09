@@ -199,6 +199,10 @@ registerSubcommand("export", "Export a session as a training-friendly JSONL traj
   "ch export [session-id|--latest] [--format hermes|openai|share] [--out <dir>]",
   async (ctx) => { return runExportCmd(ctx); });
 
+registerSubcommand("goals", "List, show, or remove persisted goals (Codex-style /goal lifecycle).",
+  "ch goals [list|show <id>|remove <id>|clear] [--json]",
+  async (ctx) => { return runGoalsCmd(ctx); });
+
 // ---------- Help / version ----------
 
 const VERSION = "0.2.2";
@@ -1524,6 +1528,75 @@ async function readStdin(): Promise<string> {
     process.stdin.on("data", (c) => { buf += c; });
     process.stdin.on("end", () => resolve(buf));
   });
+}
+
+async function runGoalsCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const { GoalStore, formatGoalLine } = await import("./agent/goals.js");
+  const store = new GoalStore();
+  const sub = ctx.args[0];
+
+  if (!sub || sub === "list") {
+    const all = store.list();
+    if (all.length === 0) {
+      process.stdout.write("(no goals — run `ch goal <objective>` to create one)\n");
+      return 0;
+    }
+    if (ctx.json) {
+      process.stdout.write(JSON.stringify(all, null, 2) + "\n");
+      return 0;
+    }
+    process.stdout.write("Goals (" + all.length + "):\n");
+    for (const g of all) process.stdout.write("  " + formatGoalLine(g) + "\n");
+    return 0;
+  }
+
+  if (sub === "show") {
+    const id = ctx.args[1];
+    if (!id) { process.stderr.write("usage: ch goals show <id>\n"); return 2; }
+    const g = store.get(id);
+    if (!g) { process.stderr.write("no such goal: " + id + "\n"); return 1; }
+    if (ctx.json) { process.stdout.write(JSON.stringify(g, null, 2) + "\n"); return 0; }
+    process.stdout.write(renderGoalDetail(g) + "\n");
+    return 0;
+  }
+
+  if (sub === "remove") {
+    const id = ctx.args[1];
+    if (!id) { process.stderr.write("usage: ch goals remove <id>\n"); return 2; }
+    const ok = store.remove(id);
+    if (!ok) { process.stderr.write("no such goal: " + id + "\n"); return 1; }
+    process.stdout.write("✓ removed " + id + "\n");
+    return 0;
+  }
+
+  if (sub === "clear") {
+    const n = store.clear();
+    process.stdout.write("✓ cleared " + n + " terminal goal" + (n === 1 ? "" : "s") + "\n");
+    return 0;
+  }
+
+  process.stderr.write("usage: ch goals [list|show <id>|remove <id>|clear] [--json]\n");
+  return 2;
+}
+
+function renderGoalDetail(g: import("./agent/goals.js").GoalRecord): string {
+  const lines: string[] = [];
+  lines.push("Goal: " + g.id);
+  lines.push("  status:     " + g.status);
+  lines.push("  steps:      " + g.stepsTaken + "/" + g.maxSteps);
+  lines.push("  created:    " + new Date(g.createdAt).toISOString());
+  lines.push("  updated:    " + new Date(g.updatedAt).toISOString());
+  if (g.model) lines.push("  model:      " + g.model);
+  if (g.providerId) lines.push("  provider:   " + g.providerId);
+  lines.push("  objective:");
+  for (const line of g.objective.split("\n")) lines.push("    " + line);
+  if (g.finalText) {
+    lines.push("");
+    lines.push("  result:");
+    for (const line of g.finalText.split("\n")) lines.push("    " + line);
+  }
+  return lines.join("\n");
 }
 
 main().then((code) => { process.exit(code); }).catch((e) => {

@@ -607,6 +607,25 @@ const goalCommand: SlashCommand = {
 
 async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): Promise<string> {
   const startedAt = Date.now();
+  // Persist the goal so /goals and ch goals can see it. Tolerate
+  // any failure (read-only filesystem, etc.) — goal mode should
+  // still work in-memory.
+  let goalId: string | null = null;
+  try {
+    const { GoalStore } = await import("../agent/goals.js");
+    const store = new GoalStore();
+    const rec = store.add({
+      objective,
+      maxSteps,
+      model: rt.model(),
+      providerId: rt.providerId(),
+    });
+    goalId = rec.id;
+    store.markInProgress(rec.id);
+    rt.print("[goal] " + rec.id + " (use /goals to inspect)");
+  } catch (e) {
+    rt.print("[goal] persistence unavailable, running in-memory: " + (e as Error).message);
+  }
   rt.setGoalActivity?.({
     mode: "goal",
     objective,
@@ -637,6 +656,12 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
       statusText: "Running step " + step + " of " + maxSteps,
     });
     rt.print("[goal] step " + step + "/" + maxSteps + "...");
+    if (goalId) {
+      try {
+        const { GoalStore } = await import("../agent/goals.js");
+        new GoalStore().recordStep(goalId);
+      } catch { /* best-effort */ }
+    }
     const response = await rt.sendPromptWithCapture([
       "Goal mode: execute",
       "Objective: " + objective,
@@ -659,7 +684,13 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
         statusText: "Completed in " + step + " step" + (step === 1 ? "" : "s"),
       });
       rt.print("[goal] done in " + step + " step" + (step === 1 ? "" : "s"));
-      return "goal complete in " + step + " step(s)";
+      if (goalId) {
+        try {
+          const { GoalStore } = await import("../agent/goals.js");
+          new GoalStore().update(goalId, { status: "complete", stepsTaken: step, finalText: response.slice(0, 2000) });
+        } catch { /* best-effort */ }
+      }
+      return "goal complete in " + step + " step(s) [" + goalId + "]";
     }
     if (lc.includes("goal blocked")) {
       rt.setGoalActivity?.({
@@ -673,7 +704,13 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
         statusText: "Blocked while executing step " + step,
       });
       rt.print("[goal] blocked");
-      return "goal blocked";
+      if (goalId) {
+        try {
+          const { GoalStore } = await import("../agent/goals.js");
+          new GoalStore().update(goalId, { status: "blocked", stepsTaken: step, finalText: response.slice(0, 2000) });
+        } catch { /* best-effort */ }
+      }
+      return "goal blocked [" + goalId + "]";
     }
   }
   rt.setGoalActivity?.({
@@ -687,8 +724,72 @@ async function runGoal(rt: SlashRuntime, objective: string, maxSteps: number): P
     statusText: "Reached max steps (" + maxSteps + ")",
   });
   rt.print("[goal] reached max steps (" + maxSteps + ")");
-  return "goal did not complete within " + maxSteps + " steps";
+  if (goalId) {
+    try {
+      const { GoalStore } = await import("../agent/goals.js");
+      new GoalStore().update(goalId, { status: "failed", stepsTaken: maxSteps });
+    } catch { /* best-effort */ }
+  }
+  return "goal did not complete within " + maxSteps + " steps [" + goalId + "]";
 }
+
+// ---------- /goals ----------
+
+const goalsCommand: SlashCommand = {
+  name: "goals",
+  description: "List, show, or manage persisted goals (Codex-style /goal lifecycle).",
+  group: "workflow",
+  usage: "/goals [list|show <id>|clear|remove <id>]",
+  async run(args, ctx) {
+    const { GoalStore, formatGoalLine } = await import("../agent/goals.js");
+    let store: InstanceType<typeof GoalStore>;
+    try {
+      store = new GoalStore();
+    } catch (e) {
+      return "(goal persistence unavailable: " + (e as Error).message + ")";
+    }
+    const parts = args.trim().split(/\s+/);
+    const sub = parts[0];
+    if (!sub || sub === "list") {
+      const all = store.list();
+      if (all.length === 0) return "(no goals — use /goal <objective> to create one)";
+      const active = store.listActive();
+      const lines: string[] = [];
+      lines.push("Active goals (" + active.length + "/" + all.length + "):");
+      for (const g of active) lines.push("  " + formatGoalLine(g));
+      if (active.length < all.length) {
+        lines.push("");
+        lines.push("(use /goals show <id> to see a terminal one)");
+      }
+      return lines.join("\n");
+    }
+    if (sub === "show") {
+      const id = parts[1];
+      if (!id) return "usage: /goals show <id>";
+      const g = store.get(id);
+      if (!g) return "no such goal: " + id;
+      const lines: string[] = [];
+      lines.push("Goal: " + g.id);
+      lines.push("  status:   " + g.status);
+      lines.push("  steps:    " + g.stepsTaken + "/" + g.maxSteps);
+      lines.push("  created:  " + new Date(g.createdAt).toISOString());
+      lines.push("  updated:  " + new Date(g.updatedAt).toISOString());
+      lines.push("  objective: " + g.objective);
+      if (g.finalText) lines.push("  result:   " + g.finalText.slice(0, 200) + (g.finalText.length > 200 ? "…" : ""));
+      return lines.join("\n");
+    }
+    if (sub === "remove") {
+      const id = parts[1];
+      if (!id) return "usage: /goals remove <id>";
+      return store.remove(id) ? "✓ removed " + id : "no such goal: " + id;
+    }
+    if (sub === "clear") {
+      const n = store.clear();
+      return "✓ cleared " + n + " terminal goal" + (n === 1 ? "" : "s");
+    }
+    return "usage: /goals [list|show <id>|remove <id>|clear]";
+  },
+};
 
 // ---------- /loop ----------
 
@@ -1456,6 +1557,7 @@ BUILTIN_REGISTRY.register(providerCommand);
 BUILTIN_REGISTRY.register(planModeCommand);
 BUILTIN_REGISTRY.register(buildModeCommand);
 BUILTIN_REGISTRY.register(goalCommand);
+BUILTIN_REGISTRY.register(goalsCommand);
 BUILTIN_REGISTRY.register(loopCommand);
 BUILTIN_REGISTRY.register(exportCommand);
 BUILTIN_REGISTRY.register(statusCommand);

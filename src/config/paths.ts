@@ -34,6 +34,7 @@ export const paths = {
   get cron() { return join(home(), "cron"); },
   get memory() { return join(home(), "memory"); },
   get context() { return join(home(), "context"); },
+  get goals() { return join(home(), "goals.json"); },
 } as const;
 
 export function ensurePaths(): void {

@@ -42,6 +42,7 @@ import { sessionToMessages } from "../agent/session.js";
 import { BUILTIN_REGISTRY } from "../slash/builtin.js";
 import { tryParseSlash } from "../slash/registry.js";
 import { type ApprovalDecision } from "./approval-modal.js";
+import { SteerQueue, type SteerEntry } from "../agent/steer.js";
 
 // ---------- Public types ----------
 
@@ -55,6 +56,12 @@ export interface ReplV2Status {
   steps: number;
   /** Wall-clock duration of the last turn, ms. 0 when idle. */
   lastTurnMs: number;
+  /** Optional steer queue preview. When set, the footer renders
+   *  "steer: <preview>" so the user can see what will be applied to
+   *  the last tool result on the next turn boundary. */
+  steerPreview?: string | null;
+  /** Number of queued steer entries. */
+  steerCount?: number;
 }
 
 export interface ReplV2Options {
@@ -88,7 +95,19 @@ export function renderFooter(s: ReplV2Status): string {
   const tokens = formatTokens(s.tokensIn, s.tokensOut);
   const steps = s.steps > 0 ? c.gray(s.steps + " steps") : c.gray("ready");
   const wall = s.lastTurnMs > 0 ? c.gray("· " + formatMs(s.lastTurnMs)) : "";
-  return c.dim(s.model) + c.gray(" · ") + c.dim(tokens) + c.gray(" · ") + steps + c.gray(" · ") + wall + c.gray(" · session ") + c.cyan(session) + c.gray(" · ") + c.dim("/help");
+  const steer = renderSteerIndicator(s);
+  return c.dim(s.model) + c.gray(" · ") + c.dim(tokens) + c.gray(" · ") + steps + c.gray(" · ") + wall + c.gray(" · session ") + c.cyan(session) + c.gray(" · ") + c.dim("/help") + (steer ? c.gray(" · ") + steer : "");
+}
+
+/** Render just the "steer: <preview>" segment for the footer. Returns
+ *  an empty string when the queue is empty (so the caller can just
+ *  concatenate it with `·`). */
+export function renderSteerIndicator(s: ReplV2Status): string {
+  const count = s.steerCount ?? 0;
+  if (count === 0) return "";
+  const preview = (s.steerPreview ?? "").trim();
+  const label = count > 1 ? "steer (" + count + ")" : "steer";
+  return c.yellow(label + ": " + (preview ? preview : "…"));
 }
 
 /** Render a user prompt as it appears in the transcript. */
@@ -329,6 +348,31 @@ export async function runReplV2(
   let busy = false;
   let quitRequested = false;
   let lastFooter = "";
+  // Steer queue: in-memory FIFO of mid-run user input. Items get
+  // appended to the last `role: "tool"` message in the next-turn
+  // messages, then the entry is marked "applied" (footer clears).
+  // Matches the agnt-gg OrchestratorService.js /steer primitive:
+  // stash, then apply to last tool result.
+  const steer = new SteerQueue();
+  const refreshSteerFooter = () => {
+    const next = steer.peek();
+    status.steerCount = steer.size;
+    status.steerPreview = next ? summarizeText(next.text, 32) : null;
+    redrawFooter();
+  };
+  steer.on("push", refreshSteerFooter);
+  steer.on("remove", refreshSteerFooter);
+  steer.on("clear", refreshSteerFooter);
+  steer.on("applied", refreshSteerFooter);
+  // Expose a narrow view to the runtime so the `/steer` slash command
+  // can list/drop/clear without importing the UI layer.
+  const clearSteerAttachment = (runtime as unknown as {
+    setSteerQueue?: (q: { list(): Array<{ id: number; text: string; queuedAt: number }>; remove(id: number): unknown; clear(): void } | null) => () => void;
+  }).setSteerQueue?.({
+    list: () => steer.list(),
+    remove: (id) => steer.remove(id),
+    clear: () => steer.clear(),
+  });
 
   // --- Rendering helpers (closure over `status` + `transcript`) ---
 
@@ -466,11 +510,22 @@ export async function runReplV2(
   const handleLine = async (raw: string) => {
     const line = raw.replace(/\s+$/, "");
     if (!line.trim()) return;
+    // Slash commands are always allowed, even when busy — the user
+    // needs to be able to /quit, /steer (manage the queue), /steer
+    // drop N, /model, etc. mid-run.
+    if (line.trim().startsWith("/")) {
+      await dispatchLine(line);
+      return;
+    }
     if (busy) {
-      // Stash the line for the next turn — matches the spec's
-      // mid-run steer behavior. We don't have a real SteerQueue yet
-      // (Phase 1 deliverable is the REPL), so we just drop a hint.
-      pushEntry({ kind: "info", text: "(busy — /steer is not yet implemented; ignoring: " + summarizeText(line, 36) + ")" });
+      // Stash the line for the next turn — applied to the last
+      // `role: "tool"` message in the next `runPrompt` call. This
+      // matches the agnt-gg /steer primitive (OrchestratorService.js):
+      // "stash, then apply to last tool result". The footer shows
+      // a "steer: <preview>" indicator so the user can see what
+      // will be applied on the next turn boundary.
+      const entry = steer.push(line);
+      pushEntry({ kind: "info", text: "steer queued (#" + entry.id + "): " + summarizeText(line, 36) });
       printRaw(renderEntry(transcript[transcript.length - 1]!));
       return;
     }
@@ -551,7 +606,21 @@ export async function runReplV2(
     const effectivePrompt = expanded.prompt;
     const framedPrompt = framePromptForComposerMode(effectivePrompt, runtime.getComposerMode?.() ?? "build");
     await session.append({ kind: "message", message: { role: "user", content: framedPrompt } });
-    const messages = sessionToMessages(session);
+    let messages = sessionToMessages(session);
+
+    // Apply any pending steer text to the last tool result. This is
+    // the turn boundary where queued mid-run input gets applied to
+    // the model. `drain` empties the queue; the footer is updated
+    // by the `applied` listener.
+    const steerApplied = steer.applyToLastToolResult(messages);
+    if (steerApplied.applied.length > 0) {
+      messages = steerApplied.messages as typeof messages;
+      const summary = steerApplied.applied
+        .map((e: SteerEntry) => "#" + e.id + ": " + summarizeText(e.text, 32))
+        .join(" · ");
+      pushEntry({ kind: "info", text: "steer applied (" + steerApplied.applied.length + "): " + summary });
+      printRaw(renderEntry(transcript[transcript.length - 1]!));
+    }
 
     const provider = runtime.providerRegistry.default();
     if (!provider) {
@@ -647,6 +716,7 @@ export async function runReplV2(
 
   clearOutput();
   clearApproval();
+  clearSteerAttachment?.();
   try { rl.close(); } catch {}
   return 0;
 }

@@ -110,6 +110,25 @@ export interface SlashRuntime {
   /** Number of prompts currently on the redo stack. Exposed for
    *  diagnostics and the TUI status bar. */
   getRedoStackDepth?(): number;
+  /**
+   * The mid-run steer queue (agnt-gg /steer primitive). When the
+   * REPL is busy, the user's text is stashed here and applied to
+   * the last `role: "tool"` message on the next turn boundary.
+   *
+   * The `/steer` slash command uses this hook to inspect, drop, or
+   * clear queued entries. Hosts that don't support steer (the
+   * legacy CLI, the desktop, tests) can leave this unset — the
+   * slash command prints a friendly "not available" message.
+   */
+  steerQueue?: {
+    /** Snapshot of queued entries in queue order. */
+    list(): Array<{ id: number; text: string; queuedAt: number }>;
+    /** Remove a specific entry by id. Returns the removed entry or
+     *  null when the id is unknown. */
+    remove(id: number): unknown;
+    /** Empty the queue. */
+    clear(): void;
+  };
 }
 
 export interface SlashCommand {

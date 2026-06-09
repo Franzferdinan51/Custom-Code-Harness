@@ -136,6 +136,17 @@ export class AgentRegistry {
     return this.byName.get(name);
   }
 
+  /** Programmatic registration. Built-ins cannot be overridden.
+   *  Used by ephemeral features (e.g. Council) that need a custom
+   *  agent definition per turn without writing it to disk. */
+  register(def: AgentDefinition): AgentDefinition {
+    if (this.byName.get(def.name)?.builtin) {
+      throw new Error("cannot override built-in agent: " + def.name);
+    }
+    this.byName.set(def.name, def);
+    return def;
+  }
+
   list(): AgentDefinition[] {
     return [...this.byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   }

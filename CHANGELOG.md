@@ -7,6 +7,32 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **Council: multi-agent deliberation (`ch council` + `/council`)**
+  (`src/agent/council.ts`, `src/cli.ts`, `src/slash/builtin.ts`,
+  `src/agent/agents.ts`, `src/__tests__/council.test.ts`): Phase 0
+  of the Agent-Teams + DuckHive feature merge. Ships a minimal
+  but real council: 4 built-in councilors (skeptic, builder,
+  researcher, synthesizer) and 2 deliberation modes (consensus,
+  adversarial).
+  - `ch council "<question>" [--mode consensus|adversarial]
+    [--rounds N] [--json]` runs the deliberation and prints the
+    final synthesized answer. `--json` returns the full transcript
+    + usage. The CLI bridges to the existing `SubAgentManager`
+    so per-councilor provider/model routing + tool allowlists
+    + session isolation all work for free.
+  - `/council <question> [--mode=consensus|adversarial]` is the
+    slash-command counterpart for the TUI/REPL. It uses
+    `sendPromptWithCapture` per councilor (best-effort v0 — the
+    CLI is the rich path).
+  - `AgentRegistry.register(def)` now allows programmatic
+    registration of ephemeral agent definitions (built-ins are
+    still protected).
+  - 9 unit tests in `council.test.ts` cover: built-in presence,
+    consensus vs adversarial round counts, round-2 prompt carries
+    the round-1 transcript, synthesizer always last, empty-input
+    rejection, empty-roster rejection, all-synthesizer rejection,
+    and the human-readable renderer.
+
 - **First-class vllm + vllm-omni providers + live `/v1/models`
   discovery across all surfaces**
   (`src/providers/presets.ts`, `src/providers/registry.ts`,

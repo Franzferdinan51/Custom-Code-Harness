@@ -184,6 +184,46 @@ All notable changes to CodingHarness are documented here. Format follows
   and on `clearHistory()`. Counted by `getRedoStackDepth()` for
   the TUI status bar.
 
+- **`/steer` real implementation + `AsyncToolQueueStore` crash
+  resilience** (`src/agent/steer.ts`, `src/agent/delegation.ts`,
+  `src/ui/repl-v2.ts`, `src/slash/builtin.ts`,
+  `src/runtime.ts`, `src/config/paths.ts`,
+  `src/__tests__/steer.test.ts`,
+  `src/__tests__/async-tool-queue.test.ts`): replaces the
+  `/steer not yet implemented` warning at `repl-v2.ts:473`
+  with a real `SteerQueue` (push / peek / drain + `applied`
+  EventEmitter), and adds disk persistence to the
+  `async_tool` delegation kind.
+  - **`SteerQueue`** (`src/agent/steer.ts`, 162 LOC): FIFO
+    queue of `SteerEntry { id, text, queuedAt }`. `drain()`
+    emits one `applied` event per entry; the REPL's
+    `submitUserInput` hook reads the drained text and
+    appends it to the last tool result message at the next
+    turn boundary (the `OrchestratorService.js /steer`
+    pattern from `plans/plan_phase1/notes/agnt-port-plan.md`
+    §4). The REPL footer shows `steer: <preview>` while
+    the queue is non-empty.
+  - **`/steer <id> | /steer list | /steer clear` slash
+    command** (`src/slash/builtin.ts`,
+    `src/slash/registry.ts`): targeted removal — `/steer
+    <id>` pops one queued entry, `/steer list` shows ids +
+    previews, `/steer clear` empties the queue.
+  - **`AsyncToolQueueStore`** (`src/agent/delegation.ts`,
+    645+340 LOC, `paths.asyncToolQueue` =
+    `$CH_HOME/async-tool-queue.json`): atomic tmp+rename
+    JSON file, replay on `DelegationManager` startup. The
+    `executeFunction` contract is now documented as
+    **idempotent** (callers must check-and-short-circuit
+    any side-effectful work; pure functions are trivially
+    idempotent). The replay path is best-effort and
+    detached — a failure on replay does not crash the
+    manager.
+  - 29 new tests in `src/__tests__/steer.test.ts` and
+    `src/__tests__/async-tool-queue.test.ts` covering:
+    push/peek/drain, append-to-last-tool-result, kill
+    mid-run → restart → replay, idempotency, and the
+    failure path.
+
 ### Fixed
 
 - **TUI still used `runtime['buildSystemPrompt']()` bracket

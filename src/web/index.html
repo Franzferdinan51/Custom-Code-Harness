@@ -298,7 +298,7 @@
       <div class="onboard-header">
         <div class="onboard-eyebrow">first run</div>
         <div class="onboard-title">Welcome to CodingHarness</div>
-        <div class="onboard-subtitle">Let's set up a provider so the agent can do things. Three quick steps.</div>
+        <div class="onboard-subtitle" id="onboard-subtitle">Let's set up a provider so the agent can do things. Three quick steps.</div>
       </div>
       <ol class="onboard-steps">
         <li class="onboard-step" data-step="pick">
@@ -312,9 +312,9 @@
         </li>
         <li class="onboard-step" data-step="key">
           <div class="onboard-step-num">2</div>
-          <div class="onboard-step-body">
+          <div class="onboard-step-body" id="onboard-key-body">
             <div class="onboard-step-title">Save your key</div>
-            <div class="onboard-step-hint">Stored locally in <code>~/.codingharness/settings.json</code>. Never sent anywhere except to the provider.</div>
+            <div class="onboard-step-hint" id="onboard-key-hint">Stored locally in <code>~/.codingharness/settings.json</code>. Never sent anywhere except to the provider.</div>
             <button id="onboard-codex-login" class="onboard-btn onboard-btn-primary" type="button" hidden>Sign in with ChatGPT</button>
             <input id="onboard-apikey" type="password" class="onboard-input" placeholder="paste API key" autocomplete="off" />
             <div class="onboard-model-row">
@@ -327,13 +327,46 @@
         <li class="onboard-step" data-step="test">
           <div class="onboard-step-num">3</div>
           <div class="onboard-step-body">
-            <div class="onboard-step-title">Test the connection</div>
-            <div class="onboard-step-hint">A tiny /diag round-trip. Tells you the key works and reports latency.</div>
+            <div class="onboard-step-title">Test &amp; discover</div>
+            <div class="onboard-step-hint">A tiny /diag round-trip. We then ask the provider for its model list and pre-select its default — change it if you want a different one.</div>
             <button id="onboard-test" class="onboard-btn onboard-btn-primary" type="button">save &amp; test</button>
             <div class="onboard-result" id="onboard-result"></div>
+            <div class="onboard-discover" id="onboard-discover" hidden>
+              <label>Pick a model</label>
+              <select id="onboard-discovered-models"></select>
+              <div class="onboard-discover-meta" id="onboard-discover-meta"></div>
+            </div>
           </div>
         </li>
       </ol>
+
+      <!--
+        Success state. Replaces the test/discover controls once
+        the user has saved their key, fetched the model list, and
+        picked a model. Shows what was actually configured and
+        gives a single "open chat" button to leave the wizard.
+      -->
+      <div class="onboard-success" id="onboard-success" hidden>
+        <div class="onboard-success-eyebrow">all set</div>
+        <div class="onboard-success-title">You're ready to chat</div>
+        <div class="onboard-success-row">
+          <span class="onboard-success-label">provider</span>
+          <span class="onboard-success-value" id="onboard-success-provider">—</span>
+        </div>
+        <div class="onboard-success-row">
+          <span class="onboard-success-label">model</span>
+          <span class="onboard-success-value" id="onboard-success-model">—</span>
+        </div>
+        <div class="onboard-success-row">
+          <span class="onboard-success-label">base url</span>
+          <span class="onboard-success-value onboard-success-value-mono" id="onboard-success-baseurl">—</span>
+        </div>
+        <div class="onboard-success-actions">
+          <button id="onboard-open-chat" class="onboard-btn onboard-btn-primary" type="button">open chat</button>
+          <button id="onboard-finish" class="onboard-btn" type="button">close</button>
+        </div>
+      </div>
+
       <div class="onboard-footer">
         <button id="onboard-skip" class="onboard-btn" type="button">skip for now</button>
         <div class="onboard-footer-hint">You can run <code>/onboard</code> (or open ⚙ settings) any time.</div>
@@ -341,6 +374,7 @@
     </div>
   </div>
 
+  <script src="onboard-helpers.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

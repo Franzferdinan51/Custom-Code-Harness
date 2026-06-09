@@ -203,6 +203,10 @@ registerSubcommand("goals", "List, show, or remove persisted goals (Codex-style 
   "ch goals [list|show <id>|remove <id>|clear] [--json]",
   async (ctx) => { return runGoalsCmd(ctx); });
 
+registerSubcommand("council", "Run a multi-agent council deliberation on a question (consensus or adversarial).",
+  "ch council <question> [--mode consensus|adversarial] [--provider <id>] [--model <name>] [--rounds N] [--json]",
+  async (ctx) => { return runCouncilCmd(ctx); });
+
 // ---------- Help / version ----------
 
 const VERSION = "0.2.2";
@@ -1598,6 +1602,103 @@ function renderGoalDetail(g: import("./agent/goals.js").GoalRecord): string {
     for (const line of g.finalText.split("\n")) lines.push("    " + line);
   }
   return lines.join("\n");
+
+async function runCouncilCmd(ctx: SubcommandContext): Promise<number> {
+  const args = ctx.args ?? [];
+  let mode: "consensus" | "adversarial" = "consensus";
+  let rounds: number | undefined;
+  const questionParts: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--mode" && args[i + 1]) { mode = args[++i] as "consensus" | "adversarial"; continue; }
+    if (a.startsWith("--mode=")) { mode = a.slice("--mode=".length) as "consensus" | "adversarial"; continue; }
+    if (a === "--rounds" && args[i + 1]) { rounds = parseInt(args[++i]!, 10); continue; }
+    if (a.startsWith("--rounds=")) { rounds = parseInt(a.slice("--rounds=".length), 10); continue; }
+    if (a === "--provider" || a === "--model") { i++; continue; }
+    if (a.startsWith("--provider=") || a.startsWith("--model=")) continue;
+    if (a === "--json") continue;
+    questionParts.push(a);
+  }
+  const question = questionParts.join(" ").trim();
+  if (!question) {
+    process.stderr.write("usage: ch council <question> [--mode consensus|adversarial] [--provider <id>] [--model <name>] [--rounds N] [--json]\n");
+    return 2;
+  }
+  if (mode !== "consensus" && mode !== "adversarial") {
+    process.stderr.write(c.red("error: ") + "invalid --mode: " + mode + " (use 'consensus' or 'adversarial')\n");
+    return 2;
+  }
+  if (rounds !== undefined && (!Number.isFinite(rounds) || rounds < 1)) {
+    process.stderr.write(c.red("error: ") + "--rounds must be a positive integer\n");
+    return 2;
+  }
+  ensurePaths();
+  const settings = loadSettings();
+  if (ctx.provider) settings.defaultProvider = ctx.provider;
+  if (ctx.model) settings.defaultModel = ctx.model;
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: ctx.ephemeral });
+  const ac = new AbortController();
+  process.once("SIGINT", () => ac.abort());
+
+  const { runCouncil, BUILTIN_COUNCILORS, DEFAULT_COUNCIL_ROSTER, renderCouncilResult } =
+    await import("./agent/council.js");
+  const roster = DEFAULT_COUNCIL_ROSTER.map((role) => BUILTIN_COUNCILORS[role]);
+
+  try {
+    const result = await runCouncil(question, {
+      mode,
+      councilors: roster,
+      maxRounds: rounds,
+      model: ctx.model,
+      providerId: ctx.provider,
+      cwd: ctx.cwd,
+      signal: ac.signal,
+    }, {
+      spawn: async (opts) => {
+        // Bridge CouncilDeps.spawn to SubAgentManager.spawn by
+        // registering a temporary ephemeral agent per call. This
+        // keeps the council decoupled from the agent registry.
+        const { AgentRegistry } = await import("./agent/agents.js");
+        const reg = new AgentRegistry({ cwd: opts.cwd });
+        const def = {
+          name: "__councilor_" + Math.random().toString(36).slice(2, 8),
+          description: "Ephemeral councilor",
+          systemPromptAppend: opts.system,
+          tools: [], // councilors: text-only, no tools
+          maxSteps: 1,
+          model: opts.model,
+          providerId: opts.providerId,
+          builtin: false,
+        };
+        reg.register(def);
+        const { SubAgentManager } = await import("./agent/subagent.js");
+        const mgr = new SubAgentManager(runtime.providerRegistry, runtime.settings, { cwd: opts.cwd });
+        // Swap the registry so SubAgentManager picks up our
+        // ephemeral def by name.
+        (mgr as unknown as { agents: typeof reg }).agents = reg;
+        const r = await mgr.spawn({
+          agent: def.name,
+          prompt: opts.prompt,
+          model: opts.model,
+          providerId: opts.providerId,
+          cwd: opts.cwd,
+          signal: opts.signal,
+          ephemeral: true,
+        });
+        if (r.status === "ok") return { text: r.text, usage: r.usage };
+        throw new Error(r.error ?? "councilor failed: " + r.status);
+      },
+    });
+    if (ctx.json) {
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    } else {
+      process.stdout.write(renderCouncilResult(result) + "\n");
+    }
+    return 0;
+  } catch (e) {
+    process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+    return 1;
+  }
 }
 
 main().then((code) => { process.exit(code); }).catch((e) => {

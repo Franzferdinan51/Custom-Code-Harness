@@ -791,6 +791,53 @@ const goalsCommand: SlashCommand = {
   },
 };
 
+// ---------- /council ----------
+
+const councilCommand: SlashCommand = {
+  name: "council",
+  description: "Run a multi-agent council deliberation on a question (consensus or adversarial).",
+  group: "workflow",
+  usage: "/council <question> [--mode=consensus|adversarial]",
+  async run(args, ctx) {
+    const rt = ctx.runtime?.();
+    if (!rt) return "(no runtime)";
+    const m = args.match(/^(.*?)(?:\s+--mode=(\w+))?\s*$/s);
+    if (!m || !m[1]?.trim()) return "usage: /council <question> [--mode=consensus|adversarial]";
+    const question = m[1].trim();
+    const mode = (m[2] === "adversarial" || m[2] === "consensus") ? m[2] : "consensus";
+    const { runCouncil, BUILTIN_COUNCILORS, DEFAULT_COUNCIL_ROSTER, renderCouncilResult } =
+      await import("../agent/council.js");
+    const roster = DEFAULT_COUNCIL_ROSTER.map((role) => BUILTIN_COUNCILORS[role]);
+    const ac = new AbortController();
+    rt.print("[council] starting " + mode + " deliberation (" + roster.length + " voices)...");
+    try {
+      const result = await runCouncil(question, {
+        mode,
+        councilors: roster,
+        cwd: ctx.cwd,
+        signal: ac.signal,
+        model: rt.model(),
+        providerId: rt.providerId(),
+      }, {
+        // Slash-runtime adapter: use the runtime's sendPromptWithCapture
+        // for each councilor. The TUI/REPL doesn't have a full
+        // sub-agent harness available, so we treat the system prompt
+        // as a prefix the runtime will respect. This is a
+        // best-effort v0 — the CLI `ch council` is the rich path.
+        spawn: async (opts) => {
+          const composed = opts.system + "\n\n" + opts.prompt;
+          const text = await rt.sendPromptWithCapture(composed);
+          return { text, usage: { inputTokens: 0, outputTokens: 0 } };
+        },
+      });
+      rt.print(renderCouncilResult(result));
+      return "council complete in " + result.durationMs + "ms";
+    } catch (e) {
+      return "council failed: " + (e as Error).message;
+    }
+  },
+};
+
 // ---------- /loop ----------
 
 const loopCommand: SlashCommand = {
@@ -1558,6 +1605,7 @@ BUILTIN_REGISTRY.register(planModeCommand);
 BUILTIN_REGISTRY.register(buildModeCommand);
 BUILTIN_REGISTRY.register(goalCommand);
 BUILTIN_REGISTRY.register(goalsCommand);
+BUILTIN_REGISTRY.register(councilCommand);
 BUILTIN_REGISTRY.register(loopCommand);
 BUILTIN_REGISTRY.register(exportCommand);
 BUILTIN_REGISTRY.register(statusCommand);

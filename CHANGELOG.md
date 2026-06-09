@@ -3,6 +3,38 @@
 All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased — Delegation
+
+- **feat(delegation): discriminated union over worker kinds (agent,
+  goal, async-tool, mcp, plugin, api, human-approval)**
+  (`src/agent/delegation.ts`, `src/runtime.ts`,
+  `src/__tests__/delegation.test.ts`): ports the
+  `delegate(work, ctx)` entry point from
+  `plans/plan_phase1/notes/agnt-port-plan.md` §2. `DelegationManager`
+  is the single dispatcher for sub-work. Each submission returns a
+  `DelegationRun` handle with `events()`, `result()`, `cancel()`,
+  and the manager records `parentId` so `cancelAll(parentId)`
+  walks the delegation tree. The union covers 8 kinds; Phase 1
+  implements `agent` (delegates to `SubAgentManager.spawn`),
+  `goal` (dispatches via `runGoalStateMachine`), `async_tool`
+  (single-shot, schedule field reserved for periodic Phase 2),
+  and `human_approval` (asks via `deps.askApproval` or falls
+  back to `defaultDecision`). The remaining four (`workflow`,
+  `mcp`, `plugin`, `api`) are Phase 2 stubs but live in the
+  union so the discriminator exhausts at compile time. The
+  manager's constructor subscribes a `onEnter("executing")` hook
+  to the goal store, so when a goal enters `executing` (including
+  sub-goals) the goal lifecycle observes the union instead of
+  going through `subagent.spawn()` directly. The new
+  `runtime.delegations: DelegationManager` exposes the manager
+  on `HarnessRuntime`. 12 new tests cover the union narrowing
+  (compile-time exhaustive switch), run/observe/cancel happy
+  paths for all 4 implemented kinds, the goal-loop
+  `onEnter("executing")` → `delegate` integration for subgoals,
+  the Phase 2 stub kinds, the parent→child cancel tree, and a
+  regression check that the `agent` kind still produces the same
+  `SubAgentManager.spawn()` result.
+
 ## Unreleased — Goals
 
 - **feat(goals): real lifecycle state machine (plan→execute→evaluate→re-plan)**

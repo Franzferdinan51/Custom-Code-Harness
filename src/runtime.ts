@@ -12,6 +12,8 @@ import { tryParseSlash, type GoalActivityState, type SlashRuntime } from "./slas
 import { c } from "./ui/colors.js";
 import { log } from "./util/logger.js";
 import { SubAgentManager } from "./agent/subagent.js";
+import { DelegationManager } from "./agent/delegation.js";
+import { GoalStore } from "./agent/goals.js";
 import { SkillRegistry } from "./agent/skills.js";
 import { MemoryStore } from "./agent/memory.js";
 import { loadContextFiles, formatContextForPrompt } from "./agent/context.js";
@@ -69,9 +71,14 @@ export class HarnessRuntime implements SlashRuntime {
   readonly settings: Settings;
   readonly providerRegistry: ProviderRegistry;
   readonly subagents: SubAgentManager;
+  /** Phase 1: discriminated union for sub-work (agent / goal /
+   *  async_tool / human_approval, plus Phase 2 stubs). */
+  readonly delegations: DelegationManager;
   readonly skills: SkillRegistry;
   readonly memory: MemoryStore;
   readonly tools: ToolRegistry;
+  /** Persisted goal store. */
+  readonly goalStore: GoalStore;
   /** Sub-agents spawned during this session. */
   readonly subagentHistory: Array<{ name: string; prompt: string; status: string; at: number; cost: number; steps: number }> = [];
 
@@ -132,6 +139,14 @@ export class HarnessRuntime implements SlashRuntime {
     this.settings = loadSettings();
     this.providerRegistry = new ProviderRegistry(this.settings);
     this.subagents = new SubAgentManager(this.providerRegistry, this.settings, { cwd: this.cwd });
+    this.goalStore = new GoalStore();
+    this.delegations = new DelegationManager({
+      providers: this.providerRegistry,
+      settings: this.settings,
+      cwd: this.cwd,
+      subagent: this.subagents,
+      goalStore: this.goalStore,
+    });
     this.skills = new SkillRegistry({ cwd: this.cwd });
     this.memory = new MemoryStore();
     this.tools = defaultToolRegistry();

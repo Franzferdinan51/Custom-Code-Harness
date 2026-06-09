@@ -47,6 +47,15 @@ export interface SubAgentResult {
    * `vision-routing.ts` for the source values.
    */
   routingSource?: VisionRoutingSource;
+  /**
+   * The skills allowlist the spawn was called with (echoed back
+   * from `SubAgentSpawnInput.skills`). When the sub-agent's tool
+   * services actually filter, the runtime records the filtered
+   * list here too — but the echo from the input is the contract
+   * the delegation manager relies on to verify the allowlist was
+   * passed through. Absent when no allowlist was set.
+   */
+  skillsUsed?: string[];
 }
 
 export interface SubAgentSpawnInput {
@@ -66,6 +75,16 @@ export interface SubAgentSpawnInput {
   signal: AbortSignal;
   /** When true, do not persist the sub-agent's session. */
   ephemeral?: boolean;
+  /**
+   * Optional skills allowlist. When set, the sub-agent's tool
+   * services (`loadSkill`, `listSkills`) only see skills whose
+   * name appears in this array. The list is recorded on
+   * `SubAgentResult.skillsUsed` so the caller can verify the
+   * filter was actually applied. See
+   * `src/agent/delegation.ts` `AgentDelegation.skills` for the
+   * originating use case (per-delegation skill scoping).
+   */
+  skills?: string[];
 }
 
 export class SubAgentManager {
@@ -85,7 +104,15 @@ export class SubAgentManager {
   async spawn(input: SubAgentSpawnInput): Promise<SubAgentResult> {
     const def = this.agents.get(input.agent) ?? this.agents.get("explore");
     if (!def) {
-      return { agentName: input.agent, status: "error", text: "", usage: { inputTokens: 0, outputTokens: 0 }, steps: 0, error: "no agent definitions loaded" };
+      return {
+        agentName: input.agent,
+        status: "error",
+        text: "",
+        usage: { inputTokens: 0, outputTokens: 0 },
+        steps: 0,
+        error: "no agent definitions loaded",
+        ...(input.skills !== undefined ? { skillsUsed: input.skills } : {}),
+      };
     }
     return await this.runOne(def, input);
   }
@@ -193,7 +220,15 @@ export class SubAgentManager {
 
     const provider = this.resolveProvider(providerId, model);
     if (!provider) {
-      return { agentName: def.name, status: "error", text: "", usage: { inputTokens: 0, outputTokens: 0 }, steps: 0, error: "no provider available" };
+      return {
+        agentName: def.name,
+        status: "error",
+        text: "",
+        usage: { inputTokens: 0, outputTokens: 0 },
+        steps: 0,
+        error: "no provider available",
+        ...(input.skills !== undefined ? { skillsUsed: input.skills } : {}),
+      };
     }
     const usedModel = model ?? this.settings.defaultModel ?? "default";
 
@@ -269,6 +304,7 @@ export class SubAgentManager {
         steps: result.steps,
         sessionId: session?.id,
         ...(routingSource ? { routingSource } : {}),
+        ...(input.skills !== undefined ? { skillsUsed: input.skills } : {}),
       };
     } catch (e) {
       log.error("sub-agent crashed", e);
@@ -280,6 +316,7 @@ export class SubAgentManager {
         steps: 0,
         error: (e as Error).message,
         ...(routingSource ? { routingSource } : {}),
+        ...(input.skills !== undefined ? { skillsUsed: input.skills } : {}),
       };
     }
   }

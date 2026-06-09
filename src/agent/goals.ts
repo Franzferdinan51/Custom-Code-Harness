@@ -128,6 +128,43 @@ export interface EvalResult {
   criteria: Array<{ criterion: string; hit: boolean; note: string }>;
 }
 
+// ---------- Semantic replan guard ----------
+//
+// The surface-text check in `runGoalStateMachine` used to bail out only
+// when two consecutive plans were literally identical. That misses the
+// common LLM failure mode of "the agent re-plans with the same content
+// but slightly different surface form" (different capitalization, extra
+// spaces, reordered bullets). This helper normalizes both plans to a
+// canonical form so we can detect that case.
+
+/** Normalize a plan string for semantic comparison:
+ *  - lowercase
+ *  - collapse all whitespace to a single space
+ *  - split into tokens
+ *  - sort the tokens (so reordering doesn't matter)
+ *  - rejoin with a single space
+ *  Used to detect "semantic identical replan" — when an LLM produces
+ *  two plans that say the same thing in different surface form. */
+export function normalizeForSemanticCompare(s: string): string {
+  return s
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 0)
+    .sort()
+    .join(" ");
+}
+
+/** True when the two strings are semantically identical (same tokens,
+ *  case-insensitive, whitespace-insensitive, order-insensitive). */
+export function isSemanticallyIdentical(a: string, b: string): boolean {
+  return normalizeForSemanticCompare(a) === normalizeForSemanticCompare(b);
+}
+
+/** Reason string written to `GoalRecord.lastError` when the runner
+ *  aborts because of a semantic identical-replan. Stable identifier —
+ *  tests assert on this exact string. */
+export const SEMANTIC_IDENTICAL_REPLAN_REASON = "semantic identical-replan detected";
+
 /** Simple pass/fail heuristic. Looks for keyword hits in the goal's
  *  `finalText` (or its `status === "complete"` and the
  *  `successCriteria` keywords, case-insensitive). Full LLM-scored
@@ -215,6 +252,11 @@ export interface GoalRecord {
   successCriteria?: SuccessCriteria;
   /** History of evaluator runs. */
   evaluations?: GoalEvaluation[];
+  /** Optional: last human-readable failure reason (e.g. "semantic
+   *  identical-replan detected"). Set by the runner when it aborts
+   *  for a known, structured cause; null/empty for normal "evaluator
+   *  did not pass" failures. */
+  lastError?: string;
 }
 
 interface PersistedShapeV1 {
@@ -382,7 +424,7 @@ export class GoalStore {
 
   /** Update an existing record. Returns the new record, or null
    *  if the id is unknown. */
-  update(id: string, patch: Partial<Pick<GoalRecord, "status" | "stepsTaken" | "finalText" | "currentIteration" | "successCriteria" | "evaluations" | "loopStatus" | "previousLoopStatus">>): GoalRecord | null {
+  update(id: string, patch: Partial<Pick<GoalRecord, "status" | "stepsTaken" | "finalText" | "currentIteration" | "successCriteria" | "evaluations" | "loopStatus" | "previousLoopStatus" | "lastError">>): GoalRecord | null {
     const idx = this.goals.findIndex((g) => g.id === id);
     if (idx === -1) return null;
     const cur = this.goals[idx]!;
@@ -441,13 +483,18 @@ export class GoalStore {
   }
 
   /** Revert the goal to a previous state. Re-runs the AGI loop from
-   *  that point. Resets `currentIteration` and bumps `stepsTaken`
-   *  to track the new attempt. */
-  revert(id: string, to: GoalState = "pending"): GoalRecord | null {
+   *  that point. Resets `currentIteration` (or sets it to
+   *  `opts.targetIteration` per the Q4 recommendation — "revert to a
+   *  specific `currentIteration`") and bumps `stepsTaken` to track
+   *  the new attempt. */
+  revert(id: string, to: GoalState = "pending", opts: { targetIteration?: number } = {}): GoalRecord | null {
     const cur = this.get(id);
     if (!cur) return null;
     // From any terminal state we can revert back to a non-terminal one.
-    if (cur.loopStatus === to) return cur;
+    if (cur.loopStatus === to && opts.targetIteration === undefined) return cur;
+    const targetIter = opts.targetIteration !== undefined
+      ? Math.max(0, Math.floor(opts.targetIteration))
+      : 0;
     // Validate the transition.
     if (TERMINAL_GOAL_STATES.has(cur.loopStatus) && !TERMINAL_GOAL_STATES.has(to)) {
       // Allow (terminal → non-terminal) explicitly.
@@ -458,7 +505,7 @@ export class GoalStore {
         loopStatus: to,
         status: to === "done" || to === "failed" ? cur.status : "in_progress",
         previousLoopStatus: undefined,
-        currentIteration: 0,
+        currentIteration: targetIter,
         updatedAt: Date.now(),
       };
       const next = this.get(id)!;
@@ -469,7 +516,7 @@ export class GoalStore {
     return this.update(id, {
       loopStatus: to,
       previousLoopStatus: undefined,
-      currentIteration: 0,
+      currentIteration: targetIter,
     });
   }
 
@@ -586,6 +633,11 @@ export async function runGoalStateMachine(
   const max = opts.maxIterations ?? goal.maxSteps;
   let cur = opts.store.get(goal.id) ?? goal;
   let lastExec = "";
+  /** The plan produced by the PREVIOUS iteration. Used by the
+   *  semantic identical-replan guard to detect when the LLM re-plans
+   *  with the same content in a different surface form. `undefined`
+   *  on the first iteration (no previous plan to compare against). */
+  let lastPlan: string | undefined = undefined;
   for (let iter = 1; iter <= max; iter++) {
     // Bump iteration count first; reading from the store keeps the
     // value visible to lifecycle hooks.
@@ -599,6 +651,35 @@ export async function runGoalStateMachine(
       iteration: iter,
     });
     lastExec = planOut.content;
+
+    // ---- semantic identical-replan guard ----
+    // If the new plan is semantically identical to the previous one
+    // (case-insensitive, whitespace-normalized, order-insensitive),
+    // bail out with status="failed" and a clear reason. This catches
+    // the common LLM failure mode where re-planning produces the
+    // same plan in different surface form. Without this guard, the
+    // loop would burn through `maxIterations` iterations on
+    // byte-identical plan content and waste the user's token budget.
+    if (lastPlan !== undefined && isSemanticallyIdentical(lastPlan, planOut.content)) {
+      const ev: GoalEvaluation = {
+        id: "eval-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+        iteration: iter,
+        score: 0,
+        passed: false,
+        feedback: SEMANTIC_IDENTICAL_REPLAN_REASON,
+        createdAt: Date.now(),
+      };
+      cur = opts.store.recordEvaluation(goal.id, ev) ?? cur;
+      cur = opts.store.transition(goal.id, "failed") ?? cur;
+      cur = opts.store.update(goal.id, {
+        status: "failed",
+        lastError: SEMANTIC_IDENTICAL_REPLAN_REASON,
+      }) ?? cur;
+      opts.onStateChange?.(cur.loopStatus, cur);
+      return cur;
+    }
+    // Remember this plan for the next iteration's guard check.
+    lastPlan = planOut.content;
 
     // ---- executing ----
     cur = opts.store.transition(goal.id, "executing") ?? cur;

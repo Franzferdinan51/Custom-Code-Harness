@@ -51,6 +51,11 @@ interface SubcommandContext {
   oauth?: boolean;
   authChoice?: string;
   apiKey?: string;
+  /** `ch goals revert <id> --to <n>` — target iteration for the
+   *  revert (Q4 recommendation: revert to a specific
+   *  currentIteration). Parsed globally so parseArgs consumes the
+   *  value and doesn't leak it into positional args. */
+  to?: string;
 }
 
 const SUBCOMMANDS = new Map<string, { description: string; usage: string; run: SubcommandHandler }>();
@@ -202,8 +207,8 @@ registerSubcommand("export", "Export a session as a training-friendly JSONL traj
   "ch export [session-id|--latest] [--format hermes|openai|share] [--out <dir>]",
   async (ctx) => { return runExportCmd(ctx); });
 
-registerSubcommand("goals", "List, show, or remove persisted goals (Codex-style /goal lifecycle).",
-  "ch goals [list|show <id>|remove <id>|clear] [--json]",
+registerSubcommand("goals", "List, show, remove, revert, or clear persisted goals (Codex-style /goal lifecycle).",
+  "ch goals [list|show <id>|remove <id>|revert <id> [--to <n>]|clear] [--json]",
   async (ctx) => { return runGoalsCmd(ctx); });
 
 registerSubcommand("council", "Run a multi-agent council deliberation on a question (consensus or adversarial).",
@@ -227,8 +232,8 @@ function showHelp(cmd?: string): number {
       names: ["chat", "tui", "repl", "serve", "attach", "web", "desktop", "welcome", "onboard", "provider"] },
     { title: "Run a prompt", blurb: "One-shot, autonomous, or multi-step.",
       names: ["run", "agent", "code", "goal", "loop"] },
-    { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling.",
-      names: ["sessions", "tree", "fork", "todo", "compact", "memory", "skills", "agents", "skill", "cron", "init", "export"] },
+    { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling, goals.",
+      names: ["sessions", "tree", "fork", "todo", "compact", "memory", "skills", "agents", "skill", "cron", "init", "export", "goals"] },
     { title: "Settings", blurb: "Thinking level and model preferences.",
       names: ["think", "verbose", "trace"] },
     { title: "Health",         blurb: "Connectivity and diagnostics.",
@@ -367,6 +372,7 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
         oauth: { type: "boolean" },
         "auth-choice": { type: "string" },
         "api-key": { type: "string" },
+        to: { type: "string" },
       },
       allowPositionals: true,
       strict: false,
@@ -400,6 +406,7 @@ async function buildContext(args: string[]): Promise<SubcommandContext> {
     oauth: !!parsed.values.oauth,
     authChoice: parsed.values["auth-choice"] ? String(parsed.values["auth-choice"]) : undefined,
     apiKey: parsed.values["api-key"] ? String(parsed.values["api-key"]) : undefined,
+    to: parsed.values.to ? String(parsed.values.to) : undefined,
   };
 }
 
@@ -1731,13 +1738,46 @@ async function runGoalsCmd(ctx: SubcommandContext): Promise<number> {
     return 0;
   }
 
+  if (sub === "revert") {
+    // `ch goals revert <id> --to <n>` — Q4 recommendation: revert to
+    // a specific `currentIteration`. `--to` defaults to 1, the
+    // "revert the last step" case. The goal is moved to the planning
+    // state with the requested `currentIteration` so the next run
+    // re-plans and re-executes from that point. Validates that
+    // `--to` is a positive integer; bad input is a usage error
+    // (exit code 2). Unknown id is a runtime error (exit code 1).
+    const id = ctx.args[1];
+    if (!id) { process.stderr.write("usage: ch goals revert <id> [--to <n>]\n"); return 2; }
+    // `ctx.to` is set by `buildContext()` from `--to <n>` /
+    // `--to=<n>`. When the user omits `--to` it is undefined and
+    // we fall through to the default (1).
+    const target = ctx.to !== undefined ? parseInt(ctx.to, 10) : 1;
+    if (!Number.isFinite(target) || target < 1) {
+      process.stderr.write("error: --to must be a positive integer (got " + (ctx.to ?? "(unset)") + ")\n");
+      return 2;
+    }
+    if (!store.get(id)) { process.stderr.write("no such goal: " + id + "\n"); return 1; }
+    // Revert to the "planning" state with the requested iteration —
+    // this is the natural re-entry point for the goal-runner, which
+    // re-runs planning→executing→evaluating starting from
+    // `currentIteration`.
+    const reverted = store.revert(id, "planning", { targetIteration: target });
+    if (!reverted) { process.stderr.write("no such goal: " + id + "\n"); return 1; }
+    if (ctx.json) {
+      process.stdout.write(JSON.stringify(reverted, null, 2) + "\n");
+      return 0;
+    }
+    process.stdout.write("✓ reverted " + id + " to iteration " + target + " (loopStatus=" + reverted.loopStatus + ")\n");
+    return 0;
+  }
+
   if (sub === "clear") {
     const n = store.clear();
     process.stdout.write("✓ cleared " + n + " terminal goal" + (n === 1 ? "" : "s") + "\n");
     return 0;
   }
 
-  process.stderr.write("usage: ch goals [list|show <id>|remove <id>|clear] [--json]\n");
+  process.stderr.write("usage: ch goals [list|show <id>|remove <id>|revert <id> [--to <n>]|clear] [--json]\n");
   return 2;
 }
 

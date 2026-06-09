@@ -9,6 +9,9 @@ coverage/
 .tmp/
 sessions/
 .harness/.DS_Store
+.harness/reins/
+# Mavis runtime state — local per-machine, not part of the repo.
+.mavis/
 .codingharness/
 .opencode/
 .opencode/tmp/

@@ -1602,6 +1602,7 @@ function renderGoalDetail(g: import("./agent/goals.js").GoalRecord): string {
     for (const line of g.finalText.split("\n")) lines.push("    " + line);
   }
   return lines.join("\n");
+}
 
 async function runCouncilCmd(ctx: SubcommandContext): Promise<number> {
   const args = ctx.args ?? [];

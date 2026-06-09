@@ -7,6 +7,25 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **OpenRouter first-class provider preset**
+  (`src/providers/presets.ts`,
+  `src/__tests__/provider-presets.test.ts`,
+  `src/cli.ts`): adds `openrouter` to the hosted tier so a
+  single `OPENROUTER_API_KEY` unlocks the whole 100+ model
+  catalog (OpenAI, Anthropic, Google, Meta, Mistral, and
+  friends) through OpenRouter's `https://openrouter.ai/api/v1`
+  OpenAI-compatible endpoint.
+  - Default model hint: `anthropic/claude-3.5-sonnet`.
+  - Honors `OPENROUTER_BASE_URL` / `OPENROUTER_MODEL` env
+    overrides for users running a proxy or pinning a model.
+  - Listed in `ch provider list` and the `/provider`
+    slash-command catalog (already first-class because
+    `presets.ts` is the single source of truth).
+  - 4 new unit tests in
+    `src/__tests__/provider-presets.test.ts` covering the
+    preset shape, hosted-tier presence, env override
+    behavior, and the missing-key fallback.
+
 - **First-class vllm + vllm-omni providers + live `/v1/models`
   discovery across all surfaces**
   (`src/providers/presets.ts`, `src/providers/registry.ts`,

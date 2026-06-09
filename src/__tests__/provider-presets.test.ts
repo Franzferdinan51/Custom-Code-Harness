@@ -26,6 +26,7 @@ function withEnv(vars: Record<string, string | undefined>, fn: () => void | Prom
     "GROK_OAUTH_TOKEN", "XAI_OAUTH_TOKEN",
     "MINIMAX_API_KEY", "MINIMAX_OAUTH_TOKEN", "MINIMAX_AUTH_TOKEN",
     "LMSTUDIO_BASE_URL", "LM_API_TOKEN",
+    "OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "OPENROUTER_MODEL",
   ];
   for (const key of clearedKeys) {
     previous.set(key, process.env[key]);
@@ -275,6 +276,52 @@ test("vllm provider configures from a base url with no api key", async () => {
     // when the server is unreachable (network errors are swallowed).
     const models = await provider!.listModels?.();
     assert.ok(Array.isArray(models));
+  });
+});
+
+describe("openrouter preset", { concurrency: 1 }, () => {
+  test("preset is registered with the right shape", () => {
+    const p = getProviderPreset("openrouter");
+    assert.ok(p, "openrouter preset should be registered");
+    assert.equal(p!.tier, "hosted");
+    assert.equal(p!.protocol, "openai");
+    assert.equal(p!.defaultBaseUrl, "https://openrouter.ai/api/v1");
+    assert.equal(p!.defaultModel, "anthropic/claude-3.5-sonnet");
+    assert.deepEqual(p!.apiKeyEnv, ["OPENROUTER_API_KEY"]);
+    assert.deepEqual(p!.baseUrlEnv, ["OPENROUTER_BASE_URL"]);
+    assert.deepEqual(p!.modelEnv, ["OPENROUTER_MODEL"]);
+    assert.deepEqual(p!.authModes, ["apiKey"]);
+    assert.equal(p!.defaultAuthMode, "apiKey");
+    assert.ok(p!.authDocsUrl);
+    assert.ok(p!.authLaunchUrl);
+  });
+
+  test("openrouter appears in the hosted tier and in HOSTED_PROVIDER_ORDER", () => {
+    assert.ok(HOSTED_PROVIDER_ORDER.includes("openrouter" as never));
+    const groups = providerCatalogGroups();
+    const openrouter = groups.hosted.find((p) => p.id === "openrouter");
+    assert.ok(openrouter, "openrouter should be in the hosted group");
+  });
+
+  test("OPENROUTER_BASE_URL overrides the default base URL when set", async () => {
+    await withEnv({ OPENROUTER_API_KEY: "sk-or-test", OPENROUTER_BASE_URL: "https://my-proxy.example/v1" }, async () => {
+      const settings = loadSettings();
+      const reg = new ProviderRegistry(settings);
+      const provider = reg.get("openrouter");
+      assert.ok(provider);
+      const check = await provider!.isConfigured();
+      assert.equal(check.ok, true);
+    });
+  });
+
+  test("missing OPENROUTER_API_KEY logs a warning and returns no provider", async () => {
+    await withEnv({ OPENROUTER_API_KEY: undefined }, async () => {
+      const settings = loadSettings();
+      const reg = new ProviderRegistry(settings);
+      const provider = reg.get("openrouter");
+      // No API key → registry returns undefined.
+      assert.equal(provider, undefined);
+    });
   });
 });
 

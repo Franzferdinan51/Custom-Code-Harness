@@ -986,28 +986,27 @@ const retryCommand: SlashCommand = {
 
 const undoCommand: SlashCommand = {
   name: "undo",
-  description: "Rewind the session to the previous user message and clear the assistant/tool entries that followed.",
+  description: "Rewind the session to the previous user message and clear the assistant/tool entries that followed. Pushes the rewound-to prompt onto a redo stack so /redo can replay it.",
   group: "session",
   async run(_a, ctx) {
-    const id = ctx.runtime?.().sessionId();
-    if (!id) return "no active session";
-    const s = await Session.open(id);
-    const entries = s.allEntries();
-    // Find the last assistant entry, then walk back to the user message before it.
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const e = entries[i]!;
-      if (e.type === "assistant") {
-        // Walk back to the user message that preceded it.
-        for (let j = i - 1; j >= 0; j--) {
-          if (entries[j]!.type === "user") {
-            s.rewindTo(entries[j]!.id);
-            return "rewound to " + entries[j]!.id;
-          }
-        }
-        return "no user message to rewind to";
-      }
-    }
-    return "nothing to undo";
+    const rt = ctx.runtime?.();
+    if (!rt?.undoLastTurn) return "no active session";
+    const rewound = await rt.undoLastTurn();
+    if (rewound === null) return "nothing to undo";
+    return "rewound to: " + (rewound.length > 60 ? rewound.slice(0, 60) + "…" : rewound);
+  },
+};
+
+const redoCommand: SlashCommand = {
+  name: "redo",
+  description: "Re-send the most recently undone prompt. Counterpart to /undo.",
+  group: "session",
+  async run(_a, ctx) {
+    const rt = ctx.runtime?.();
+    if (!rt?.redoLastTurn) return "no active session";
+    const prompt = await rt.redoLastTurn();
+    if (prompt === null) return "nothing to redo";
+    return "(replayed " + (prompt.length > 60 ? prompt.slice(0, 60) + "…" : prompt) + ")";
   },
 };
 
@@ -1615,6 +1614,7 @@ BUILTIN_REGISTRY.register(verboseCommand);
 BUILTIN_REGISTRY.register(traceCommand);
 BUILTIN_REGISTRY.register(retryCommand);
 BUILTIN_REGISTRY.register(undoCommand);
+BUILTIN_REGISTRY.register(redoCommand);
 BUILTIN_REGISTRY.register(compactCommand);
 BUILTIN_REGISTRY.register(memoryCommand);
 

@@ -10,3 +10,5 @@ coverage/
 sessions/
 .harness/.DS_Store
 .codingharness/
+.opencode/
+.opencode/tmp/

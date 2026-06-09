@@ -83,6 +83,11 @@ export class HarnessRuntime implements SlashRuntime {
   private lastCapture = "";
   private loadedContext = "";
   private lastUserPrompt: string | null = null;
+  /** Stack of prompts that were rewound via `undoLastTurn()`. The next
+   *  `redoLastTurn()` call pops the most recent one and re-sends it.
+   *  Cleared whenever the user switches sessions, clears history, or
+   *  forks. */
+  private redoStack: string[] = [];
   private lastTokensIn = 0;
   private lastTokensOut = 0;
   private verbose = false;
@@ -351,9 +356,56 @@ export class HarnessRuntime implements SlashRuntime {
     }
   }
 
-  async setSession(id: string): Promise<void> { this.session = await Session.open(id); this.lastUserPrompt = null; }
+  /**
+   * Rewind the active session to the previous user message. Pushes
+   * the rewound-to prompt onto a redo stack so `/redo` can replay it.
+   * Returns the prompt that was rewound to, or null if there's nothing
+   * to undo.
+   */
+  async undoLastTurn(): Promise<string | null> {
+    if (!this.session) return null;
+    const s = this.session;
+    const entries = s.allEntries();
+    // Find the last assistant entry, then walk back to the user message before it.
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i]!;
+      if (e.type === "assistant") {
+        for (let j = i - 1; j >= 0; j--) {
+          const prev = entries[j]!;
+          if (prev.type === "user" && prev.payload.kind === "message") {
+            const rewoundPrompt = prev.payload.message.content;
+            s.rewindTo(prev.id);
+            // Cap the redo stack at 10 so a long editing session doesn't
+            // grow without bound. Most edits are 1–3 undos deep.
+            this.redoStack.push(rewoundPrompt);
+            if (this.redoStack.length > 10) this.redoStack.shift();
+            return rewoundPrompt;
+          }
+        }
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /** Re-send the most recently undone prompt. Pops from the redo stack
+   *  and forwards to `runUserTurn`. Returns the prompt that was re-sent
+   *  (so the slash command can confirm to the user), or null if the
+   *  redo stack is empty. */
+  async redoLastTurn(): Promise<string | null> {
+    const prompt = this.redoStack.pop();
+    if (prompt === undefined) return null;
+    await this.runUserTurn(prompt);
+    return prompt;
+  }
+
+  /** Number of prompts on the redo stack. Exposed for diagnostics /
+   *  the TUI status bar. */
+  getRedoStackDepth(): number { return this.redoStack.length; }
+
+  async setSession(id: string): Promise<void> { this.session = await Session.open(id); this.lastUserPrompt = null; this.redoStack = []; }
   sessionId(): string | undefined { return this.session?.id; }
-  clearHistory(): void { void Session.create({ cwd: this.cwd }).then((s) => { this.session = s; this.lastUserPrompt = null; }); }
+  clearHistory(): void { void Session.create({ cwd: this.cwd }).then((s) => { this.session = s; this.lastUserPrompt = null; this.redoStack = []; }); }
   quit(): void { this.shouldQuit = true; }
   shouldExit(): boolean { return this.shouldQuit; }
   print(s: string): void {

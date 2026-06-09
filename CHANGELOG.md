@@ -7,6 +7,39 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ### Added
 
+- **`/redo` slash command + `HarnessRuntime.undoLastTurn()` /
+  `redoLastTurn()` pair + redo stack** (`src/runtime.ts`,
+  `src/slash/builtin.ts`, `src/slash/registry.ts`,
+  `src/__tests__/undo-redo.test.ts`): the existing `/undo` slash
+  command rewound the session directly via the file API, with no
+  record of the rewound-to prompt — so the user could undo, but
+  not redo. The new `redoStack: string[]` on the runtime
+  remembers up to 10 undone prompts (LRU-evicted). `/undo` now
+  pushes the rewound-to prompt onto the stack; `/redo` pops and
+  re-sends through `runUserTurn()`. Cleared on session switch
+  and on `clearHistory()`. Counted by `getRedoStackDepth()` for
+  the TUI status bar.
+
+### Fixed
+
+- **TUI still used `runtime['buildSystemPrompt']()` bracket
+  notation** (`src/ui/tui-app.ts:212`): replaced with the public
+  `runtime.buildSystemPrompt()` method (made public in the prior
+  release). Same fix as the three call sites in `cli.ts` and
+  `server.ts`.
+- **`grep` tool's `include` filter was tested against the full
+  file path** (`src/agent/tools/grep.ts:81`): the spec says
+  "Glob-ish filter: only files whose name matches", but the
+  code passed the full path. `*.ts` therefore only matched
+  top-level `.ts` files (because the regex starts matching from
+  the search root). Now strips to the basename before testing,
+  so `*.ts` matches every TypeScript file anywhere in the tree —
+  matching the documented behavior.
+- **`.opencode/` and `.opencode/tmp/` were not gitignored**
+  (`.gitignore`): the runtime's per-session work-dir (ch-export
+  scratch space, node compile cache, etc.) was leaking into
+  `git status`. Added both paths.
+
 - **OpenRouter first-class provider preset**
   (`src/providers/presets.ts`,
   `src/__tests__/provider-presets.test.ts`,

@@ -98,6 +98,18 @@ export interface SlashRuntime {
   /** Provider registry, for `/provider models [id]` and similar
    *  lookups that need to resolve a non-default provider by id. */
   providerRegistry?: import("../providers/registry.js").ProviderRegistry;
+  /** Rewind the active session to the previous user message. The
+   *  runtime pushes the rewound-to prompt onto a redo stack so
+   *  `redoLastTurn()` can replay it. Returns the prompt that was
+   *  rewound to, or null if there's nothing to undo. */
+  undoLastTurn?(): Promise<string | null>;
+  /** Re-send the most recently undone prompt. Pops from the runtime's
+   *  redo stack and forwards to `runUserTurn`. Returns the prompt
+   *  that was re-sent, or null if the redo stack is empty. */
+  redoLastTurn?(): Promise<string | null>;
+  /** Number of prompts currently on the redo stack. Exposed for
+   *  diagnostics and the TUI status bar. */
+  getRedoStackDepth?(): number;
 }
 
 export interface SlashCommand {

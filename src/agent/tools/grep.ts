@@ -78,7 +78,14 @@ export const grepTool: Tool = {
     const matches: string[] = [];
     let scanned = 0;
     outer: for (const f of files) {
-      if (includeRe && !includeRe.test(f)) continue;
+      // `include` is documented as a name match, not a path match —
+      // testing it against the full path would mean `*.ts` only matches
+      // top-level .ts files (because the path starts with the search
+      // root). Strip to the basename so the glob does what users expect.
+      if (includeRe) {
+        const base = f.split("/").pop() ?? "";
+        if (!includeRe.test(base)) continue;
+      }
       try {
         const text = await readFile(f, { encoding: "utf-8" });
         if (text.includes("\0")) continue; // binary

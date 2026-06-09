@@ -209,7 +209,7 @@ async function runPrompt(runtime: HarnessRuntime, prompt: string, tui: Tui, cwd:
   try {
     const result = await runAgent({
       provider, model,
-      system: await runtime["buildSystemPrompt"](),
+      system: await runtime.buildSystemPrompt(),
       messages,
       tools: runtime.tools,
       cwd,

@@ -6,7 +6,7 @@ export type ProviderAuthMode = "apiKey" | "oauth" | "optional";
 export const PRIMARY_PROVIDER_ID = "lmstudio";
 
 /** First-class hosted providers (always surfaced prominently in UI/catalog). */
-export const HOSTED_PROVIDER_ORDER = ["openai", "grok", "minimax", "codex", "anthropic", "xai"] as const;
+export const HOSTED_PROVIDER_ORDER = ["openai", "grok", "minimax", "codex", "anthropic", "xai", "openrouter"] as const;
 
 /** Additional local inference backends. */
 export const LOCAL_PROVIDER_ORDER = ["vllm", "vllm-omni"] as const;
@@ -189,6 +189,24 @@ const PRESETS: Record<string, ProviderPreset> = {
     description:
       "Local vLLM-Omni server. Omni-modality (text/image/audio/video) inference via an OpenAI-compatible /v1 surface, plus expanded /v1/image/, /v1/audio/, /v1/video/ endpoints for diffusion + TTS. API key is optional unless --api-key is enabled.",
     capabilities: { omni: true, imageOutput: true, imageInput: true, reasoning: true },
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    tier: "hosted",
+    protocol: "openai",
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    defaultModel: "anthropic/claude-3.5-sonnet",
+    apiKeyEnv: ["OPENROUTER_API_KEY"],
+    baseUrlEnv: ["OPENROUTER_BASE_URL"],
+    modelEnv: ["OPENROUTER_MODEL"],
+    authModes: ["apiKey"],
+    defaultAuthMode: "apiKey",
+    authDocsUrl: "https://openrouter.ai/docs/api-reference/authentication",
+    authLaunchUrl: "https://openrouter.ai/keys",
+    description:
+      "First-class hosted provider. OpenRouter routes a single API key to 100+ models across OpenAI, Anthropic, Google, Meta, Mistral, and others. Use any of the model ids from https://openrouter.ai/models (e.g. 'anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'meta-llama/llama-3.1-405b-instruct'). The 'reasoning' capability is set so the harness forwards extended thinking tokens where the upstream model supports it.",
+    capabilities: { imageInput: true, reasoning: true },
   },
 };
 

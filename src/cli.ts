@@ -270,6 +270,7 @@ function showHelp(cmd?: string): number {
   lines.push("  XAI_API_KEY, XAI_BASE_URL, XAI_MODEL");
   lines.push("  GROK_API_KEY, GROK_BASE_URL, GROK_MODEL");
   lines.push("  MINIMAX_API_KEY, MINIMAX_BASE_URL, MINIMAX_MODEL");
+  lines.push("  OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL");
   lines.push("  LMSTUDIO_API_KEY, LMSTUDIO_BASE_URL, LMSTUDIO_MODEL, LM_API_TOKEN");
   lines.push("  CH_HOME (default ~/.codingharness)");
   lines.push("  CODINGHARNESS_DEBUG=1 for verbose logging");

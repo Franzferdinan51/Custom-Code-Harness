@@ -5,6 +5,19 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Phase 3 closedout (2026-06-10)
+
+All five Phase 3 production tracks ship on `main` (commits
+`b24f94e`, `d34f6fb`, `0fb358b`, `ca7ffc2`, `775766b` +
+audit `b041c28`). See the "Shipped" section at the top of
+[`docs/phase3.md`](./docs/phase3.md) for the per-track commit
+SHAs and scope, and the "Phase 3 (T1–T5)" subsections below
+for the per-track changelogs. The deferred items
+(D-WORKFLOW-IMPL, D-INSIGHT, D-INK) from the Phase 3 roadmap
+remain deferred — D-WORKFLOW-IMPL is sized at L (≈ 1,500 LOC)
+in `docs/agnt-workflow-audit.md` §7 and is the next obvious
+follow-up plan.
+
 ### Phase 3 (T2: vector memory layer)
 
 The 3-layer `MemoryLayerStore` gains a 4th layer — a brute-force

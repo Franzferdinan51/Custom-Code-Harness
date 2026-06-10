@@ -3,7 +3,51 @@
 **Ratifies:** [`phase2-decisions.md`](./phase2-decisions.md) (Q1–Q10) and [`phase2.md`](./phase2.md) (T1–T5)
 **Source plan:** `plans/plan_phase1/notes/agnt-port-plan.md` §6.3
 **Date:** 2026-06-09
-**Status:** Ready for Phase 3 kickoff
+**Status:** SHIPPED 2026-06-10 (all 5 production tracks + closeout on `main`)
+
+## Shipped
+
+- **T1 — Goal delegation: wire the goal kind for real** —
+  landed 2026-06-09 (commit `b24f94e`,
+  `merge: feat/web-panels into main` ancestor). The `goal`
+  kind in the 8-kind `Delegation` union is no longer a
+  dispatcher stub; it drives the real state machine.
+- **T2 — Vector memory layer (4th layer) with RRF fusion** —
+  landed 2026-06-10 (merge `0d7c8f8`, feature commit `d34f6fb`).
+  New `src/agent/memory-vector.ts`; `MemoryLayerStore.search()`
+  fuses BM25 + brute-force cosine via reciprocal-rank fusion.
+- **T3 — D-WORKFLOW source audit (research only)** —
+  landed 2026-06-10 (merge `50d3eb0`, feature commit `b041c28`).
+  `docs/agnt-workflow-audit.md` ships the ≈ 4,000-LOC audit +
+  sized L-port spec; D-WORKFLOW-IMPL stays out of scope and
+  lands in a follow-up plan.
+- **T3-endpoint-security — `ch serve` hardening** —
+  landed 2026-06-10 (feature commit `0fb358b`). Bearer auth
+  via `CH_HTTP_TOKEN`, 1 MB body cap via
+  `CH_HTTP_MAX_BODY_BYTES`, disconnect-abort propagation on
+  `/v1/chat` + `/v1/chat/stream` + `/v1/spawn`, and a public
+  `GET /v1/health` liveness probe.
+- **T3-endpoint-expansion — discoverable HTTP API** —
+  landed 2026-06-10 (merge `5a2e77f`, feature commit `ca7ffc2`).
+  10 new endpoints built off the security pass: `GET /v1/`
+  discovery index from a single ROUTES source-of-truth,
+  `POST /v1/delegations` with discriminated-union validation,
+  drill-downs (delegations / agents / skills / sessions /
+  messages / loops), `DELETE /v1/chat/stream/:id` for stream
+  cancellation, and a consistent `{ error: string }` shape
+  across all JSON endpoints.
+- **T5 — Goal followups (Q6 skills allowlist + Q7 maxCostUsd
+  cap)** — landed 2026-06-10 (merge `86f50ae`, feature commit
+  `775766b`). The `goal` kind forwards the `skills` allowlist
+  end-to-end and enforces a cumulative `maxCostUsd` cap on
+  the state machine.
+
+Final gate: `npm run typecheck` clean, `bun test`
+**586 / 586 / 0 fail** across **42 files** (was 518 in the
+Phase 3 kickoff baseline; +68 net new tests across T1, T2,
+T3-security, T3-expansion, T5, and adjacent Phase 2 closes).
+
+---
 
 Phase 2 (the agnt-gg port follow-ups) shipped the 8-kind `Delegation` union
 with real implementations for `mcp` / `api` / `plugin` / `async_tool` /

@@ -44,7 +44,7 @@ without an entry there fails the `server-expansion` test.
 - `src/config/` — `settings.ts`, `paths.ts`, `providers.ts` — env-var + JSON config layer
 - `src/util/` — `errors.ts`, `logger.ts` — crash-resistance primitives
 - `scripts/copy-web.mjs` — copies `src/web/` to `dist/web/` after `tsc`
-- `src/__tests__/` — 103+ tests across 11 files (`bun test`)
+- `src/__tests__/` — 586+ tests across 42 files (`bun test`)
 
 ## Code style
 

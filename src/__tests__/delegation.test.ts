@@ -519,3 +519,291 @@ test("delegation: top-level delegate() helper resolves the same result as manage
   );
   assert.equal(res.kind, "async_tool");
 });
+
+// ---------- 9. Phase 3 T5: skills allowlist on goal kind (Q6) ----------
+//
+// The `DelegationBase.skills` field is forwarded to
+// `SubAgentManager.spawn({ skills })` for the `agent` kind. For
+// the `goal` kind, the same field is stamped on the goal record
+// (`runGoalKind` → `goalStore.add({ skills })`) and inherited by
+// sub-delegations submitted from `onGoalEnter("executing")`. The
+// tests below assert the forward-side: a parent goal with
+// `skills: ["http", "search"]` produces a sub-delegation with
+// the same allowlist, and a parent without `skills` produces a
+// sub-delegation with `skills` undefined (backwards compat).
+//
+// We capture the sub-delegation by monkey-patching the manager's
+// `submit` so every work it sees is recorded. To exercise the
+// `onGoalEnter("executing")` hook end-to-end we add a goal to
+// the store directly (skipping `runGoalKind`'s dedup-key
+// pre-registration, which exists to prevent the manager's own
+// state machine from re-entering the hook on the goal it just
+// created) and walk it through the lifecycle. The hook fires
+// when the goal transitions to "executing" and submits a
+// sub-delegation with the parent goal's `skills` field
+// inherited.
+
+test("delegation: goal kind forwards skills allowlist to onGoalEnter sub-delegation (Q6)", async () => {
+  const { deps, goalStore } = makeDeps();
+  const mgr = new DelegationManager(deps);
+  // Capture every submit() the manager makes. The sub-spawn
+  // from the hook is one of them; we filter to it by kind.
+  const captured: Array<{ kind: string; skills: string[] | undefined; objective: string }> = [];
+  const realSubmit = mgr.submit.bind(mgr);
+  (mgr as unknown as { submit: typeof realSubmit }).submit = (work) => {
+    captured.push({ kind: work.kind, skills: work.skills, objective: "objective" in work ? work.objective : "" });
+    return realSubmit(work);
+  };
+
+  // Add a goal record with `skills` and walk it through the
+  // lifecycle. The hook fires on the "executing" transition
+  // and submits a sub-delegation.
+  const goal = goalStore.add({
+    objective: "ship skills forwarding",
+    maxSteps: 2,
+    skills: ["http", "search"],
+  });
+  goalStore.transition(goal.id, "planning");
+  goalStore.transition(goal.id, "executing");
+
+  // Wait for the sub-delegation's run to land in the captured
+  // array. The hook's submit() is synchronous (it just enqueues
+  // the run), so by the time the transitions above return the
+  // captured array is populated.
+  const sub = captured.find((c) => c.kind === "goal" && c.objective === goal.objective);
+  assert.ok(sub, "onGoalEnter sub-delegation must be captured");
+  assert.deepEqual(sub!.skills, ["http", "search"], "sub-delegation must inherit the parent goal's skills");
+  // The goal record in the store has the field stamped.
+  const stored = goalStore.get(goal.id);
+  assert.ok(stored, "goal record must be persisted");
+  assert.deepEqual(stored!.skills, ["http", "search"]);
+});
+
+test("delegation: goal kind without skills leaves onGoalEnter sub-delegation's skills undefined (backwards compat)", async () => {
+  const { deps, goalStore } = makeDeps();
+  const mgr = new DelegationManager(deps);
+  const captured: Array<{ kind: string; skills: string[] | undefined; objective: string }> = [];
+  const realSubmit = mgr.submit.bind(mgr);
+  (mgr as unknown as { submit: typeof realSubmit }).submit = (work) => {
+    captured.push({ kind: work.kind, skills: work.skills, objective: "objective" in work ? work.objective : "" });
+    return realSubmit(work);
+  };
+
+  // Add a goal record WITHOUT skills (backwards compat).
+  const goal = goalStore.add({
+    objective: "no skills allowlist",
+    maxSteps: 2,
+    // skills: not set
+  });
+  goalStore.transition(goal.id, "planning");
+  goalStore.transition(goal.id, "executing");
+
+  const sub = captured.find((c) => c.kind === "goal" && c.objective === goal.objective);
+  assert.ok(sub, "onGoalEnter sub-delegation must be captured");
+  assert.equal(sub!.skills, undefined, "sub-delegation's skills must be undefined when parent didn't set it");
+  // The goal record in the store has no `skills` field.
+  const stored = goalStore.get(goal.id);
+  assert.ok(stored);
+  assert.equal(stored!.skills, undefined);
+});
+
+test("delegation: goal kind sub-delegation inherits skills end-to-end (runGoalKind path)", async () => {
+  // This test exercises the full `runGoalKind` path: submit
+  // a goal delegation with `skills: ["http", "search"]`, let
+  // the state machine run with the default runner (which
+  // drives a single iteration to "GOAL COMPLETE"), and assert
+  // the goal record is stamped with the allowlist. The
+  // pre-registered dedup key inside `runGoalKind` prevents
+  // the hook from re-dispatching for the goal the manager
+  // is running inline — so this test focuses on the
+  // `goalStore.add({ skills })` plumbing rather than the
+  // hook's submit() forward.
+  const { deps, goalStore } = makeDeps();
+  const mgr = new DelegationManager(deps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "ship end-to-end skills forwarding",
+    maxIterations: 1,
+    cwd: tmp,
+    skills: ["http", "search"],
+  });
+  for await (const ev of handle.events()) {
+    if (ev.kind === "completed" || ev.kind === "failed" || ev.kind === "cancelled") break;
+  }
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    const stored = goalStore.get(res.goalId);
+    assert.ok(stored, "goal record must be persisted");
+    assert.deepEqual(stored!.skills, ["http", "search"], "goal record must carry the parent delegation's skills");
+  }
+});
+
+// ---------- 10. Phase 3 T5: maxCostUsd cap on goal kind ----------
+//
+// The `DelegationBase.maxCostUsd` field is enforced for the
+// `agent` kind via the `CostTracker`. For the `goal` kind,
+// `runGoalKind` wraps the `runGoalAgent` closure so each call's
+// `usage` (when the runner returns it) is recorded on a
+// per-delegation `CostTracker` and the cap is checked after
+// every phase. When the cap fires, the goal is stamped with
+// `status: "failed"` + `lastError: "maxCostUsd cap exceeded: $X.XX"`,
+// the state machine is broken via a thrown error, and the
+// manager surfaces the same message on the delegation's
+// `error` field.
+//
+// The custom runner below returns a fixed usage on every call.
+// gpt-4o-mini pricing is $0.15/1M in + $0.60/1M out, so
+// {500_000, 500_000} = $0.375 per call (the state machine
+// makes two calls per iteration — planning + executing — so
+// `maxIterations: 1` = $0.75 cumulative). That's well above
+// $0.001 (cap-fires test) and well below $1.0 (high-cap test).
+// The default `echo-1` model is NOT in the cost table, so we
+// explicitly set `model: "gpt-4o-mini"` on the goal delegation
+// so the cap check has a non-zero cost to compare against.
+
+function makeUsageRunner(usage: { inputTokens: number; outputTokens: number } | undefined) {
+  return async (phase: "planning" | "executing") => {
+    if (phase === "planning") {
+      return {
+        content: "1. plan\n2. execute\nReady to execute.",
+        steps: 1,
+        ...(usage !== undefined ? { usage } : {}),
+      };
+    }
+    // executing — never reach here when the cap fires after
+    // the planning phase, but be defensive.
+    return {
+      content: "executing — would normally say GOAL COMPLETE here",
+      steps: 1,
+      ...(usage !== undefined ? { usage } : {}),
+    };
+  };
+}
+
+test("delegation: goal kind enforces maxCostUsd cap when cumulative cost exceeds it", async () => {
+  // Stub returns {500K in / 500K out} = $0.375 per call at
+  // gpt-4o-mini pricing. After the planning phase the
+  // cumulative cost is $0.375 > $0.001 → cap fires.
+  const runner = makeUsageRunner({ inputTokens: 500_000, outputTokens: 500_000 });
+  const { deps, goalStore } = makeDeps({ runGoalAgent: runner });
+  const mgr = new DelegationManager(deps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "ship cap enforcement",
+    maxIterations: 4,
+    cwd: tmp,
+    model: "gpt-4o-mini",
+    maxCostUsd: 0.001,
+  });
+  for await (const ev of handle.events()) {
+    if (ev.kind === "completed" || ev.kind === "failed" || ev.kind === "cancelled") break;
+  }
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    // The cap fired: status is failed, error carries the cap
+    // message, and the goal record has lastError stamped.
+    assert.equal(res.status, "failed");
+    assert.match(res.error ?? "", /maxCostUsd cap exceeded/);
+    assert.match(res.error ?? "", /\$\d/);
+    const stored = goalStore.get(res.goalId);
+    assert.ok(stored);
+    assert.equal(stored!.status, "failed");
+    assert.equal(stored!.loopStatus, "failed");
+    assert.match(stored!.lastError ?? "", /maxCostUsd cap exceeded/);
+  }
+});
+
+test("delegation: goal kind with no maxCostUsd completes normally even with high cumulative cost", async () => {
+  // Same usage stub, but no cap. The goal's runner drives
+  // the state machine normally; without a cap there's no
+  // threshold to trip.
+  const runner = makeUsageRunner({ inputTokens: 500_000, outputTokens: 500_000 });
+  const { deps, goalStore } = makeDeps({ runGoalAgent: runner });
+  const mgr = new DelegationManager(deps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "no cap, just run",
+    maxIterations: 1,
+    cwd: tmp,
+    model: "gpt-4o-mini",
+    // maxCostUsd: not set
+  });
+  for await (const ev of handle.events()) {
+    if (ev.kind === "completed" || ev.kind === "failed" || ev.kind === "cancelled") break;
+  }
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    // The runner doesn't say "GOAL COMPLETE", so the goal
+    // will fail the evaluator (no success criteria) and
+    // end in `failed` after exhausting the single iteration.
+    // The point: the cap didn't fire. Assert the error is
+    // absent.
+    assert.equal(res.error, undefined, "no cap → no cap-exceeded error");
+    // Sanity: the goal record is NOT in the cap-failed
+    // shape — `lastError` is empty.
+    const stored = goalStore.get(res.goalId);
+    assert.ok(stored);
+    assert.doesNotMatch(stored!.lastError ?? "", /maxCostUsd cap exceeded/);
+  }
+});
+
+test("delegation: goal kind with a high maxCostUsd cap does not fire even with high cumulative cost", async () => {
+  // Same usage stub, cap is $1.0. Cumulative cost is $0.75,
+  // well below the cap. Goal completes normally.
+  const runner = makeUsageRunner({ inputTokens: 500_000, outputTokens: 500_000 });
+  const { deps, goalStore } = makeDeps({ runGoalAgent: runner });
+  const mgr = new DelegationManager(deps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "high cap, plenty of headroom",
+    maxIterations: 1,
+    cwd: tmp,
+    model: "gpt-4o-mini",
+    maxCostUsd: 1.0,
+  });
+  for await (const ev of handle.events()) {
+    if (ev.kind === "completed" || ev.kind === "failed" || ev.kind === "cancelled") break;
+  }
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    assert.equal(res.error, undefined, "high cap → no cap-exceeded error");
+    const stored = goalStore.get(res.goalId);
+    assert.ok(stored);
+    assert.doesNotMatch(stored!.lastError ?? "", /maxCostUsd cap exceeded/);
+  }
+});
+
+test("delegation: goal kind with maxCostUsd cap does NOT fire when the runner returns no usage (no false cap hits)", async () => {
+  // Cap is $0.001 — would fire on ANY non-zero cost. The
+  // runner returns no `usage`, so the manager records zero
+  // for the call and the cap is a no-op. The goal completes
+  // normally (still fails the evaluator — no success
+  // criteria, no GOAL COMPLETE — but that's the normal
+  // exhausted-iterations path, not a cap-failure).
+  const runner = makeUsageRunner(undefined);
+  const { deps, goalStore } = makeDeps({ runGoalAgent: runner });
+  const mgr = new DelegationManager(deps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "no usage returned, cap should not fire",
+    maxIterations: 1,
+    cwd: tmp,
+    model: "gpt-4o-mini",
+    maxCostUsd: 0.001,
+  });
+  for await (const ev of handle.events()) {
+    if (ev.kind === "completed" || ev.kind === "failed" || ev.kind === "cancelled") break;
+  }
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    assert.equal(res.error, undefined, "no usage → no cap-exceeded error");
+    const stored = goalStore.get(res.goalId);
+    assert.ok(stored);
+    assert.doesNotMatch(stored!.lastError ?? "", /maxCostUsd cap exceeded/);
+  }
+});

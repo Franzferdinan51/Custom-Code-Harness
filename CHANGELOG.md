@@ -37,6 +37,58 @@ All notable changes to CodingHarness are documented here. Format follows
   asserts each one appears in stdout.
 
 
+## Unreleased — Phase 3 (T3: D-WORKFLOW source audit)
+
+Closes the Phase 1 spike's open research item
+(`plans/plan_phase1/notes/agnt-port-plan.md:620`) — "I did not read
+`WorkflowManipulationService.js` end-to-end." The audit ships; the
+implementation port remains out of scope and lands as
+`### D-WORKFLOW-IMPL — Workflow real port` in a Phase 3.5/4
+follow-up plan.
+
+- **docs(delegation): D-WORKFLOW source audit + port plan**
+  (`docs/agnt-workflow-audit.md`, `docs/phase3.md`): research-only
+  deliverable. Reads ≈ 4,000 LOC of agnt-gg source
+  (`WorkflowEngine.js`, `NodeExecutor.js`, `EdgeEvaluator.js`,
+  `ParameterResolver.js`, `CustomToolExecutor.js`,
+  `WorkflowService.js`, `WorkflowManipulationService.js`,
+  `WorkflowRoutes.js`, `WorkflowModel.js`, the three control
+  nodes, the example `automated_email_summarizer.json`, and the
+  `WorkflowForge` Vue screen) end-to-end. Documents the workflow
+  DSL shape (single JSON blob in a `workflow_data` TEXT column,
+  no schema), enumerates the step-type vocabulary (trigger /
+  custom / stop-workflow / action / utility / widget / control /
+  mcp, dispatched by file lookup with a plugin fallback — **no
+  formal registry**), traces the load → validate → execute flow
+  (HTTP controller → IPC → forked child process → ProcessManager
+  → ProcessWorker → WorkflowEngine → NodeExecutor with
+  EdgeEvaluator + ParameterResolver), maps every agnt-gg step
+  type to the closest `Delegation` kind in our 8-kind union
+  (`workflow` is the natural top-level container; triggers and
+  control-flow nodes have **no** direct analog and either get a
+  new `trigger` property on `WorkflowDelegation` or live inside
+  the workflow kind), catalogs the 19-route HTTP manipulation
+  surface (mapped 1:1 to 14 `ch workflow *` CLI subcommands),
+  lists 5 open questions for the follow-up, and sizes the port
+  at **L (≈ 1,500 LOC)** with a file-by-file breakdown: 6 new
+  files in `src/agent/` (`workflow.ts`, `workflow-graph.ts`,
+  `workflow-steps.ts`, `workflow-eval.ts`, `workflow-store.ts`,
+  `workflow-types.ts`), 3 new test files, modifications to
+  `src/agent/delegation.ts` (replace the `workflow` stub at
+  `delegation.ts:1112-1115` with a real `runWorkflowKind`,
+  expand `WorkflowDelegation` with a `trigger` field, and widen
+  the `DelegationResult` for `workflow`), `src/runtime.ts`
+  (wire the engine factory, mirror T1's `runGoalAgent` wiring),
+  `src/cli.ts`, and `src/slash/builtin.ts`. The audit explicitly
+  drops the agnt-gg child-process IPC architecture
+  (`WorkflowProcessBridge` + `WorkflowProcess` + `ProcessManager`
+  + `ProcessWorker`, ≈ 880 LOC combined) and the versioning
+  service (`WorkflowVersionService.js`, 357 LOC) from the v1
+  port. Trigger listeners that need to survive a CLI exit
+  (webhooks, timers) are out of scope for v1; `ch workflow run`
+  is synchronous. No production code ships in this track.
+
+
 ## Unreleased — Phase 3 (T1: goal delegation real path)
 
 The `goal` kind in the 8-kind `Delegation` union is no longer a

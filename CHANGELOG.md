@@ -5,6 +5,106 @@ All notable changes to CodingHarness are documented here. Format follows
 
 
 
+## Unreleased — Phase 3 (T1: goal delegation real path)
+
+The `goal` kind in the 8-kind `Delegation` union is no longer a
+dispatcher stub — it drives the state machine for real.
+
+- **feat(delegation): wire the goal kind for real**
+  (`src/agent/delegation.ts`, `src/agent/goals.ts`,
+  `src/agent/loops/goal.ts`, `src/runtime.ts`,
+  `src/__tests__/delegation.test.ts`,
+  `docs/phase3.md`): closes the
+  Phase 1 deferred item "the real 'run a goal through the
+  manager' path lands in a follow-up that wires `runtime.runAgent`
+  here." The goal kind now goes through the same lifecycle as
+  any other kind: `submit()` returns a handle, `events()` emits
+  planning / executing / done / failed transitions, `result()`
+  resolves to the final `loopStatus`, and a per-call `signal`
+  forwarded from the manager cleanly aborts the inner LLM
+  call (so `cancelAll(parentId)` works end-to-end on goal
+  delegations).
+
+  1. **`DelegationRuntimeDeps.runGoalAgent`**
+     (`src/agent/delegation.ts`): new optional slot on the
+     deps interface. Signature is the existing
+     `GoalRunAgentFn` from `src/agent/goals.ts` — `(phase,
+     context, signal?) => Promise<{ content, steps }>`.
+     `signal` is a new optional 3rd parameter (existing
+     2-arg call sites still typecheck). When the dep is
+     absent, `runGoalKind` returns a `failed` delegation
+     with a clear "no goal runner wired" reason rather than
+     throwing — lets slim test fixtures skip the runner.
+  2. **`runGoalKind` real path** (`src/agent/delegation.ts`):
+     replaces the throwing stub from the Phase 1 port with
+     the real `runGoalAgent` dep. The state machine is
+     driven for real; the goal's `loopStatus` reaches
+     `done` / `re-planning` / `failed` based on the model's
+     outputs. The pre-existing `onGoalEnter("executing")`
+     hook (which dispatches sub-delegations) is suppressed
+     for the goal we just created — without this, the goal
+     delegation kind would infinite-recurse: goal →
+     executing → submit → goal → executing → submit → ...
+     The dedup key in `onGoalEnter` is `goal.id +
+     ":" + currentIteration`; we pre-register the
+     `(id, iter=1)` key when we create the goal.
+  3. **`HarnessRuntime.buildRunGoalAgent()`**
+     (`src/runtime.ts`): builds the closure the manager
+     uses. Mirrors the CLI's `ch goal` `callAgent`
+     (`src/cli.ts:runGoalCmd`) — per-phase system prompt
+     via `runtime.buildSystemPrompt()`, the runtime's
+     tool registry, the configured `defaultProvider` /
+     `defaultModel`, the per-call `signal` (forwarded from
+     the manager), and the runtime's failover chain. Wired
+     in the `HarnessRuntime` constructor:
+     `new DelegationManager({ ..., runGoalAgent:
+     this.buildRunGoalAgent() })`.
+  4. **`RunGoalOptions.signal`** (`src/agent/goals.ts`):
+     new optional field, forwarded to both `runAgent` calls
+     inside `runGoalStateMachine` so a parent cancellation
+     cleanly aborts the inner LLM call. Backward-compatible
+     — the existing CLI flow uses its own AbortController
+     and doesn't pass one.
+  5. **Tests** (`src/__tests__/delegation.test.ts`):
+     `makeDeps` factory now injects a stateful stub
+     `runGoalAgent` (planning → "1. read\n2. ship\nReady
+     to execute."; executing → "done. GOAL COMPLETE") so
+     every existing test that exercises the goal kind
+     drives a full lifecycle. The pre-existing "goal kind
+     dispatches a goal through the store" test is
+     reworked to assert `loopStatus === "done"` and
+     `res.iterations === 1` (the stub-throw assertion is
+     gone). 3 new tests:
+     - `goal kind returns a clear failure when no
+       runGoalAgent is wired` — slim-fixture contract.
+     - `goal kind drives a full lifecycle to done via a
+       stateful runner` — planning + executing logs
+       observed, `loopStatus === "done"`, store reflects
+       `complete`.
+     - `goal kind respects the per-call abort signal` —
+       slow runner + aborted signal lands in a
+       non-`done` terminal state (not "done", not crash).
+  6. **`docs/phase3.md`**: new roadmap ratifying T1
+     (this track), T2 (vector memory layer), and T3
+     (D-WORKFLOW source audit research). The Phase 1
+     spike noted `agnt-port-plan.md §6.3` that the
+     workflow tier port needed a fresh end-to-end source
+     audit; T3 closes that research gap.
+
+  Net new tests: 3. The `delegation.test.ts` "goal kind
+  dispatches..." test is reworked, not added. Test count
+  moves from 518 → 521; gate stays clean (`typecheck`
+  clean, `build` clean, `bun test` 521 / 521 / 0 fail).
+
+  Resolves the Phase 1 plan §6.1 follow-up
+  ("dispatcher stub" → "real goal path"); unblocks Q6
+  (skills allowlist on `GoalDelegation` — the field
+  already exists via `DelegationBase`, and a follow-up
+  track can now pass it through to the planner / spawned
+  subagents without first having to wire the runner);
+  enables the `maxCostUsd` cap to actually fire on goal
+  delegations end-to-end.
+
 ## Unreleased — Goals (revert + semantic replan + multi-mission)
 
 Two related changes to the goal lifecycle land in the same release:

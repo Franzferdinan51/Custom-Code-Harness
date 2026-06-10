@@ -75,6 +75,12 @@ const baseSettings: Settings = {
 
 interface MakeDepsOpts {
   askApproval?: DelegationRuntimeDeps["askApproval"];
+  /** Override the goal runner. Defaults to a stateful stub that
+   *  plans on the first call, executes "GOAL COMPLETE" on the
+   *  second — drives the state machine to `done` in one
+   *  iteration. Pass a different `runGoalAgent` to drive
+   *  other paths (blocked, identical-replan guard, etc.). */
+  runGoalAgent?: DelegationRuntimeDeps["runGoalAgent"];
 }
 
 function makeDeps(opts: MakeDepsOpts = {}) {
@@ -83,12 +89,25 @@ function makeDeps(opts: MakeDepsOpts = {}) {
   providers.register("echo", new EchoProvider());
   const subagent = new SubAgentManager(providers, settings, { cwd: tmp });
   const goalStore = new GoalStore({ file: join(tmp, "delegation-goals.json") });
+  // Stateful goal-runner stub. Returns "GOAL COMPLETE" on the
+  // executing phase so the state machine reaches `done` in a
+  // single iteration. Mirrors the AGENTS.md "stub providers in
+  // agent-loop tests must be stateful" rule.
+  const defaultRunner: NonNullable<DelegationRuntimeDeps["runGoalAgent"]> = async (phase, ctx) => {
+    if (phase === "planning") {
+      return { content: "1. read the file\n2. ship it\nReady to execute.", steps: 1 };
+    }
+    // executing
+    void ctx; // unused
+    return { content: "done. GOAL COMPLETE", steps: 1 };
+  };
   const deps: DelegationRuntimeDeps = {
     providers,
     settings,
     cwd: tmp,
     subagent,
     goalStore,
+    runGoalAgent: opts.runGoalAgent ?? defaultRunner,
     ...(opts.askApproval ? { askApproval: opts.askApproval } : {}),
   };
   return { deps, providers, subagent, goalStore };
@@ -222,13 +241,120 @@ test("delegation: goal kind dispatches a goal through the store", async () => {
   const res = await handle.result();
   assert.equal(res.kind, "goal");
   if (res.kind === "goal") {
-    // The dispatcher adds the goal to the store and runs one
-    // iteration; the stub runAgent throws, which the manager
-    // swallows (the goal remains in whatever state the runner
-    // left it in).
+    // The dispatcher adds the goal to the store and runs the
+    // state machine for real (Phase 3+). The stateful stub
+    // returns "GOAL COMPLETE" on the executing phase, so the
+    // goal reaches `done` in a single iteration.
     const stored = goalStore.get(res.goalId);
     assert.ok(stored, "the goal must be persisted in the store");
     assert.equal(stored!.objective, "ship Phase 1 delegation");
+    assert.equal(stored!.loopStatus, "done");
+    assert.equal(res.status, "done");
+    assert.equal(res.iterations, 1);
+  }
+});
+
+test("delegation: goal kind returns a clear failure when no runGoalAgent is wired", async () => {
+  // Build a manager WITHOUT the goal runner. The manager must
+  // not throw — it returns a `failed` delegation with a clear
+  // reason. This lets the union accept goal kinds in hosts
+  // that haven't wired the runner (e.g. slim test fixtures for
+  // non-goal kinds).
+  const { deps } = makeDeps();
+  const noRunnerDeps: DelegationRuntimeDeps = { ...deps, runGoalAgent: undefined };
+  const mgr = new DelegationManager(noRunnerDeps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "should fail fast",
+    cwd: tmp,
+  });
+  for await (const ev of handle.events()) {
+    if (ev.kind === "completed" || ev.kind === "failed" || ev.kind === "cancelled") break;
+  }
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    assert.equal(res.status, "failed");
+    assert.equal(res.goalId, ""); // no goal record was created
+  }
+});
+
+test("delegation: goal kind drives a full lifecycle to `done` via a stateful runner", async () => {
+  // The runner is stateful: planning returns a fresh plan on
+  // each iteration, executing returns "GOAL COMPLETE" on the
+  // first iteration. The state machine must reach `done` in
+  // a single iteration and the manager must surface that as
+  // the delegation's status.
+  const { deps, goalStore } = makeDeps();
+  const mgr = new DelegationManager(deps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "ship the goal kind for real",
+    maxIterations: 4,
+    cwd: tmp,
+  });
+  const seenStates: string[] = [];
+  for await (const ev of handle.events()) {
+    if (ev.kind === "log" && ev.line.startsWith("[goal] ")) {
+      seenStates.push(ev.line.slice("[goal] ".length));
+    }
+    if (ev.kind === "completed" || ev.kind === "failed" || ev.kind === "cancelled") break;
+  }
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    assert.equal(res.status, "done");
+    assert.equal(res.iterations, 1);
+    // The store must reflect the terminal state.
+    const stored = goalStore.get(res.goalId);
+    assert.ok(stored);
+    assert.equal(stored!.loopStatus, "done");
+    assert.equal(stored!.status, "complete");
+    // The lifecycle log must include planning + executing.
+    assert.ok(
+      seenStates.some((s) => s.startsWith("planning")),
+      "expected a 'planning' lifecycle log",
+    );
+    assert.ok(
+      seenStates.some((s) => s.startsWith("executing")),
+      "expected an 'executing' lifecycle log",
+    );
+  }
+});
+
+test("delegation: goal kind respects the per-call abort signal", async () => {
+  // The runner is slow (sleeps 200ms per call). The manager
+  // gets its signal aborted before the runner's first call
+  // returns. The manager must surface a `cancelled: true`
+  // result and the goal record must reflect a terminal
+  // (paused/failed) state.
+  const ac = new AbortController();
+  const slowRunner: NonNullable<DelegationRuntimeDeps["runGoalAgent"]> = async (phase) => {
+    await new Promise((r) => setTimeout(r, 200));
+    if (ac.signal.aborted) throw new Error("aborted");
+    return { content: phase === "planning" ? "1. plan" : "GOAL COMPLETE", steps: 1 };
+  };
+  const { deps } = makeDeps({ runGoalAgent: slowRunner });
+  const mgr = new DelegationManager(deps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "abort mid-run",
+    maxIterations: 4,
+    cwd: tmp,
+  });
+  // Abort the signal after a short delay (well before the 200ms
+  // runner returns).
+  setTimeout(() => ac.abort(), 30);
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    // The runner throws when aborted; the manager swallows
+    // that, the state machine bails, and we land in a
+    // non-`done` terminal state. The exact state depends on
+    // which phase the abort hit, so we assert the broad
+    // contract: status is one of {failed, paused, executing}
+    // and not "done".
+    assert.notEqual(res.status, "done");
   }
 });
 

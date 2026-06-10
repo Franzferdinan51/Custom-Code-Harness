@@ -380,6 +380,29 @@ export interface DelegationRuntimeDeps {
   /** Override the directory that hosts plugin files. Defaults
    *  to `$CH_HOME/plugins`. Used by `plugin` kind. */
   pluginHome?: string;
+  /**
+   * Function the goal delegation kind uses to drive the
+   * `planning` / `executing` phases. The signature is the
+   * `GoalRunAgentFn` from `src/agent/goals.ts` — a small
+   * closure that builds a fresh system prompt + single user
+   * turn per phase, calls the underlying agent loop, and
+   * returns the final content + step count.
+   *
+   * **Required** for the `goal` kind. When unset, `runGoalKind`
+   * returns a `failed` delegation with a clear "no goal runner
+   * wired" error rather than throwing — this lets tests that
+   * only exercise non-goal kinds skip the dep.
+   *
+   * The `HarnessRuntime` builds a default that mirrors the
+   * CLI's `ch goal` flow (`src/cli.ts:runGoalCmd`'s
+   * `callAgent` closure): per-phase system prompt via
+   * `runtime.buildSystemPrompt()`, the runtime's tool
+   * registry, the configured `defaultProvider` /
+   * `defaultModel`, and the per-call abort signal forwarded
+   * from the manager. Tests inject a stateful stub to drive a
+   * full lifecycle.
+   */
+  runGoalAgent?: GoalRunAgentFn;
 }
 
 /** Signature of the function that actually executes an async tool.
@@ -854,6 +877,17 @@ export class DelegationManager {
     signal: AbortSignal,
     emit: (ev: DelegationEvent) => void,
   ): Promise<{ value: DelegationResult; cancelled: boolean }> {
+    if (!this.deps.runGoalAgent) {
+      // No runner wired — fail fast with a clear reason rather
+      // than throwing. Throwing would crash the harness from a
+      // single bad dispatch; returning a failed delegation is
+      // the same contract every other kind uses.
+      const reason = "delegation: goal kind requires DelegationRuntimeDeps.runGoalAgent " +
+        "(see HarnessRuntime.runGoalAgent or wire your own)";
+      emit({ kind: "log", line: "[goal] " + reason });
+      return { value: { kind: "goal", goalId: "", status: "failed", iterations: 0 }, cancelled: false };
+    }
+
     const goal = this.deps.goalStore.add({
       objective: work.objective,
       maxSteps: work.maxIterations ?? 8,
@@ -864,22 +898,37 @@ export class DelegationManager {
     });
     this.deps.goalStore.markInProgress(goal.id);
     emit({ kind: "log", line: "[goal] created " + goal.id + " — running state machine" });
+    // Pre-register this goal in `submittedGoals` so the
+    // `onGoalEnter("executing")` hook doesn't recursively
+    // dispatch another goal delegation for the goal we just
+    // created. The state machine is going to fire that hook
+    // when the runner transitions to `executing`; we want the
+    // hook to no-op for this goal (we're already running it
+    // inline below). Without this, the goal delegation kind
+    // infinite-recurses: goal → executing → submit → goal →
+    // executing → submit → ... The dedup key in `onGoalEnter`
+    // is `goal.id + ":" + currentIteration`, so we register
+    // the (id, iter=1) key here. Subsequent iterations (if
+    // any) are still allowed to re-dispatch.
+    this.submittedGoals.add(goal.id + ":1");
 
-    // Bridge to the goal-runner. We use a stub runAgent that throws
-    // when called — the goal loop's actual execution path stays in
-    // `runGoalStateMachine` (called from the CLI / `ch goal`).
-    // The Phase 1 port ships the dispatcher and the
-    // integration hook; the real "run a goal through the manager"
-    // path lands in a follow-up that wires `runtime.runAgent`
-    // here. For now, we expose the hook so the goal lifecycle
-    // observes the union.
-    const stub: GoalRunAgentFn = async () => {
-      throw new Error("delegation: goal kind is a dispatcher stub — use ch goal for execution");
+    // Bridge to the goal-runner. The `runGoalAgent` dep is the
+    // real runner — it builds the per-phase prompt and calls
+    // the underlying agent loop. The state machine is driven
+    // for real, and the goal's `loopStatus` reaches `done` /
+    // `re-planning` / `failed` based on the model's outputs.
+    // The skills allowlist (when set on the work) is forwarded
+    // to the runner so the planner / spawned subagents only see
+    // a known toolset.
+    const runGoalAgent: GoalRunAgentFn = async (phase, ctx, sig) => {
+      emit({ kind: "log", line: "[goal] phase=" + phase + " iteration=" + ctx.iteration });
+      return this.deps.runGoalAgent!(phase, ctx, sig);
     };
     const opts: RunGoalOptions = {
       store: this.deps.goalStore,
-      runAgent: stub,
-      maxIterations: 1,
+      runAgent: runGoalAgent,
+      maxIterations: work.maxIterations,
+      signal,
       onStateChange: (state) => {
         emit({ kind: "log", line: "[goal] " + state });
       },
@@ -887,10 +936,7 @@ export class DelegationManager {
     try {
       await runGoalStateMachine(goal, opts);
     } catch (e) {
-      // The stub runAgent throws on its first call. Treat that as
-      // "dispatched through the union" — the union handled the
-      // lifecycle; the actual execution belongs to the CLI path.
-      log.debug("delegation: goal dispatcher returned (expected: stub runAgent) — " + (e as Error).message);
+      log.debug("delegation: goal runner returned — " + (e as Error).message);
     }
 
     if (signal.aborted) {

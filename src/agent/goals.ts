@@ -731,6 +731,11 @@ function formatAgo(ts: number): string {
 export type GoalRunAgentFn = (
   phase: "planning" | "executing",
   context: { previousOutput?: string; iteration: number },
+  /** Per-call abort signal. The manager forwards its own
+   *  signal here so a `cancelAll(parentId)` cleanly aborts
+   *  the underlying LLM call. Optional — the CLI's
+   *  `ch goal` flow uses its own AbortController. */
+  signal?: AbortSignal,
 ) => Promise<{ content: string; steps: number }>;
 
 export interface RunGoalOptions {
@@ -741,6 +746,11 @@ export interface RunGoalOptions {
   /** Called whenever the state changes. Optional; used by the CLI
    *  to print progress. */
   onStateChange?: (state: GoalState, goal: GoalRecord) => void;
+  /** Per-run abort signal. Forwarded to the runner so a
+   *  parent cancellation cleanly aborts the inner LLM call.
+   *  Optional — the CLI's `ch goal` flow uses its own
+   *  AbortController and the manager / loop pass their own. */
+  signal?: AbortSignal;
 }
 
 export async function runGoalStateMachine(
@@ -766,7 +776,7 @@ export async function runGoalStateMachine(
     const planOut = await opts.runAgent("planning", {
       previousOutput: lastExec,
       iteration: iter,
-    });
+    }, opts.signal);
     lastExec = planOut.content;
 
     // ---- semantic identical-replan guard ----
@@ -804,7 +814,7 @@ export async function runGoalStateMachine(
     const execOut = await opts.runAgent("executing", {
       previousOutput: planOut.content,
       iteration: iter,
-    });
+    }, opts.signal);
     lastExec = execOut.content;
 
     // Persist the finalText (used by evaluate()).

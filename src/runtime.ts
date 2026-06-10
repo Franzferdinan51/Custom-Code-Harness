@@ -13,7 +13,7 @@ import { c } from "./ui/colors.js";
 import { log } from "./util/logger.js";
 import { SubAgentManager } from "./agent/subagent.js";
 import { DelegationManager } from "./agent/delegation.js";
-import { GoalStore } from "./agent/goals.js";
+import { GoalStore, type GoalRunAgentFn } from "./agent/goals.js";
 import { SkillRegistry } from "./agent/skills.js";
 import { MemoryStore } from "./agent/memory.js";
 import { loadContextFiles, formatContextForPrompt } from "./agent/context.js";
@@ -179,6 +179,7 @@ export class HarnessRuntime implements SlashRuntime {
       cwd: this.cwd,
       subagent: this.subagents,
       goalStore: this.goalStore,
+      runGoalAgent: this.buildRunGoalAgent(),
     });
     this.skills = new SkillRegistry({ cwd: this.cwd });
     this.memory = new MemoryStore();
@@ -764,6 +765,72 @@ export class HarnessRuntime implements SlashRuntime {
       chain.push({ provider: p, model: f.model });
     }
     return chain;
+  }
+
+  /**
+   * Build the `GoalRunAgentFn` that the `DelegationManager` uses
+   * to drive the `goal` kind's `planning` / `executing` phases.
+   * Mirrors the closure the CLI's `ch goal` flow builds in
+   * `src/cli.ts:runGoalCmd` (`callAgent`) — per-phase system
+   * prompt via `this.buildSystemPrompt()`, the runtime's tool
+   * registry, the configured `defaultProvider` / `defaultModel`,
+   * and the per-call abort signal forwarded from the manager.
+   *
+   * The returned `GoalRunAgentFn` signature is the public
+   * type from `src/agent/goals.ts`. The manager calls it twice
+   * per iteration: once for `planning`, once for `executing`.
+   * The runner drives the goal state machine based on the
+   * model's output (`"GOAL COMPLETE"` short-circuits, etc.).
+   *
+   * Public so tests can build a manager with the same
+   * wiring the runtime uses. The method itself is cheap —
+   * it constructs a closure that captures `this`.
+   */
+  buildRunGoalAgent(): GoalRunAgentFn {
+    return async (phase, ctx, signal) => {
+      const provider = this.providerRegistry.default();
+      if (!provider) {
+        throw new Error("runGoalAgent: no provider configured");
+      }
+      const model = this.settings.defaultModel;
+      if (!model) {
+        throw new Error("runGoalAgent: no model configured");
+      }
+      const objectiveHint = this.lastUserPrompt ?? "(goal delegation)";
+      const system = await this.buildSystemPrompt();
+      const prompt = phase === "planning"
+        ? [
+            "Goal mode: plan",
+            "Objective: " + objectiveHint,
+            "Iteration: " + ctx.iteration,
+            "",
+            "Produce a numbered, minimal plan (3-7 steps) to achieve this in the current repository.",
+            "After the plan, write exactly: Ready to execute.",
+          ].join("\n")
+        : [
+            "Goal mode: execute",
+            "Objective: " + objectiveHint,
+            "Iteration: " + ctx.iteration,
+            "Plan summary: " + (ctx.previousOutput ?? "(no plan)").slice(0, 500),
+            "",
+            "Continue from the plan and execute the next step in the repository.",
+            "If the objective is complete, say exactly: GOAL COMPLETE",
+            "If you cannot continue, say exactly: GOAL BLOCKED: <reason>",
+          ].join("\n");
+      const messages: Array<{ role: "user"; content: string }> = [{ role: "user", content: prompt }];
+      const result = await runAgent({
+        provider,
+        model,
+        system,
+        messages,
+        tools: this.tools,
+        cwd: this.cwd,
+        signal: signal ?? new AbortController().signal,
+        limits: { ...DEFAULT_LIMITS, maxSteps: 4, requestTimeoutMs: 30_000 },
+        failoverChain: this.buildFailoverChain(),
+      });
+      return { content: result.final.content, steps: result.steps };
+    };
   }
 
   /**

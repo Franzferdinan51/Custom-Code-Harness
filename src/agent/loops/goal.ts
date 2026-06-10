@@ -86,6 +86,8 @@ export function goalLoop(): GoalLoop {
       // hook the Phase 1 plan called for — subgoals dispatched
       // through `delegate` reach this stub and the manager records
       // the dispatch even if the actual LLM call is wired elsewhere.
+      // The runner receives the loop's `ctx.signal` so a
+      // `cancelAll(parentId)` cleanly aborts the inner LLM call.
       const stub: GoalRunAgentFn = input.runAgent ?? (async (phase, pCtx) => {
         ctx.hooks?.onInfo?.("[goal] " + phase + " (iteration " + pCtx.iteration + ") — no runAgent wired");
         return { content: "no runAgent wired; phase=" + phase + " iter=" + pCtx.iteration, steps: 0 };

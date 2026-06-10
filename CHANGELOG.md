@@ -5,6 +5,65 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Added — Endpoint security
+
+The HTTP API exposed by `ch serve` was hard to use safely from external
+programs (MCP clients, dashboards, scripts) — there was no auth, no
+body size cap, and a client disconnect during a long chat stream would
+leave the in-flight LLM call running to completion. This pass closes
+the four most important gaps and adds a public liveness probe.
+
+- **Bearer-token auth, opt-in via `CH_HTTP_TOKEN`**
+  (`src/server.ts`): new `authenticate(req)` helper near the top of
+  the file. When the env var is set, every `/v1/*` request (except
+  `OPTIONS` preflight and `GET /v1/health`) must include
+  `Authorization: Bearer <CH_HTTP_TOKEN>`; mismatched or missing
+  tokens get `401 { error: "unauthorized" }`. The response is
+  always the same generic shape — the configured token is never
+  echoed in errors (defense against a misconfigured client
+  recovering the secret from the body). When the env var is unset,
+  the server is open — exactly the previous behavior. Token compare
+  is constant-time to deny a timing oracle.
+- **Body size cap, opt-in via `CH_HTTP_MAX_BODY_BYTES`**
+  (`src/server.ts`): the request body is capped at 1 MB by default
+  for all `readJson` callers; the cap can be tightened or loosened
+  with the positive-integer env var. Oversize bodies are detected
+  inside the read loop and surfaced as `413 { error: "body too
+  large (limit: N bytes)" }`. Rewrote `readJson` to use the
+  `data`/`end`/`close` stream events instead of `for await` so the
+  throw is observable in `bun` (the for-await iterator was
+  swallowing the throw in this runtime).
+- **Abort propagation in `/v1/chat`, `/v1/chat/stream`,
+  `/v1/spawn`** (`src/server.ts`): the previously-unused
+  `new AbortController().signal` default is replaced with a real
+  `abortOnDisconnect(req)` controller that fires on the request's
+  `close` and `aborted` events. When the client disconnects mid-run
+  the SSE stream ends with
+  `event: error\ndata: {"text":"aborted"}\n\n` followed by
+  `event: done` and `res.end()`. The session append that happens
+  AFTER the agent run is guarded — a disconnected client doesn't
+  get an orphan assistant entry polluting the next reload's
+  session. The server does not crash.
+- **`GET /v1/health` liveness probe** (`src/server.ts`): returns
+  `200 { ok: true, uptime: process.uptime(), version: "0.2.2" }`.
+  Bypasses auth (k8s / load balancer / smoke checks don't carry
+  bearer tokens), never reads a body, never blocks. The docstring
+  header at the top of the file is updated to list the new
+  endpoint and to fix three other drift items (`GET /v1/memory`
+  was listed as `POST /v1/memory/read`; `version: "0.2.2"` was
+  duplicated; the body-size and auth sections were absent).
+- **Tests** (`src/__tests__/server-hardening.test.ts`, new,
+  10 tests, 2.9s): cover the four pillars + edge cases. Auth:
+  no-token / wrong-token / right-token / malformed-header
+  (no token leak in 401 body). Body: 413 on oversize, 200 on
+  under-cap. Abort: client disconnect during `/v1/chat/stream`
+  with a hanging OpenAI-compatible provider — the test asserts
+  the server stays up (`/v1/health` returns 200 after the
+  disconnect) and the provider actually got the in-flight
+  request (proves we exercised the long-running path, not a
+  fast-fail). Health: returns 200 with the expected shape and
+  bypasses auth when `CH_HTTP_TOKEN` is set.
+
 ### Fixed
 
 - **Project detection glob bug** (`src/project/init.ts`): the

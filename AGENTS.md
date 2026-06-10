@@ -70,3 +70,6 @@ A versatile terminal coding harness — multi-provider, extensible, crash-resist
 - `ch export --format share` redacts `sk-*` / `sk-ant-*` / `xai-*` / `ghp_*` / `AKIA*` / `AIza*` / PEM blocks before writing JSONL
 - Electron desktop uses `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false` — no Node in the renderer
 - Off-site links in the desktop app open in the system browser, not in-app
+- **`ch serve` hardening env vars** (see `src/server.ts`):
+  - `CH_HTTP_TOKEN` — when set, every `/v1/*` request (except `OPTIONS` preflight and `GET /v1/health`) must include `Authorization: Bearer <CH_HTTP_TOKEN>`. Unset = open server (backwards compat). Token compare is constant-time; 401s never echo the token.
+  - `CH_HTTP_MAX_BODY_BYTES` — positive integer cap on POST bodies (default 1 MB). Oversize bodies get 413.

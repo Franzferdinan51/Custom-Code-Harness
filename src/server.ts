@@ -3,6 +3,7 @@
 // Endpoints:
 //   GET  /                         — Web UI (index.html)
 //   GET  /styles.css, /app.js      — Web UI assets
+//   GET  /v1/health                — { ok, uptime, version } liveness probe (no auth)
 //   GET  /v1/status                 — { version, model, provider }
 //   GET  /v1/diag                   — connectivity / latency check
 //   GET  /v1/info                   — runtime snapshot (version, paths, provider, model)
@@ -27,9 +28,19 @@
 //   POST /v1/chat/stream            — SSE: text, tool_start, tool_end, info, error, approval_required, usage, done
 //   POST /v1/spawn                  — { agent, prompt } — synchronous sub-agent run
 //   POST /v1/approval/respond      — { id, decision } — resume a paused approval
-//   POST /v1/memory/read            — read MEMORY.md
+//   GET  /v1/memory                 — read MEMORY.md
 //   POST /v1/memory/append          — { text } — append to MEMORY.md
 //   POST /v1/memory/search          — { query } — search
+//
+// Auth (opt-in via env):
+//   When `CH_HTTP_TOKEN` is set, every /v1/* request (except OPTIONS preflight
+//   and GET /v1/health) must include `Authorization: Bearer <CH_HTTP_TOKEN>`.
+//   Mismatched / missing tokens get 401 `{ error: "unauthorized" }`. When the
+//   env var is unset, the server is open — same as before this hardening pass.
+//
+// Body size:
+//   POST bodies are capped at 1 MB by default; override with the positive
+//   integer env `CH_HTTP_MAX_BODY_BYTES`. Oversize bodies get 413.
 //
 // SSE event shapes:
 //   text:               { text: string }
@@ -114,13 +125,109 @@ function sendError(res: ServerResponse, code: number, error: string): void {
 /** In-flight approval requests waiting for a user response. */
 const pendingApprovals = new Map<string, { resolve: (decision: string) => void; createdAt: number }>();
 
-/** Read the request body as JSON. */
-async function readJson<T>(req: IncomingMessage): Promise<T> {
-  const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
-  const text = Buffer.concat(chunks).toString("utf-8");
-  if (!text) throw new Error("empty body");
-  return JSON.parse(text) as T;
+/** Default body cap. The runtime can tighten this via CH_HTTP_MAX_BODY_BYTES. */
+const DEFAULT_MAX_BODY_BYTES = 1_048_576; // 1 MB
+
+/** Resolved at module load — the env value is fixed for the lifetime of
+ *  the server process. Re-reading on every request would let a malicious
+ *  client re-grow the cap, so we cache it. */
+function resolveMaxBodyBytes(): number {
+  const raw = process.env.CH_HTTP_MAX_BODY_BYTES;
+  if (!raw) return DEFAULT_MAX_BODY_BYTES;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    log.warn("CH_HTTP_MAX_BODY_BYTES is not a positive integer; using default " + DEFAULT_MAX_BODY_BYTES);
+    return DEFAULT_MAX_BODY_BYTES;
+  }
+  return n;
+}
+const MAX_BODY_BYTES = resolveMaxBodyBytes();
+
+/** Distinct error class so the route handler can map "body too large"
+ *  to a 413 instead of a generic 500. */
+class BodyTooLargeError extends Error {
+  constructor(public limit: number) {
+    super(`body too large (limit: ${limit} bytes)`);
+    this.name = "BodyTooLargeError";
+  }
+}
+
+/** Read the request body as JSON, capped at `limit` bytes (default = the
+ *  env-resolved max). Stops accumulating as soon as the cap is hit and
+ *  throws a BodyTooLargeError so the caller can return 413. */
+async function readJson<T>(req: IncomingMessage, limit: number = MAX_BODY_BYTES): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    req.on("data", (c: Buffer) => {
+      total += c.length;
+      if (total > limit) {
+        // Stop accumulating. We can't reject yet because we're inside
+        // the data callback; the 'end' / 'close' below will see the
+        // oversize flag and reject.
+        chunks.length = 0;
+        chunks.push(Buffer.from("")); // placeholder, length not counted
+        (req as IncomingMessage & { _chOversize?: boolean })._chOversize = true;
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if ((req as IncomingMessage & { _chOversize?: boolean })._chOversize) {
+        reject(new BodyTooLargeError(limit));
+        return;
+      }
+      const text = Buffer.concat(chunks).toString("utf-8");
+      if (!text) { reject(new Error("empty body")); return; }
+      try { resolve(JSON.parse(text) as T); } catch (e) { reject(e as Error); }
+    });
+    req.on("error", (e) => reject(e));
+    req.on("close", () => {
+      // If we never got 'end' (e.g. client disconnect mid-body), reject
+      // with a body-too-large if the flag is set, else a generic abort.
+      if ((req as IncomingMessage & { _chOversize?: boolean })._chOversize) {
+        reject(new BodyTooLargeError(limit));
+      }
+    });
+  });
+}
+
+/** Bearer-token check. Opt-in: when CH_HTTP_TOKEN is unset, returns
+ *  `{ ok: true }` for every request (backwards compat). When set, only
+ *  requests carrying `Authorization: Bearer <CH_HTTP_TOKEN>` pass.
+ *  Never echoes the configured token in the error — the response is
+ *  always `{ error: "unauthorized" }` so a misconfigured client can't
+ *  use the error body to recover the secret. */
+function authenticate(req: IncomingMessage): { ok: true } | { ok: false, reason: string } {
+  const expected = process.env.CH_HTTP_TOKEN;
+  if (!expected) return { ok: true };
+  const header = req.headers.authorization;
+  if (!header || typeof header !== "string") {
+    return { ok: false, reason: "missing Authorization header" };
+  }
+  const match = /^Bearer\s+(.+)$/.exec(header);
+  if (!match) return { ok: false, reason: "malformed Authorization header" };
+  // Constant-time compare so a timing oracle can't be used to brute-force
+  // the token. The lengths are likely different anyway but defense in depth.
+  const got = match[1]!;
+  if (got.length !== expected.length) return { ok: false, reason: "token mismatch" };
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) {
+    diff |= expected.charCodeAt(i) ^ got.charCodeAt(i);
+  }
+  if (diff !== 0) return { ok: false, reason: "token mismatch" };
+  return { ok: true };
+}
+
+/** Wire the IncomingMessage's TCP close / legacy "aborted" events into
+ *  an AbortController. Returns the controller so the caller can pass
+ *  `controller.signal` into the agent loop or sub-agent spawn. */
+function abortOnDisconnect(req: IncomingMessage): AbortController {
+  const ac = new AbortController();
+  const fire = () => { if (!ac.signal.aborted) ac.abort(); };
+  req.on("close", fire);
+  req.on("aborted", fire);
+  return ac;
 }
 
 /** Format an SSE event. */
@@ -137,6 +244,28 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
 
     const url = new URL(req.url, "http://" + (req.headers.host ?? "localhost"));
     const path = url.pathname;
+
+    // Liveness probe — always public. Runs before auth so health checks
+    // (k8s, load balancers, smoke tests) don't need the bearer token.
+    if (req.method === "GET" && path === "/v1/health") {
+      sendJson(res, 200, { ok: true, uptime: process.uptime(), version: "0.2.2" });
+      return;
+    }
+
+    // Bearer-token gate (opt-in via CH_HTTP_TOKEN). Applied to every
+    // other /v1/* request; static assets (/, /styles.css, /app.js) are
+    // public so the web UI works without a token. OPTIONS is already
+    // handled above and never reaches this point.
+    if (path.startsWith("/v1/")) {
+      const auth = authenticate(req);
+      if (!auth.ok) {
+        // Generic 401 — never echo the configured token, the supplied
+        // token, or any reason that would help an attacker probe.
+        log.warn("rejected unauthorized request to " + path);
+        sendError(res, 401, "unauthorized");
+        return;
+      }
+    }
 
     try {
       // ---- Web UI ----
@@ -548,7 +677,9 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
       if (req.method === "POST" && path === "/v1/chat") {
         const body = await readJson<{ prompt: string }>(req);
         if (!body.prompt) { sendError(res, 400, "missing prompt"); return; }
-        const result = await runOneChat(runtime, body.prompt);
+        const ac = abortOnDisconnect(req);
+        const result = await runOneChat(runtime, body.prompt, ac.signal);
+        if (ac.signal.aborted) { return; /* client gone, nothing to send */ }
         sendJson(res, 200, result);
         return;
       }
@@ -558,14 +689,16 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
           attachments?: Array<{ type?: string; url: string; mimeType?: string }>;
         }>(req);
         if (!body.prompt) { sendError(res, 400, "missing prompt"); return; }
-        await streamChat(runtime, body.prompt, res, { attachments: body.attachments });
+        const ac = abortOnDisconnect(req);
+        await streamChat(runtime, body.prompt, res, { attachments: body.attachments, signal: ac.signal });
         return;
       }
       if (req.method === "POST" && path === "/v1/spawn") {
         const body = await readJson<{ agent: string; prompt: string }>(req);
         if (!body.agent || !body.prompt) { sendError(res, 400, "agent and prompt required"); return; }
-        const ac = new AbortController();
+        const ac = abortOnDisconnect(req);
         const r = await runtime.subagents.spawn({ agent: body.agent, prompt: body.prompt, cwd: process.cwd(), signal: ac.signal });
+        if (ac.signal.aborted) { return; /* client gone, nothing to send */ }
         sendJson(res, 200, r);
         return;
       }
@@ -599,6 +732,10 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
       sendError(res, 404, "not found: " + path);
     } catch (e) {
       const err = e as Error;
+      if (err instanceof BodyTooLargeError) {
+        sendError(res, 413, err.message);
+        return;
+      }
       log.error("server error", err);
       sendError(res, 500, err.message ?? "internal error");
     }
@@ -637,7 +774,7 @@ function serveStatic(res: ServerResponse, file: string): void {
   res.end(content);
 }
 
-async function runOneChat(runtime: HarnessRuntime, prompt: string) {
+async function runOneChat(runtime: HarnessRuntime, prompt: string, signal?: AbortSignal) {
   const slash = tryParseSlash(prompt);
   if (slash) {
     const cmd = BUILTIN_REGISTRY.get(slash.name);
@@ -657,9 +794,13 @@ async function runOneChat(runtime: HarnessRuntime, prompt: string) {
     provider, model,
     system: await runtime.buildSystemPrompt(),
     messages, tools: runtime.tools, cwd: process.cwd(),
-    signal: new AbortController().signal,
+    signal: signal ?? new AbortController().signal,
     limits: { ...DEFAULT_LIMITS },
   });
+  // Don't append the assistant turn if the client has already gone away —
+  // the response is dropped on the floor anyway, and an empty "user + orphan
+  // assistant" pair pollutes the session for the next run.
+  if (signal?.aborted) return { text: result.final.content, usage: result.usage, steps: result.steps };
   await session.append({ kind: "message", message: result.final });
   return { text: result.final.content, usage: result.usage, steps: result.steps };
 }
@@ -668,7 +809,7 @@ async function streamChat(
   runtime: HarnessRuntime,
   prompt: string,
   res: ServerResponse,
-  opts: { attachments?: Array<{ type?: string; url: string; mimeType?: string }> } = {},
+  opts: { attachments?: Array<{ type?: string; url: string; mimeType?: string }>; signal?: AbortSignal } = {},
 ) {
   setCors(res);
   res.writeHead(200, {
@@ -743,7 +884,7 @@ async function streamChat(
       provider, model,
       system: await runtime.buildSystemPrompt(),
       messages, tools: runtime.tools, cwd: process.cwd(),
-      signal: new AbortController().signal,
+      signal: opts.signal ?? new AbortController().signal,
       limits: { ...DEFAULT_LIMITS },
       failoverChain: runtime.buildFailoverChain(),
       hooks: {
@@ -759,9 +900,18 @@ async function streamChat(
     lastText = result.final.content;
     steps = result.steps;
     if (result.usage) usage = result.usage;
-    await session.append({ kind: "message", message: result.final });
+    // Don't append the assistant turn if the client disconnected mid-run —
+    // the response is already abandoned, and writing an orphan entry
+    // would poison the next reload's session.
+    if (!opts.signal?.aborted) {
+      await session.append({ kind: "message", message: result.final });
+    }
   } catch (e) {
-    res.write(sse("error", { text: (e as Error).message }));
+    if (opts.signal?.aborted) {
+      res.write(sse("error", { text: "aborted" }));
+    } else {
+      res.write(sse("error", { text: (e as Error).message }));
+    }
   }
 
   res.write(sse("done", { text: lastText, usage, steps }));

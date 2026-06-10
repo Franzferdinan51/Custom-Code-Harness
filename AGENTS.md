@@ -2,6 +2,20 @@
 
 A versatile terminal coding harness — multi-provider, extensible, crash-resistant. Web UI + native desktop app.
 
+**HTTP API surface:** `ch serve` exposes a discoverable JSON API under `/v1/`.
+`GET /v1/` is the public discovery index (returns the full route table with
+`auth: "required" | "none"`); `POST /v1/delegations` is the external entry
+point for structured delegations (kind: `agent | goal | async-tool | mcp |
+plugin | api | human-approval | workflow`). Other notable endpoints:
+`GET /v1/health` (public liveness), `POST /v1/chat/stream` (SSE; the first
+event is `event: stream_id` with the id used by `DELETE /v1/chat/stream/:id`
+to cancel), `GET /v1/loops` and `GET /v1/loops/:id` (active + recent
+loops), `GET /v1/delegations/:id` (drill-down). Auth is opt-in via
+`CH_HTTP_TOKEN` (bearer); the index, health probe, and `OPTIONS` preflight
+bypass auth. The full route table is the `ROUTES` array at the top of
+`src/server.ts` and is the single source of truth — adding a new endpoint
+without an entry there fails the `server-expansion` test.
+
 **Design influences (primary):** [OpenCode](https://opencode.ai) (server-first CLI/desktop — `ch serve` + `ch attach` + shared web UI, OpenTUI, `@file` / `!shell` input prefixes, Build/Plan modes) and [OpenClaw](https://openclaw.ai) (onboard auth choices, doctor `--lint --json`, SOUL.md/TOOLS.md workspace context, `/think`/`/verbose`/`/trace` directives, multi-agent routing).
 
 ## Setup commands
@@ -70,3 +84,6 @@ A versatile terminal coding harness — multi-provider, extensible, crash-resist
 - `ch export --format share` redacts `sk-*` / `sk-ant-*` / `xai-*` / `ghp_*` / `AKIA*` / `AIza*` / PEM blocks before writing JSONL
 - Electron desktop uses `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false` — no Node in the renderer
 - Off-site links in the desktop app open in the system browser, not in-app
+- **`ch serve` hardening env vars** (see `src/server.ts`):
+  - `CH_HTTP_TOKEN` — when set, every `/v1/*` request (except `OPTIONS` preflight and `GET /v1/health`) must include `Authorization: Bearer <CH_HTTP_TOKEN>`. Unset = open server (backwards compat). Token compare is constant-time; 401s never echo the token.
+  - `CH_HTTP_MAX_BODY_BYTES` — positive integer cap on POST bodies (default 1 MB). Oversize bodies get 413.

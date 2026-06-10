@@ -168,6 +168,10 @@ on the audit's findings.
 
 **Target files:** NEW `docs/agnt-workflow-audit.md`.
 
+DONE: see `docs/agnt-workflow-audit.md` (Phase 3 T3 research shipped; the
+implementation port remains out of scope and lands as
+`### D-WORKFLOW-IMPL — Workflow real port` in a Phase 3.5/4 follow-up).
+
 **Estimated size:** **S** for the audit doc itself (~150 LOC of
 markdown), but the **work** is reading 1-2k LOC of agnt-gg source
 end-to-end and synthesizing. Realistic 1-2 days.

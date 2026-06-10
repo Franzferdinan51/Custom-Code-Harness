@@ -51,6 +51,11 @@ export const paths = {
    *  to disk on every state change so a kill mid-run can be replayed
    *  on the next startup. See `AsyncToolQueueStore`. */
   get asyncToolQueue() { return join(home(), "async-tool-queue.json"); },
+  /** On-disk cache for the 4th memory layer's vector embeddings.
+   *  Keyed by line number (raw notes) or `lesson:N` (lessons), so
+   *  re-indexing only re-embeds new lines. See
+   *  `src/agent/memory-vector.ts`. */
+  get memoryEmbeddingsFile() { return join(home(), "memory", "MEMORY.embeddings.json"); },
 } as const;
 
 export function ensurePaths(): void {

@@ -5,6 +5,77 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Phase 3 (T2: vector memory layer)
+
+The 3-layer `MemoryLayerStore` gains a 4th layer — a brute-force
+cosine ANN index fused with BM25 via reciprocal-rank fusion
+(RRF). Embeddings are cached on disk and the embedder defaults to
+a deterministic hash-based pseudo-embedding so the path is
+runnable in tests and minimal installs.
+
+- **feat(memory): 4th vector layer + RRF fusion**
+  (`src/agent/memory-vector.ts`, `src/agent/memory-layers.ts`,
+  `src/config/paths.ts`, `src/__tests__/memory-vector.test.ts`,
+  `src/__tests__/memory-layers.test.ts`,
+  `docs/phase3.md`): closes the
+  Phase 1 `TODO(phase-1)` in `src/agent/memory-layers.ts` and
+  the recall-quality pre-step the D-INSIGHT deferral was
+  waiting on.
+
+  1. **`src/agent/memory-vector.ts`** — the new module:
+     `VectorIndex` (add / search / serialize / load),
+     `embedText()` (deterministic hash fallback that derives a
+     `Float32Array(64)` from `crypto.createHash("sha256")` of
+     the text), `embedTextWithProvider()` (provider hook with
+     hash fallback), `cosineSimilarity()`, `loadOrBuildIndex()`
+     (re-uses the on-disk cache keyed by line number, re-embeds
+     only changed text), and the pure `reciprocalRankFusion()`
+     helper (Cormack et al. 2009, `k0 = 60` default). Vectors
+     are typed `Float32Array` so the cosine loop is
+     allocation-free in the hot path.
+  2. **`MemoryLayerStore.search()`** runs BM25 over the full
+     corpus (notes + lessons), then a brute-force cosine
+     search over the same source list, then fuses the two
+     ranked lists with RRF. RRF ties are broken by BM25 rank
+     so the existing dense-match BM25 tests stay green
+     unchanged. The 3-layer public API stays the same;
+     `searchLessons()` is unchanged; legacy substring fallback
+     is unchanged. The cache writes through
+     `$CH_HOME/memory/MEMORY.embeddings.json` (atomic tmp +
+     rename).
+  3. **`paths.memoryEmbeddingsFile`** new helper on
+     `src/config/paths.ts` — joins `$CH_HOME/memory/` with
+     `MEMORY.embeddings.json`.
+  4. **Tests** (`src/__tests__/memory-vector.test.ts`,
+     16 new tests): cosine on known vectors, hashEmbed
+     determinism + content-sensitivity, `VectorIndex` add /
+     search / serialize round-trip, brute-force ranking
+     matches argmax on a small corpus, RRF on two synthetic
+     lists with one overlap + one unique each, RRF on empty /
+     single-element input, RRF rejects non-positive `k0`,
+     `loadOrBuildIndex` writes the cache on a miss and reuses
+     on a hit, `loadOrBuildIndex` re-embeds on changed text,
+     `loadOrBuildIndex` rebuilds on a corrupt cache file, and
+     `embeddingsFilePath()` resolves correctly.
+  5. **Tests** (`src/__tests__/memory-layers.test.ts`,
+     3 new tests): fused `search()` recall is no worse than
+     BM25 alone (≥1 of fused top-3 overlaps BM25 top-3 on a
+     known corpus), fused `search()` is deterministically
+     sorted by RRF score, and the embeddings cache file is
+     created on the first `search()`.
+
+  Net new tests: 19. The 3-layer test suite in
+  `src/__tests__/memory-layers.test.ts` stays green unchanged
+  (every pre-existing assertion still holds with the fused
+  default — confirmed by full `npm test` pass at 545 / 545 / 0
+  fail). `npm run typecheck` is clean.
+
+  Resolves the Phase 1 `TODO(phase-1)` in
+  `src/agent/memory-layers.ts`; clears the "need recall
+  quality" precondition the D-INSIGHT deferral was waiting
+  on. Follow-up tracks can wire a real embedding endpoint via
+  `embedTextWithProvider()` without touching the call site.
+
 ### Fixed
 
 - **Project detection glob bug** (`src/project/init.ts`): the

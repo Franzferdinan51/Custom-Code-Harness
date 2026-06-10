@@ -1,4 +1,5 @@
-// 3-layer memory orchestrator.
+// 3-layer memory orchestrator (+ a 4th vector layer behind the
+// same `search()`).
 //
 //   Layer 1 — RAW NOTES     append-only, line-numbered, same shape
 //                          as the v1 MEMORY.md (timestamped bullets).
@@ -11,6 +12,15 @@
 //                          on read, the store is in legacy mode and
 //                          search() falls back to substring match
 //                          over RAW ONLY (no crash, no data loss).
+//   Layer 4 — VECTOR       embeddings (Float32Array) of every line
+//                          in MEMORY.md + the lessons mirror, scored
+//                          by cosine similarity, then fused with the
+//                          BM25 ranking via reciprocal-rank fusion.
+//                          Embeddings are cached on disk at
+//                          $CH_HOME/memory/MEMORY.embeddings.json,
+//                          keyed by line number for notes and by
+//                          `lesson:N` index for lessons, so
+//                          re-indexing only re-embeds new lines.
 //
 // File layout on disk (single MEMORY.md):
 //
@@ -24,18 +34,25 @@
 //   - [2026-06-08T12:36:00Z] always read README before refactor
 //   - [2026-06-08T12:37:00Z] tokio mpsc::Sender::send returns Err on closed channel
 //
-// Vector/embedding-based recall is intentionally out of scope.
-// TODO(phase-1): add a vector layer behind the same MemoryStore
-// interface — likely an ANN index keyed by the existing Bm25Hit
-// docIds, ranked on cosine similarity, then fused with BM25 via
-// reciprocal-rank fusion. The file layout and APIs are designed
-// to accept a 4th layer without refactor.
+// v1 of the 4th layer is brute-force cosine over the on-disk
+// corpus; the corpus is small (tens of MB at most) so the loop is
+// fine. The embeddings themselves default to a deterministic
+// hash-based pseudo-embedding (see `src/agent/memory-vector.ts`)
+// so the code path is runnable in tests and minimal installs
+// without a network call. A provider hook is exposed for callers
+// that want to wire a real embedding endpoint.
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../config/paths.js";
 import { log } from "../util/logger.js";
 import { Bm25Index, type Bm25Hit } from "../util/bm25.js";
+import {
+  embedText,
+  loadOrBuildIndex,
+  reciprocalRankFusion,
+  type RankedItem,
+} from "./memory-vector.js";
 
 /** Marker that separates the raw notes block from the lessons block. */
 export const LESSONS_HEADER = "## LESSONS";
@@ -238,10 +255,13 @@ export class MemoryLayerStore {
   }
 
   /**
-   * BM25 search across RAW + LESSONS, labeled with `note:` /
-   * `lesson:` prefixes. If the file is in legacy mode (no
-   * `## LESSONS` section), falls back to case-insensitive
-   * substring search on the raw block only.
+   * BM25 + VECTOR search across RAW + LESSONS, fused via
+   * reciprocal-rank fusion. Labeled with `note:` / `lesson:`
+   * prefixes the same way the 3-layer search was. If the file is
+   * in legacy mode (no `## LESSONS` section), falls back to
+   * case-insensitive substring search on the raw block only —
+   * the 4th layer is not active in legacy mode because we don't
+   * have a curated structure to embed.
    */
   async search(query: string, k: number = DEFAULT_TOP_K): Promise<string> {
     const text = this.read();
@@ -256,38 +276,108 @@ export class MemoryLayerStore {
     const noteLines = parseRawNotes(raw);
     const lessonEntries = parseLessons(lessons);
 
-    // Build a single BM25 corpus: notes first, then lessons. We
-    // remember the boundary so we can label the hit.
-    const corpus: string[] = [];
-    for (const n of noteLines) corpus.push(n.text);
-    for (const l of lessonEntries) corpus.push(renderLessonLine(l));
+    if (noteLines.length === 0 && lessonEntries.length === 0) return "";
 
-    if (corpus.length === 0) return "";
+    // Build a single source list shared by the BM25 corpus and the
+    // vector index. docId is the stable key both layers agree on:
+    //   raw note   → line number as a string
+    //   lesson     → `lesson:<index>` (lesson block line numbers
+    //                shift as raw notes grow, so we use a stable
+    //                position in the lessons array)
+    const sources: { docId: string; line: number; text: string }[] = [];
+    for (const n of noteLines) sources.push({ docId: String(n.line), line: n.line, text: n.text });
+    for (let li = 0; li < lessonEntries.length; li++) {
+      const l = lessonEntries[li];
+      if (!l) continue;
+      sources.push({ docId: `lesson:${li}`, line: -1, text: renderLessonLine(l) });
+    }
+
+    // Layer 2 — BM25 over the full corpus.
+    const corpus = sources.map((s) => s.text);
     const idx = new Bm25Index(corpus);
-    const hits: MemoryHit[] = [];
+    type Bm25Tagged = { docId: string; line: number; layer: "note" | "lesson"; display: string; score: number };
+    const bm25Hits: Bm25Tagged[] = [];
     for (const h of idx.search(query, k)) {
-      if (h.docId < noteLines.length) {
-        const note = noteLines[h.docId]!;
-        hits.push({
-          line: note.line,
-          layer: "note",
-          display: "note: " + note.text,
-          score: h.score,
-        });
-      } else {
-        const lessonIdx = h.docId - noteLines.length;
-        const lesson = lessonEntries[lessonIdx];
-        if (lesson) {
-          hits.push({
-            line: -1, // lessons aren't addressable by raw file line
-            layer: "lesson",
-            display: "lesson: " + renderLessonLine(lesson),
-            score: h.score,
-          });
-        }
+      const src = sources[h.docId];
+      if (!src) continue;
+      const isLesson = src.docId.startsWith("lesson:");
+      bm25Hits.push({
+        docId: src.docId,
+        line: src.line,
+        layer: isLesson ? "lesson" : "note",
+        display: (isLesson ? "lesson: " : "note: ") + src.text,
+        score: h.score,
+      });
+    }
+    // Record the BM25 rank of every docId (1-indexed) for the RRF
+    // list. Items not in BM25's top-k won't have a rank — that's
+    // fine, they fall through the vector-only path.
+    const bm25RankByDocId = new Map<string, number>();
+    bm25Hits.forEach((h, i) => bm25RankByDocId.set(h.docId, i + 1));
+
+    // Layer 4 — VECTOR. Build (or load from cache) and run a
+    // brute-force cosine search.
+    const { index: vectorIndex } = await loadOrBuildIndex(sources);
+    const queryVec = await embedText(query);
+    const vecHits = vectorIndex.search(queryVec, k);
+
+    // Build the two ranked lists RRF consumes. Order is the
+    // caller's notion of "rank 1 first".
+    const bm25List: RankedItem[] = bm25Hits.map((h) => ({ docId: h.docId, line: h.line }));
+    const vecList: RankedItem[] = vecHits.map((h) => ({ docId: h.docId, line: h.line }));
+    const fused = reciprocalRankFusion([bm25List, vecList]);
+
+    // Build a docId → {line, layer, display} lookup so we can
+    // render fused hits with the same `note:` / `lesson:`
+    // formatting the 3-layer search used. BM25 hits come first
+    // because their display strings are already built; vector-only
+    // hits are filled in from the source list as a fallback.
+    const infoByDocId = new Map<string, { line: number; layer: "note" | "lesson"; display: string }>();
+    for (const h of bm25Hits) {
+      infoByDocId.set(h.docId, { line: h.line, layer: h.layer, display: h.display });
+    }
+    for (const v of vecHits) {
+      if (infoByDocId.has(v.docId)) continue;
+      const src = sources.find((s) => s.docId === v.docId);
+      if (!src) continue;
+      const isLesson = src.docId.startsWith("lesson:");
+      infoByDocId.set(v.docId, {
+        line: src.line,
+        layer: isLesson ? "lesson" : "note",
+        display: (isLesson ? "lesson: " : "note: ") + src.text,
+      });
+    }
+
+    // Render the fused list, capping at `k`. Tiebreak by BM25
+    // rank so the BM25 best hit wins on RRF ties — keeps the
+    // existing dense-match test stable and ensures adding the 4th
+    // layer never pushes a strictly-better BM25 hit out of the
+    // top-3. Items with no BM25 rank (vector-only) sort last.
+    const final: MemoryHit[] = [];
+    const sorted = fused.slice().sort((a, b) => {
+      const dr = b.rrf - a.rrf;
+      if (dr !== 0) return dr;
+      const ra = bm25RankByDocId.get(a.docId) ?? Number.POSITIVE_INFINITY;
+      const rb = bm25RankByDocId.get(b.docId) ?? Number.POSITIVE_INFINITY;
+      if (ra !== rb) return ra - rb;
+      return a.docId.localeCompare(b.docId);
+    });
+    for (const f of sorted) {
+      if (final.length >= k) break;
+      const info = infoByDocId.get(f.docId);
+      if (!info) continue;
+      final.push({ line: info.line, layer: info.layer, display: info.display, score: f.rrf });
+    }
+    // Defensive: if some RRF hits didn't render (shouldn't happen
+    // with a clean cache), fall back to BM25-only so the caller
+    // still gets a sensible result.
+    if (final.length === 0) {
+      for (const h of bm25Hits) {
+        if (final.length >= k) break;
+        final.push({ line: h.line, layer: h.layer, display: h.display, score: h.score });
       }
     }
-    return hits.map(hitToString).join("\n");
+    return final.map(hitToString).join("\n");
   }
 
   /** BM25 hits restricted to the LESSONS layer. */

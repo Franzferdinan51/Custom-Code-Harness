@@ -273,6 +273,18 @@ export interface GoalRecord {
    *  did not pass" failures. The runtime surfaces this in the CLI
    *  status output. */
   lastError?: string;
+  // ---------- Phase 3 additions (T5: skills forwarding) ----------
+  /**
+   * Skills allowlist inherited from the parent `GoalDelegation`.
+   * The `DelegationManager.runGoalKind` reads this off the work
+   * it received and stamps it on the new record so the
+   * `onGoalEnter("executing")` hook (which dispatches the
+   * per-iteration sub-delegation) can thread the same list to
+   * its `submit()` payload. Absent on goals that didn't set
+   * `skills` on the originating work — backwards compat: v1
+   * / v2 records predate the field and load fine without it.
+   */
+  skills?: string[];
 }
 
 interface PersistedShapeV1 {
@@ -489,6 +501,15 @@ export class GoalStore {
     providerId?: string;
     successCriteria?: SuccessCriteria;
     parentGoalId?: string;
+    /**
+     * Skills allowlist to stamp on the new record. Forwarded
+     * from the parent `GoalDelegation.skills` by
+     * `DelegationManager.runGoalKind` so the
+     * `onGoalEnter("executing")` sub-spawn can inherit it.
+     * Optional — absent on goal records that don't need an
+     * allowlist (v1 / v2 records load fine without it).
+     */
+    skills?: string[];
   }): GoalRecord {
     const now = Date.now();
     const rec: GoalRecord = {
@@ -510,6 +531,7 @@ export class GoalStore {
       // record is "owned by no mission" — callers that need
       // a real mission can pass it explicitly.
       mission: this.mission === "<direct>" ? undefined : this.mission,
+      ...(input.skills !== undefined ? { skills: input.skills } : {}),
     };
     this.goals.push(rec);
     this.flush();
@@ -736,7 +758,23 @@ export type GoalRunAgentFn = (
    *  the underlying LLM call. Optional — the CLI's
    *  `ch goal` flow uses its own AbortController. */
   signal?: AbortSignal,
-) => Promise<{ content: string; steps: number }>;
+) => Promise<{
+  content: string;
+  steps: number;
+  /**
+   * Token usage from the underlying `runAgent` call. Forwarded
+   * by `DelegationManager.runGoalKind` into the per-goal
+   * `CostTracker` so the `maxCostUsd` cap can fire across the
+   * state machine's iterations. Optional — runners that don't
+   * track usage (test stubs, custom integrations) simply omit
+   * it; the manager then records zero for that call and the
+   * cap is a no-op for the run. The shape matches
+   * `AgentRunResult.usage` from `src/agent/loop.ts` so the
+   * `HarnessRuntime.buildRunGoalAgent()` closure can plumb
+   * `result.usage` straight through.
+   */
+  usage?: { inputTokens: number; outputTokens: number };
+}>;
 
 export interface RunGoalOptions {
   store: GoalStore;

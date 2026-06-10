@@ -102,6 +102,17 @@ export interface DelegationBase {
    * assertion — the SubAgentManager passes the list through
    * and the actual filter on the sub-agent's services layer
    * is wired in a follow-up that takes the SkillRegistry.
+   *
+   * For the `goal` kind (Phase 3 T5), the same field is
+   * stamped on the new `GoalRecord` (`record.skills`) and
+   * inherited by sub-delegations submitted from
+   * `onGoalEnter("executing")`. A parent goal with
+   * `skills: ["http", "search"]` therefore spawns a sub-goal
+   * that exposes the same allowlist to its runner, unless the
+   * sub-delegation explicitly overrides `skills` on its own
+   * work. This is the forward-side of Q6 (skills allowlist on
+   * the goal kind) — the field is the source of truth, and
+   * every nested `submit()` payload threads it by default.
    */
   skills?: string[];
 }
@@ -251,7 +262,15 @@ export type Phase2Status = "completed" | "failed";
 
 export type DelegationResult =
   | { kind: "agent"; text: string; usage: { inputTokens: number; outputTokens: number }; steps: number; sessionId?: string; status: SubAgentResult["status"]; error?: string }
-  | { kind: "goal"; goalId: string; status: GoalState; finalText?: string; iterations: number }
+  | { kind: "goal"; goalId: string; status: GoalState; finalText?: string; iterations: number; /** Optional error message. Set when the goal was
+   *  aborted for a structured reason — e.g. the `maxCostUsd`
+   *  cap fired and the runner threw to break the state
+   *  machine. The same string is also recorded on
+   *  `GoalRecord.lastError` so it survives across the
+   *  on-disk store. Absent on `done` / normal `failed`
+   *  outcomes — the goal's evaluations + status carry the
+   *  reason for those. */
+  error?: string }
   | { kind: "async_tool"; toolName: string; iterations: number; result: unknown }
   | { kind: "human_approval"; decision: "allow" | "deny"; reason?: string }
   | { kind: "workflow"; workflowId: string; status: "stub" }
@@ -736,7 +755,21 @@ export class DelegationManager {
    *  integration point the port plan requires. The hook only
    *  fires once per goal (first `executing` entry per
    *  `currentIteration` is fine — the runner only emits
-   *  `executing` once per iteration). */
+   *  `executing` once per iteration).
+   *
+   *  **Phase 3 T5 (Q6):** the `skills` allowlist stamped on
+   *  the goal record (which `runGoalKind` forwards from the
+   *  parent `GoalDelegation.skills`) is threaded into the
+   *  sub-delegation's `submit()` payload. This means a parent
+   *  goal that sets `skills: ["http", "search"]` produces a
+   *  sub-goal sub-delegation with the same allowlist, which
+   *  the `agent` kind's runner then forwards into
+   *  `SubAgentManager.spawn({ skills })` — closing the
+   *  forward-side of Q6 (skills allowlist on the goal kind).
+   *  The sub-delegation can still override `skills` by
+   *  passing its own value; when the parent's `skills` is
+   *  undefined (backwards compat), the sub-delegation's
+   *  `skills` field is also undefined. */
   private onGoalEnter(state: GoalState, goal: GoalRecord): void {
     if (state !== "executing") return;
     // Avoid re-submitting if we already submitted for this goal's
@@ -754,6 +787,14 @@ export class DelegationManager {
       parentId: goal.parentGoalId ?? undefined,
       cwd: this.deps.cwd,
       successCriteria: goal.successCriteria,
+      // Phase 3 T5: forward the skills allowlist. Only
+      // include the field when the parent set it — an
+      // explicit `undefined` would still satisfy the
+      // `skills?: string[]` shape, but the discriminated
+      // union doesn't need the noise and existing test
+      // snapshots (which read the work object back) stay
+      // cleaner.
+      ...(goal.skills !== undefined ? { skills: goal.skills } : {}),
     });
     // Detach: the goal is its own owner. The run is observable
     // but the goal's lifecycle drives the run.
@@ -888,6 +929,11 @@ export class DelegationManager {
       return { value: { kind: "goal", goalId: "", status: "failed", iterations: 0 }, cancelled: false };
     }
 
+    // Phase 3 T5: forward the `skills` allowlist onto the new
+    // record. `onGoalEnter("executing")` reads it back when it
+    // dispatches the per-iteration sub-delegation, so the
+    // forward-side of Q6 (skills allowlist on the goal kind)
+    // is closed at the goal store boundary.
     const goal = this.deps.goalStore.add({
       objective: work.objective,
       maxSteps: work.maxIterations ?? 8,
@@ -895,6 +941,7 @@ export class DelegationManager {
       providerId: work.providerId,
       successCriteria: work.successCriteria,
       parentGoalId: work.parentGoalId,
+      ...(work.skills !== undefined ? { skills: work.skills } : {}),
     });
     this.deps.goalStore.markInProgress(goal.id);
     emit({ kind: "log", line: "[goal] created " + goal.id + " — running state machine" });
@@ -917,12 +964,78 @@ export class DelegationManager {
     // the underlying agent loop. The state machine is driven
     // for real, and the goal's `loopStatus` reaches `done` /
     // `re-planning` / `failed` based on the model's outputs.
-    // The skills allowlist (when set on the work) is forwarded
-    // to the runner so the planner / spawned subagents only see
-    // a known toolset.
+    //
+    // Phase 3 T5 (maxCostUsd cap): wrap the runner so each
+    // call's `usage` (when the runner returns it — see
+    // `GoalRunAgentFn` in `src/agent/goals.ts`) is recorded
+    // on a per-delegation `CostTracker` and the `maxCostUsd`
+    // cap is checked after every phase. When the cap fires
+    // the goal record is stamped with `status: "failed"` +
+    // `lastError: "maxCostUsd cap exceeded: $X.XX"`, the
+    // state machine is broken via a thrown error, and the
+    // manager surfaces the same message on the delegation's
+    // `error` field. When the runner doesn't return `usage`
+    // (test stubs, custom integrations) the cap is a no-op
+    // — zero cost is recorded, zero cost can exceed the cap.
+    // The tracker is the runtime's own `CostTracker` when
+    // injected, otherwise a per-delegation tracker that's
+    // discarded after the run (same pattern as `agent` kind).
+    const costModel = work.model
+      ?? this.deps.settings.defaultModel
+      ?? "default";
+    const costProvider = work.providerId
+      ?? this.deps.settings.defaultProvider
+      ?? "unknown";
+    const tracker = this.deps.costTracker ?? new CostTracker();
+    let capError: string | null = null;
     const runGoalAgent: GoalRunAgentFn = async (phase, ctx, sig) => {
       emit({ kind: "log", line: "[goal] phase=" + phase + " iteration=" + ctx.iteration });
-      return this.deps.runGoalAgent!(phase, ctx, sig);
+      const out = await this.deps.runGoalAgent!(phase, ctx, sig);
+      // Record usage when the runner returns it. Optional —
+      // absence means "no model call was attributed" (e.g. a
+      // test stub). The cost tracker tolerates the omission;
+      // it's the cap check that cares, not the accumulation.
+      if (out.usage) {
+        tracker.record(costModel, costProvider, out.usage.inputTokens, out.usage.outputTokens, "goal");
+      }
+      if (work.maxCostUsd !== undefined && capError === null) {
+        const total = tracker.total().cost;
+        if (total > work.maxCostUsd) {
+          const msg = "maxCostUsd cap exceeded: " + formatUSD(total) + " > " + formatUSD(work.maxCostUsd);
+          capError = msg;
+          emit({ kind: "log", line: "[goal] " + msg });
+          // Mark the goal as failed with the structured
+          // reason. The `update()` call validates the
+          // `loopStatus` transition; from `executing` /
+          // `evaluating` / `re-planning` to `failed` is
+          // legal in the state machine. From a terminal
+          // state it's a no-op (the cap is double-checked
+          // above so we don't recurse).
+          try {
+            this.deps.goalStore.update(goal.id, {
+              status: "failed",
+              lastError: msg,
+              ...(this.deps.goalStore.get(goal.id)?.loopStatus !== "failed"
+                ? { loopStatus: "failed" as GoalState }
+                : {}),
+            });
+          } catch (e) {
+            // The state machine's `update` may reject an
+            // illegal transition (e.g. if the goal is
+            // already in a different state). The cap is
+            // still enforced — the manager just won't
+            // re-stamp the loopStatus. `lastError` is the
+            // primary signal callers look at.
+            log.debug("delegation: goal maxCostUsd — could not stamp loopStatus (" + (e as Error).message + ")");
+          }
+          // Throw to break the state machine out of its
+          // current iteration. The manager's outer
+          // try/catch swallows the error; the capError
+          // string is what the result carries.
+          throw new Error(msg);
+        }
+      }
+      return out;
     };
     const opts: RunGoalOptions = {
       store: this.deps.goalStore,
@@ -950,6 +1063,12 @@ export class DelegationManager {
         status: final?.loopStatus ?? "failed",
         finalText: final?.finalText,
         iterations: final?.currentIteration ?? 0,
+        // Surface the cap-exceeded message (or any other
+        // structured failure reason recorded on the goal
+        // record) on the delegation result. Absent on
+        // normal `done` / `failed` outcomes — the goal's
+        // `evaluations` + `status` carry the reason.
+        ...(capError !== null ? { error: capError } : (final?.lastError ? { error: final.lastError } : {})),
       },
       cancelled: false,
     };

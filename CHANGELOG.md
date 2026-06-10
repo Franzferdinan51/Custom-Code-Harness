@@ -260,6 +260,131 @@ dispatcher stub — it drives the state machine for real.
   enables the `maxCostUsd` cap to actually fire on goal
   delegations end-to-end.
 
+## Unreleased — Phase 3 (T5: goal followups — Q6 skills + maxCostUsd cap)
+
+Two follow-ups on the goal delegation kind, both unblocked
+by the T1 real-path track:
+
+- **feat(delegation): skills allowlist on goal kind (Q6)**
+  (`src/agent/delegation.ts`, `src/agent/goals.ts`,
+  `src/__tests__/delegation.test.ts`): closes the
+  forward-side of Q6 (skills allowlist on `GoalDelegation`).
+  The `DelegationBase.skills` field was already shipped in
+  Phase 2's `feat(delegation): real impls` PR and forwarded
+  to `SubAgentManager.spawn({ skills })` for the `agent`
+  kind, but the `goal` kind's runner didn't pass it
+  through. `runGoalKind` now stamps `work.skills` on the new
+  `GoalRecord` (`goalStore.add({ skills })`) and the
+  `onGoalEnter("executing")` hook reads it back to thread
+  the same allowlist into the sub-delegation's `submit()`
+  payload. A parent goal with `skills: ["http", "search"]`
+  therefore spawns a sub-goal that exposes the same
+  allowlist to its runner, unless the sub-delegation
+  explicitly overrides `skills` on its own work. The
+  `DelegationBase.skills` JSDoc documents the inheritance
+  contract.
+
+  1. **`GoalRecord.skills?: string[]`**
+     (`src/agent/goals.ts`): new optional field, threaded
+     through `GoalStore.add({ skills })`. v1 / v2 records
+     load fine without the field — backwards compat.
+  2. **`runGoalKind` stamps the allowlist**
+     (`src/agent/delegation.ts`): reads `work.skills` and
+     forwards it into the new `GoalRecord` via
+     `goalStore.add({ ... work.skills !== undefined ? { skills } : {} })`.
+  3. **`onGoalEnter("executing")` threads the allowlist**
+     (`src/agent/delegation.ts`): the per-iteration
+     sub-delegation's `submit()` payload now includes
+     `goal.skills` (when set) so the sub-spawn inherits the
+     parent's allowlist. The hook doc explains the
+     forward-side and the override escape hatch.
+  4. **Tests** (`src/__tests__/delegation.test.ts`):
+     three new tests — (a) the onGoalEnter sub-delegation
+     inherits the parent goal's `skills: ["http", "search"]`
+     when the parent sets it; (b) a goal without `skills`
+     produces a sub-delegation with `skills` undefined
+     (backwards compat — no field is set on the work);
+     (c) end-to-end `runGoalKind` path: submitting a goal
+     delegation with `skills` stamps the field on the
+     persisted `GoalRecord`.
+
+- **feat(delegation): maxCostUsd cap on goal kind**
+  (`src/agent/delegation.ts`, `src/agent/goals.ts`,
+  `src/__tests__/delegation.test.ts`): wires Q7 (cost
+  guardrails on goals) for the goal delegation kind.
+  The `agent` kind already enforces `maxCostUsd` via the
+  `CostTracker`; the `goal` kind runs the state machine
+  across multiple `runGoalAgent` calls (planning +
+  executing per iteration, repeated up to `maxIterations`),
+  so the cap needs to fire on the *cumulative* cost.
+  `runGoalKind` now wraps the `runGoalAgent` closure so
+  each call's optional `usage` is recorded on a
+  per-delegation `CostTracker` (or the runtime's shared
+  tracker when injected) and the cap is checked after
+  every phase. When the cap fires the goal record is
+  stamped with `status: "failed"` +
+  `lastError: "maxCostUsd cap exceeded: $X.XX"`, the state
+  machine is broken via a thrown error, and the manager
+  surfaces the same message on the delegation's new
+  optional `error` field.
+
+  1. **`GoalRunAgentFn` return shape**
+     (`src/agent/goals.ts`): the per-call return value
+     gains an optional `usage?: { inputTokens; outputTokens }`
+     field. Runners that don't track usage (test stubs,
+     custom integrations) simply omit it; the manager
+     records zero for that call and the cap is a no-op for
+     the run. The shape matches `AgentRunResult.usage`
+     from `src/agent/loop.ts` so
+     `HarnessRuntime.buildRunGoalAgent()` can plumb
+     `result.usage` straight through with a one-line
+     change (a follow-up to update the production runner
+     lives outside this track).
+  2. **`runGoalKind` cap enforcement**
+     (`src/agent/delegation.ts`): wraps `runGoalAgent` so
+     each call's `usage` is recorded on the
+     `CostTracker`, the cumulative `cost` is checked
+     against `work.maxCostUsd`, and when exceeded the
+     goal record is updated with
+     `{ status: "failed", lastError: msg, loopStatus: "failed" }`
+     and the state machine is broken via `throw`. The
+     outer try/catch (already present in the manager)
+     swallows the throw; the manager reads the goal's
+     final state and surfaces the cap message on the
+     delegation's new `error` field.
+  3. **`DelegationResult` for goal kind**
+     (`src/agent/delegation.ts`): gains an optional
+     `error?: string` field so callers can read the cap
+     message (or any other structured failure reason
+     recorded on the goal's `lastError`) directly from
+     the result, matching the `agent` kind's shape.
+  4. **Tests** (`src/__tests__/delegation.test.ts`):
+     four new tests — (a) cap fires when cumulative
+     cost exceeds it: a stub returning
+     `{500_000 in / 500_000 out}` per call at
+     `gpt-4o-mini` pricing (=$0.375) with a $0.001 cap
+     fails the goal with the expected
+     `maxCostUsd cap exceeded: $X.XX > $Y.YY` message on
+     both the delegation's `error` field and the goal
+     record's `lastError`; (b) no cap, same usage —
+     completes normally, no cap error; (c) high cap
+     ($1.0) — cumulative $0.75 doesn't fire; (d) cap
+     present but stub returns no `usage` — no false
+     cap hit, goal completes normally.
+
+  Net new tests: 7 (3 for skills forwarding + 4 for
+  maxCostUsd cap). Test count moves from 526 → 533;
+  gate stays clean (`typecheck` clean, `build` clean,
+  `bun test` 533 / 533 / 0 fail).
+
+  Closes Q6 (skills allowlist on the goal kind) and Q7
+  (cost guardrails on goals) end-to-end on the
+  delegation path. The follow-up that updates
+  `HarnessRuntime.buildRunGoalAgent()` to plumb
+  `result.usage` through the closure lives in a separate
+  track — without it, the production cap enforcement
+  fires only on runners that explicitly return `usage`.
+
 ## Unreleased — Goals (revert + semantic replan + multi-mission)
 
 Two related changes to the goal lifecycle land in the same release:

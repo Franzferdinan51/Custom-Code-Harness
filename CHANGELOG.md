@@ -5,6 +5,76 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Added — Endpoint expansion
+
+External programs (MCP clients, dashboards, scripts) need a
+discoverable, complete API surface to drive the harness. This pass
+adds ten endpoints on top of the security pass: a discovery index,
+the delegation submit + drill-down, agent / skill / session
+detail endpoints, the loops list + detail, stream cancellation,
+and a tighter error shape contract. Every new endpoint honors the
+`CH_HTTP_TOKEN` bearer gate from the security pass; the discovery
+index and `/v1/health` stay public.
+
+- **`GET /v1/`** — discovery index. Returns
+  `{ name: "codingharness", version, endpoints: Array<{ method,
+  path, description, auth: "required" | "none" }> }`. The endpoint
+  list is generated from a single source-of-truth `ROUTES` table
+  near the top of `src/server.ts`; the new
+  `server-expansion.test.ts` cross-checks that every
+  `if (req.method === ...)` handler in the file has a matching
+  entry, so the index can't drift from reality. Public (no auth),
+  like `/v1/health`.
+- **`POST /v1/delegations`** — submit a new delegation. Body is a
+  discriminated union mirroring `Delegation` in
+  `src/agent/delegation.ts`; valid `kind` values are `agent`,
+  `goal`, `async_tool`, `mcp`, `plugin`, `api`, `human_approval`,
+  `workflow`. The runtime's `DelegationManager.submit()` is called
+  and the response is the handle's first four fields
+  (`id, status, kind, parentId`). For `human_approval` the
+  response is the synchronous `{ approved: boolean }` (the
+  manager resolves once the user responds via
+  `/v1/approval/respond`, or falls back to `defaultDecision` when
+  no `askApproval` is wired). 400 on missing/invalid body.
+- **`GET /v1/delegations/:id`** — drill-down. Same shape as the
+  list entries (`id, kind, status, parentId, parentChain,
+  startedAt, completedAt, createdAt`). 404 if the id is unknown.
+- **`GET /v1/agents/:id`** and **`GET /v1/skills/:id`** — detail
+  endpoints mirroring `ch agents show <name>` and
+  `ch skills show <name>`. Agents return
+  `{ name, description, systemPrompt, tools, model? }`; skills
+  return `{ name, description, body }` (the full SKILL.md
+  contents). 404 if unknown.
+- **`GET /v1/sessions/:id`** and
+  **`GET /v1/sessions/:id/messages`** — session drill-down. The
+  metadata endpoint returns the same shape as the list entries;
+  the messages endpoint returns
+  `{ messages: Array<{ role, content, timestamp? }> }` via
+  `sessionToMessages`. 404 if the id is unknown.
+- **`GET /v1/loops`** and **`GET /v1/loops/:id`** — list active +
+  recent loops (delegations + spawned sub-agents) and drill down
+  into one. The goal kind's response includes the resolved
+  `GoalRecord` summary so dashboards don't need a second
+  round-trip to `/v1/goals`. 404 if the loop id is unknown.
+- **`DELETE /v1/chat/stream/:id`** — abort an in-flight SSE
+  stream. The server mints a stream id when `/v1/chat/stream`
+  starts (returned in the first `event: stream_id` SSE event)
+  and registers its `AbortController` in a server-side map. The
+  DELETE handler looks the controller up, calls `.abort()`, and
+  the existing `abortOnDisconnect(req)` path propagates the
+  signal into `runAgent`. 404 if the id is unknown / the stream
+  already finished.
+- **Error shape consistency** — every JSON-returning endpoint
+  uses `{ error: string }` for failures. `/v1/memory` and
+  `/v1/memory/search` still return `text/plain` on success
+  (external programs that consume the raw MEMORY.md want the
+  text); their error path is JSON.
+- **24 new tests** in `src/__tests__/server-expansion.test.ts`
+  cover the discovery index, every new endpoint, auth-gated
+  401 paths on four of the new routes, the
+  unknown-id-returns-404 contract, the stream cancellation
+  flow, and the error-shape guarantee.
+
 ### Added — Endpoint security
 
 The HTTP API exposed by `ch serve` was hard to use safely from external

@@ -138,6 +138,65 @@ test("detectProject: go.mod drives Go detection", () => {
   } finally { cleanup(d); }
 });
 
+test("detectProject: Gemfile drives Ruby detection + lifts name from .gemspec", () => {
+  // Prior to the fix, this hit two bugs: the Ruby branch was
+  // reached via Gemfile, but the .gemspec discovery used a glob
+  // pattern (`existsSync(cwd + "/*.gemspec")`) which doesn't work
+  // because fs.existsSync doesn't expand globs — it only matches
+  // a literal file named "*.gemspec". The fix switches to a
+  // readdirSync + suffix filter. This test would have failed
+  // before the fix because `name` would have remained the dir
+  // basename instead of being pulled from the gemspec.
+  const d = freshDir("ruby");
+  try {
+    writeFileSync(join(d, "Gemfile"), "source \"https://rubygems.org\"\n\ngem \"rails\"\n");
+    writeFileSync(join(d, "rails_demo.gemspec"), "Gem::Specification.new do |s|\n  s.name        = \"rails_demo\"\n  s.version     = \"0.1.0\"\nend\n");
+    const facts = detectProject(d);
+    assert.equal(facts.stack, "ruby");
+    assert.equal(facts.name, "rails_demo");
+    assert.equal(facts.buildCommand, "bundle install");
+    assert.match(facts.testCommand ?? "", /rspec|rake/);
+  } finally { cleanup(d); }
+});
+
+test("detectProject: Gemfile with no .gemspec falls back to dir basename", () => {
+  const d = freshDir("ruby-nogem");
+  try {
+    writeFileSync(join(d, "Gemfile"), "source \"https://rubygems.org\"\n");
+    const facts = detectProject(d);
+    assert.equal(facts.stack, "ruby");
+    // No .gemspec → name stays as the directory basename. We don't
+    // assert the exact name (mkdtemp produces a random one) — just
+    // that the detection succeeded.
+    assert.ok(facts.name.length > 0);
+  } finally { cleanup(d); }
+});
+
+test("detectProject: .csproj drives .NET detection (regression: glob broken before fix)", () => {
+  // Prior to the fix, the .NET branch was reached via
+  //   existsSync(join(cwd, "*.csproj")) || existsSync(join(cwd, "*.sln"))
+  // which only matches a literal file named "*.csproj" or "*.sln".
+  // The fix uses readdirSync + suffix matching, so a real
+  // "MyApp.csproj" file is now detected.
+  const d = freshDir("dotnet");
+  try {
+    writeFileSync(join(d, "MyApp.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>\n");
+    const facts = detectProject(d);
+    assert.equal(facts.stack, "dotnet");
+    assert.equal(facts.buildCommand, "dotnet build");
+    assert.equal(facts.testCommand, "dotnet test");
+  } finally { cleanup(d); }
+});
+
+test("detectProject: .sln also drives .NET detection", () => {
+  const d = freshDir("dotnet-sln");
+  try {
+    writeFileSync(join(d, "MyApp.sln"), "Microsoft Visual Studio Solution File\n");
+    const facts = detectProject(d);
+    assert.equal(facts.stack, "dotnet");
+  } finally { cleanup(d); }
+});
+
 test("detectProject: README heading fills missing description", () => {
   const d = freshDir("readme");
   try {

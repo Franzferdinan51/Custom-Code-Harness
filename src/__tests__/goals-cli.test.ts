@@ -299,6 +299,54 @@ test("goals-cli: help text mentions the revert subcommand", () => {
   assert.match(help.stdout, /\bgoals\b/);
 });
 
+test("goals-cli: `ch goals show <id>` surfaces loopStatus + iteration + lastError (regression)", () => {
+  // Prior to the fix, `ch goals show <id>` only printed the
+  // top-level status (the "did the agent declare it done" bit).
+  // The inner state-machine state (loopStatus, currentIteration),
+  // the last structured failure reason (lastError), and the
+  // evaluator history (evaluations) were silently dropped — even
+  // though the data was on disk. For a tool that's the source of
+  // truth for "where in the loop is this right now", that's a
+  // silent data-loss bug. The fix adds these fields to
+  // renderGoalDetail (and the matching /goals show slash).
+  const home = mkdtempSync(join(tmpdir(), "ch-goals-cli-show-"));
+  try {
+    // Seed a v2 goal with loopStatus="evaluating",
+    // currentIteration=3, lastError set, and two evaluation runs.
+    const goal: GoalRecord = {
+      id: "goal-cli-show-1",
+      objective: "ship the dashboard",
+      status: "in_progress",
+      loopStatus: "evaluating",
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_100,
+      maxSteps: 8,
+      stepsTaken: 3,
+      currentIteration: 3,
+      lastError: "evaluator did not pass on iter 2",
+      evaluations: [
+        { id: "ev-1", iteration: 1, score: 60, passed: false, feedback: "1/2 criteria met", createdAt: 1_700_000_000_000 },
+        { id: "ev-2", iteration: 2, score: 80, passed: true,  feedback: "2/2 criteria met", createdAt: 1_700_000_000_050 },
+      ],
+    };
+    seedGoalsJson(home, goal);
+
+    // Act: ch goals show <id>
+    const r = runChGoals(home, ["show", "goal-cli-show-1"]);
+    assert.equal(r.status, 0, `show should exit 0 — stderr: ${r.stderr}`);
+
+    // All the previously-missing fields should now be in stdout.
+    assert.match(r.stdout, /loop:\s+evaluating/);
+    assert.match(r.stdout, /iter 3/);
+    assert.match(r.stdout, /lastError:\s+evaluator did not pass on iter 2/);
+    assert.match(r.stdout, /evaluations \(2\):/);
+    assert.match(r.stdout, /iter 1\s+score=60/);
+    assert.match(r.stdout, /iter 2\s+score=80/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("goals-cli: ensure baseline setup actually seeded the file (test isolation sanity)", () => {
   // Cheap invariant: the seedGoalsJson helper above writes a
   // v2 envelope. This test guards against a regression where

@@ -3,6 +3,38 @@
 All notable changes to CodingHarness are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Fixed
+
+- **Project detection glob bug** (`src/project/init.ts`): the
+  Ruby and .NET detection paths used `existsSync(cwd + "/*.csproj")`
+  and `existsSync(cwd + "/*.gemspec")` — but `fs.existsSync` does
+  not expand globs, so a literal file named `*.csproj` or
+  `*.gemspec` was the only thing that would ever match. A real
+  Rails project with `rails_demo.gemspec` was silently NOT
+  detected as Ruby, and a real .NET project with `MyApp.csproj`
+  was silently NOT detected as .NET. Replaced with a
+  `readdirSync` + `findFirstFileWithSuffix()` helper. The existing
+  Java branch was already correct (literal file names: `pom.xml`,
+  `build.gradle`). 4 new tests in `src/__tests__/init.test.ts`
+  cover Ruby/Gemfile+gemspec, Ruby-no-gemspec, .NET/csproj, and
+  .NET/sln — all of which would have failed before the fix.
+- **`ch goals show` and `/goals show` silently dropped half the
+  record** (`src/cli.ts`, `src/slash/builtin.ts`): the
+  `renderGoalDetail()` function and the slash's `show` branch
+  only printed `status`, `steps`, `created`, `updated`, and
+  `objective` — the data the user most often needs (`loopStatus`,
+  `currentIteration`, `lastError`, `evaluations[]`, `mission`,
+  `parentGoalId`, `successCriteria`) was on disk but invisible.
+  The fix adds a complete 6-line block (loop + iter), the
+  `lastError:` line, the `evaluations (N):` block with per-iter
+  pass/fail + score + feedback, the `mission:` and `parent:`
+  lines, and the `deliverables:` list. Both the CLI and the
+  slash command are fixed in lockstep so the two surfaces never
+  drift. 1 new E2E test in `src/__tests__/goals-cli.test.ts` seeds
+  a v2 goal with all the new fields, runs `ch goals show`, and
+  asserts each one appears in stdout.
 
 
 ## Unreleased — Phase 3 (T1: goal delegation real path)

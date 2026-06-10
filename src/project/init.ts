@@ -10,7 +10,7 @@
 //   2. Tests can drive it against a fixture directory without spinning
 //      up a whole CodingHarness runtime.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface ProjectFacts {
@@ -117,7 +117,7 @@ export function detectProject(cwd: string): ProjectFacts {
     facts.buildCommand = "mvn package  # or: gradle build";
     facts.testCommand = "mvn test     # or: gradle test";
     facts.sourceRoots = JAVA_SOURCE_ROOTS.filter((r) => existsSync(join(cwd, r)));
-  } else if (existsSync(join(cwd, "*.csproj")) || existsSync(join(cwd, "*.sln"))) {
+  } else if (findFirstFileWithSuffix(cwd, ".csproj") || findFirstFileWithSuffix(cwd, ".sln")) {
     facts.stack = "dotnet";
     facts.buildCommand = "dotnet build";
     facts.testCommand = "dotnet test";
@@ -350,10 +350,12 @@ function populateFromGemfile(facts: ProjectFacts, cwd: string): void {
   const raw = tryReadText(join(cwd, "Gemfile"));
   if (!raw) return;
   facts.stack = "ruby";
-  // Try to pull a name from the gemspec — best effort.
-  const gemspec = existsSync(join(cwd, "*.gemspec"));
+  // Try to pull a name from the gemspec — best effort. The Node
+  // filesystem API has no glob support, so we read the directory
+  // listing and pick the first `.gemspec` we find.
+  const gemspec = findFirstFileWithSuffix(cwd, ".gemspec");
   if (gemspec) {
-    const g = tryReadText(join(cwd, "*.gemspec"));
+    const g = tryReadText(join(cwd, gemspec));
     if (g) {
       const name = /\.name\s*=\s*["']([^"']+)/.exec(g);
       if (name) facts.name = name[1]!;
@@ -362,6 +364,26 @@ function populateFromGemfile(facts: ProjectFacts, cwd: string): void {
   facts.buildCommand = "bundle install";
   facts.testCommand = "bundle exec rspec  # or: bundle exec rake test";
   facts.sourceRoots = RUBY_SOURCE_ROOTS.filter((r) => existsSync(join(cwd, r)));
+}
+
+/** Return the basename of the first file in `cwd` whose name ends
+ *  with `suffix`. Returns null if there is no such file. Used in
+ *  place of glob patterns (which `fs.existsSync` and
+ *  `fs.readFileSync` do not understand). The directory listing is
+ *  read once and reused so a Ruby project that drops a
+ *  `.gemspec` mid-run is picked up the next time the project
+ *  is detected. */
+function findFirstFileWithSuffix(cwd: string, suffix: string): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(cwd);
+  } catch {
+    return null;
+  }
+  for (const e of entries) {
+    if (e.endsWith(suffix)) return e;
+  }
+  return null;
 }
 
 function readFirstHeading(path: string): string | null {

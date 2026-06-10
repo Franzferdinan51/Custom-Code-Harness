@@ -1815,10 +1815,28 @@ function renderGoalDetail(g: import("./agent/goals.js").GoalRecord): string {
   lines.push("Goal: " + g.id);
   lines.push("  status:     " + g.status);
   lines.push("  steps:      " + g.stepsTaken + "/" + g.maxSteps);
+  lines.push("  loop:       " + g.loopStatus + (g.currentIteration ? " (iter " + g.currentIteration + ")" : ""));
+  if (g.lastError) lines.push("  lastError:  " + g.lastError);
   lines.push("  created:    " + new Date(g.createdAt).toISOString());
   lines.push("  updated:    " + new Date(g.updatedAt).toISOString());
   if (g.model) lines.push("  model:      " + g.model);
   if (g.providerId) lines.push("  provider:   " + g.providerId);
+  if (g.mission) lines.push("  mission:    " + g.mission);
+  if (g.parentGoalId) lines.push("  parent:     " + g.parentGoalId);
+  if (g.successCriteria) {
+    const d = g.successCriteria.deliverables ?? [];
+    if (d.length > 0) {
+      lines.push("  deliverables:");
+      for (const x of d) lines.push("    - " + x);
+    }
+  }
+  if (g.evaluations && g.evaluations.length > 0) {
+    lines.push("  evaluations (" + g.evaluations.length + "):");
+    for (const ev of g.evaluations) {
+      const pass = ev.passed ? "✓" : "✗";
+      lines.push("    " + pass + " iter " + ev.iteration + "  score=" + ev.score + "  " + ev.feedback);
+    }
+  }
   lines.push("  objective:");
   for (const line of g.objective.split("\n")) lines.push("    " + line);
   if (g.finalText) {

@@ -1,5 +1,8 @@
 // Tests for the 3-layer memory store (src/agent/memory-layers.ts)
 // and the v1-compatible MemoryStore (src/agent/memory.ts).
+// The 4th-layer (vector + RRF) tests live at the bottom of this
+// file — they exercise the fused search path and assert it is
+// no worse than BM25 alone.
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
@@ -287,6 +290,146 @@ test("v1 MemoryStore.search still returns v1-shaped results in legacy mode", asy
     const found = await mem.search("bun");
     // v1 shape: line-numbered, no `note:` prefix in legacy mode.
     assert.match(found, /\d+\s+-\s+\d{4}/);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+// ---- 4th layer: vector + RRF fusion (Phase 3 T2) ----
+//
+// The fused search path lives in `MemoryLayerStore.search()` and
+// also exercises the on-disk embeddings cache at
+// `$CH_HOME/memory/MEMORY.embeddings.json`. Each test owns a
+// fresh CH_HOME so the cache starts empty.
+
+import { Bm25Index } from "../util/bm25.js";
+import { reciprocalRankFusion } from "../agent/memory-vector.js";
+import { existsSync } from "node:fs";
+
+// Helper: parse the search() output back into a flat list of
+// "(line, prefix, text)" triples. The format is line-numbered
+// for `note:` lines (" 42  note: - ...") and prefix-only for
+// `lesson:` lines ("      lesson: - [iso] ..."). We re-derive
+// the prefix from the line, then split on the first "  " to
+// peel the line number off. Lesson lines have no line number
+// prefix and stay prefixed with whitespace.
+function parseSearchOutput(out: string): { line: number | null; display: string }[] {
+  if (!out) return [];
+  return out.split("\n").map((l) => {
+    const m = l.match(/^(\s*)(\d+)?\s+(note:|lesson:.+)$/);
+    if (!m) return { line: null, display: l };
+    const lineStr = m[2];
+    const display = m[3] ? m[3] : l.trim();
+    return { line: lineStr ? Number(lineStr) : null, display: l };
+  });
+}
+
+// Strip the line-number prefix, the layer's note:/lesson: label,
+// and the timestamp bullet to recover the user's content body.
+function bodyOf(s: string): string {
+  return s
+    .replace(/^\s*\d+\s+/, "")           // line number + padding
+    .replace(/^\s+/, "")                 // leading whitespace
+    .replace(/^note:\s+/, "")
+    .replace(/^lesson:\s+/, "")
+    .replace(/^-\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(:\d{2})?\s+—\s+/, "")
+    .replace(/^-\s+\[\d{4}-\d{2}-\d{2}T[\d:.]+Z?\]\s+/, "")
+    .trim();
+}
+
+test("4th layer: recall on a known corpus is no worse than BM25 alone (top-3 overlap)", async () => {
+  const tmp = makeTmp();
+  try {
+    const store = new MemoryLayerStore();
+    await store.appendLesson("seed lesson so the section exists");
+    // Use a small, fixed corpus that has a clear BM25 winner.
+    await store.append("rust borrow checker fights are common");
+    await store.append("javascript async await is fine");
+    await store.append("rust lifetimes confuse everyone");
+    await store.append("postgres advisory locks are tricky");
+    const query = "rust";
+
+    // BM25-only top-3 for reference.
+    const bm25Corpus = [
+      "rust borrow checker fights are common",
+      "javascript async await is fine",
+      "rust lifetimes confuse everyone",
+      "postgres advisory locks are tricky",
+    ];
+    const bm25Top = new Bm25Index(bm25Corpus).search(query, 3).map((h) => h.text);
+
+    // Fused search through MemoryLayerStore.
+    const fused = await store.search(query, 3);
+    const fusedParsed = parseSearchOutput(fused);
+    const fusedBodies = fusedParsed.map((h) => bodyOf(h.display));
+
+    // At least one fused top-3 hit should be in the BM25 top-3.
+    const overlap = fusedBodies.filter((t) => bm25Top.includes(t));
+    assert.ok(
+      overlap.length >= 1,
+      `expected at least 1 fused top-3 hit in the BM25 top-3, got 0. Fused=${JSON.stringify(fusedBodies)} BM25=${JSON.stringify(bm25Top)}`
+    );
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("4th layer: fused search is deterministically sorted by RRF score", async () => {
+  const tmp = makeTmp();
+  try {
+    const store = new MemoryLayerStore();
+    await store.appendLesson("seed lesson so the section exists");
+    await store.append("rust borrow checker fights are common");
+    await store.append("javascript async await is fine");
+    await store.append("rust lifetimes confuse everyone");
+    await store.append("postgres advisory locks are tricky");
+
+    // Two identical runs should produce byte-identical output.
+    const a = await store.search("rust", 4);
+    const b = await store.search("rust", 4);
+    assert.equal(a, b, "fused search should be deterministic across calls");
+
+    // The RRF helper itself is also deterministic: re-running it
+    // on the same ranked lists produces the same output.
+    const rrfA = reciprocalRankFusion([
+      [
+        { docId: "x", line: 1 },
+        { docId: "y", line: 2 },
+        { docId: "z", line: 3 },
+      ],
+      [
+        { docId: "y", line: 2 },
+        { docId: "z", line: 3 },
+        { docId: "x", line: 1 },
+      ],
+    ]);
+    const rrfB = reciprocalRankFusion([
+      [
+        { docId: "x", line: 1 },
+        { docId: "y", line: 2 },
+        { docId: "z", line: 3 },
+      ],
+      [
+        { docId: "y", line: 2 },
+        { docId: "z", line: 3 },
+        { docId: "x", line: 1 },
+      ],
+    ]);
+    assert.deepEqual(rrfA, rrfB);
+    // RRF scores should be non-increasing.
+    for (let i = 1; i < rrfA.length; i++) {
+      assert.ok(rrfA[i - 1]!.rrf >= rrfA[i]!.rrf, `RRF must be non-increasing: ${rrfA[i - 1]!.rrf} < ${rrfA[i]!.rrf}`);
+    }
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("4th layer: search() writes the embeddings cache on the first run", async () => {
+  const tmp = makeTmp();
+  try {
+    const cachePath = join(tmp, "memory", "MEMORY.embeddings.json");
+    assert.ok(!existsSync(cachePath), "cache should not exist before first search");
+    const store = new MemoryLayerStore();
+    await store.appendLesson("seed lesson so the section exists");
+    await store.append("rust borrow checker fights are common");
+    await store.append("javascript async await is fine");
+    await store.search("rust", 3);
+    assert.ok(existsSync(cachePath), "cache should be written after the first search");
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 

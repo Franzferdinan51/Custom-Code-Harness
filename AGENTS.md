@@ -20,7 +20,7 @@ A versatile terminal coding harness — multi-provider, extensible, crash-resist
 - `bin/ch` — bash launcher; prefers `bun` (OpenTUI FFI), falls back to `node`
 - `src/cli.ts` — 22+ subcommands (`ch serve`, `ch web`, `ch tui`, `ch run`, `ch agent`, `ch code`, `ch goal`, `ch loop`, `ch doctor`, `ch skills`, `ch agents`, `ch skill`, `ch memory`, `ch cron`, `ch sessions`, `ch init`, `ch update`, `ch export`, `ch compact`, …)
 - `src/runtime.ts` — `HarnessRuntime`; wires provider, agent loop, session, sub-agents, skills, memory, compaction, approval
-- `src/agent/` — core agent logic: `loop.ts`, `session.ts`, `tools/`, `subagent.ts`, `skills.ts`, `memory.ts`, `compaction.ts`, `context.ts`, `extensions.ts`, `cron.ts`, `prompts.ts`, `trajectory.ts`, `approval.ts`, `cost.ts`
+- `src/agent/` — core agent logic: `loop.ts`, `session.ts`, `tools/`, `subagent.ts`, `skills.ts`, `memory.ts`, `memory-layers.ts`, `memory-vector.ts` (4th layer: brute-force cosine + RRF), `compaction.ts`, `context.ts`, `extensions.ts`, `cron.ts`, `prompts.ts`, `trajectory.ts`, `approval.ts`, `cost.ts`
 - `src/providers/` — `openai-compat.ts` (works for OpenAI / xAI / local / LM Studio), `anthropic.ts`, `registry.ts`
 - `src/slash/` — slash commands (`builtin.ts`, `registry.ts`, `tree-render.ts`)
 - `src/ui/` — OpenTUI TUI (`tui.ts`, `tui-app.ts`, `approval-modal.ts`, `colors.ts`, `repl.ts`)

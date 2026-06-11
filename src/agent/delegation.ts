@@ -1053,7 +1053,26 @@ export class DelegationManager {
     }
 
     if (signal.aborted) {
-      return { value: { kind: "goal", goalId: goal.id, status: "failed", iterations: 0 }, cancelled: true };
+      // Cancellation arrived after the state machine reached a
+      // terminal state (e.g. a SIGINT that landed the same tick
+      // as the agent's `GOAL COMPLETE`). The goal record is the
+      // source of truth — surface its actual `loopStatus` and
+      // iteration count, not a hard-coded "failed/0" — so the
+      // caller can distinguish "cancelled a finished goal" from
+      // "cancelled a still-running goal". The `cancelled: true`
+      // flag is what callers use to detect the abort event.
+      const abortedFinal = this.deps.goalStore.get(goal.id);
+      return {
+        value: {
+          kind: "goal",
+          goalId: goal.id,
+          status: abortedFinal?.loopStatus ?? "failed",
+          finalText: abortedFinal?.finalText,
+          iterations: abortedFinal?.currentIteration ?? 0,
+          ...(capError !== null ? { error: capError } : (abortedFinal?.lastError ? { error: abortedFinal.lastError } : {})),
+        },
+        cancelled: true,
+      };
     }
     const final = this.deps.goalStore.get(goal.id);
     return {

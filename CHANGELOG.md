@@ -5,6 +5,30 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Bug fix: goal delegation result honors the actual store state on post-state-machine abort
+
+`DelegationManager.runGoalKind` short-circuited to a hard-coded
+`status: "failed"`, `iterations: 0` whenever its `signal` was
+aborted after the state machine ran — even if the goal had
+reached a terminal state (`done`, `failed`, `paused`, etc.)
+on the store. The result's `cancelled: true` flag is the right
+signal for "an abort happened", but the `status` / `iterations`
+fields were misleading: a goal that finished cleanly and then
+got a late Ctrl-C was reported as broken.
+
+The fix reads the live state off the goal store, so the
+delegation result reflects what actually happened. A goal that
+reached `done` and was then cancelled is reported as
+`status: "done", iterations: N, cancelled: true`, not as
+`status: "failed", iterations: 0, cancelled: true`. Two new
+regression tests in `src/__tests__/delegation.test.ts` cover
+both the "done then cancel" and "runner throws mid-execute"
+paths.
+
+- **fix(delegation): honor actual goal store state on post-state-machine abort**
+  (`src/agent/delegation.ts`,
+  `src/__tests__/delegation.test.ts`)
+
 ### Phase 3 closedout (2026-06-10)
 
 All five Phase 3 production tracks ship on `main` (commits

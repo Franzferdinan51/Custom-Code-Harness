@@ -807,3 +807,98 @@ test("delegation: goal kind with maxCostUsd cap does NOT fire when the runner re
     assert.doesNotMatch(stored!.lastError ?? "", /maxCostUsd cap exceeded/);
   }
 });
+
+// ---------- 11. Post-completion cancellation ----------
+//
+// Regression: when the goal state machine reaches a terminal
+// state (e.g. `done`) and the manager's signal is then aborted
+// (e.g. user hits Ctrl-C a tick too late), the result should
+// reflect the goal's actual terminal state — not a hard-coded
+// "failed/0" mask. Pre-fix the manager always reported
+// `status: "failed"` and `iterations: 0` for any post-state
+// cancellation, which made a finished goal look broken.
+
+test("delegation: goal kind reports the actual final state when the signal aborts after the goal is done", async () => {
+  // Fast runner that completes in one planning + one executing
+  // cycle. The runner returns `GOAL COMPLETE` so the state
+  // machine short-circuits to `done` on the first iteration.
+  let abortDuringResult: AbortController | null = null;
+  const fastRunner: NonNullable<DelegationRuntimeDeps["runGoalAgent"]> = async (phase) => {
+    if (phase === "planning") {
+      return { content: "1. just do the thing", steps: 1 };
+    }
+    // Executing — the goal will mark itself `done` after this.
+    // Now simulate a late cancellation: abort the signal AFTER
+    // the runner returns but BEFORE the manager checks
+    // `signal.aborted`. The state machine has reached `done`
+    // by this point; the abort fires on the next tick.
+    abortDuringResult = new AbortController();
+    setTimeout(() => abortDuringResult?.abort(), 5);
+    return { content: "GOAL COMPLETE", steps: 1 };
+  };
+  const { deps, goalStore } = makeDeps({ runGoalAgent: fastRunner });
+  const mgr = new DelegationManager(deps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "finish cleanly, then cancel late",
+    maxIterations: 1,
+    cwd: tmp,
+  });
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    // The state machine reached `done`. Even if the manager's
+    // signal was aborted afterward, the result should report
+    // `done` and the iteration count, not mask the success
+    // as `failed/0`.
+    const stored = goalStore.get(res.goalId);
+    assert.ok(stored, "goal record must exist on the store");
+    assert.equal(stored!.loopStatus, "done", "state machine must have marked the goal done");
+    assert.equal(res.status, "done", "result.status must surface the actual loopStatus, not hard-coded 'failed'");
+    assert.equal(res.iterations, 1, "result.iterations must surface the actual currentIteration, not 0");
+  }
+});
+
+test("delegation: goal kind reports the actual final state when the signal aborts after the goal fails", async () => {
+  // Same as above, but the runner throws partway through and
+  // the signal is also aborted. The state machine does NOT
+  // catch throws from the runner — they propagate up and the
+  // delegation manager's try/catch swallows them. The goal
+  // record therefore stays in whatever state it was in when
+  // the throw fired (here, `executing`, mid-iteration). The
+  // delegation result should still surface that state and
+  // the actual iteration count — not a hard-coded `failed/0`.
+  const ac = new AbortController();
+  const failingRunner: NonNullable<DelegationRuntimeDeps["runGoalAgent"]> = async (phase) => {
+    if (phase === "planning") return { content: "1. plan", steps: 1 };
+    // Executing — abort the signal then throw. The state
+    // machine propagates the throw; the manager's try/catch
+    // logs it and falls through. The goal record is left
+    // in `executing` state.
+    ac.abort();
+    throw new Error("runner blew up");
+  };
+  const { deps, goalStore } = makeDeps({ runGoalAgent: failingRunner });
+  const mgr = new DelegationManager(deps);
+  const handle = mgr.submit({
+    kind: "goal",
+    objective: "fail cleanly, then cancel late",
+    maxIterations: 1,
+    cwd: tmp,
+  });
+  const res = await handle.result();
+  assert.equal(res.kind, "goal");
+  if (res.kind === "goal") {
+    const stored = goalStore.get(res.goalId);
+    assert.ok(stored);
+    // The state machine does NOT mark the goal `failed` on a
+    // throw — the throw propagates and the manager swallows
+    // it. The goal record is left in `executing` state. The
+    // delegation result must surface that state, not mask it
+    // as `failed/0` (which would be a coincidence — both
+    // happen to look correct for a failed goal).
+    assert.equal(stored!.loopStatus, "executing", "state machine leaves goal in `executing` on runner throw");
+    assert.equal(res.status, "executing", "result.status must surface the store's actual loopStatus, not 'failed'");
+    assert.equal(res.iterations, 1, "result.iterations must surface the store's actual currentIteration, not 0");
+  }
+});

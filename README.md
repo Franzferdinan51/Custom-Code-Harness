@@ -5,14 +5,14 @@ extensible, and built to never crash mid-edit.
 
 ```
 $ ch
-┌─ CodingHarness v0.2.0 ──────────────────────────────────────────┐
-│ openai/gpt-4o · session:abc123 · 1.2k in / 340 out                 │
+┌─ CodingHarness v0.2.2 ─────────────────────────────────────────┐
+│ openai/gpt-4o · session:abc123 · 1.2k in / 340 out             │
 ├───────────────────────────────────────────────────────────────────┤
 │  › list the files in src/ and tell me which ones import lodash   │
 │                                                                   │
 │  ✓ read /Users/you/Desktop/CodingHarness/src/cli.ts (210 lines)  │
 │                                                                   │
-│  The CLI entrypoint parses args and routes to one of 16            │
+│  The CLI entrypoint parses args and routes to one of 22           │
 │  subcommands...                                                   │
 ├───────────────────────────────────────────────────────────────────┤
 │ ⏎ send · ⇧⏎ newline · Tab complete · ↑/↓ history · Ctrl+C abort │
@@ -70,18 +70,66 @@ The same `ch serve` server powers three UIs:
    (`.dmg` + `.zip`), `dist:win` (`.exe` + portable), or
    `dist:linux` (`.AppImage` + `.deb`).
 
-The HTTP+SSE API is stable and can also be driven by anything that
-speaks `fetch` and `EventSource`:
+The HTTP+SSE API (`ch serve`) exposes 40+ endpoints under `/v1/`.
+The full route table is discoverable without authentication — no key
+required for `GET /v1/` (discovery) or `GET /v1/health` (liveness).
+All other endpoints require `Authorization: Bearer <CH_HTTP_TOKEN>` when
+`CH_HTTP_TOKEN` is set.
+
+**Auth hardening** (`ch serve` hardening, Phase 3):
+`CH_HTTP_TOKEN` gates every `/v1/*` route except the discovery index and
+health probe. Token compare is constant-time; 401s never echo the token.
+`CH_HTTP_MAX_BODY_BYTES` caps incoming POST bodies (default 1 MB; 413 over
+limit). In-flight SSE streams can be aborted with `DELETE /v1/chat/stream/:id`.
 
 ```bash
-# status
-curl http://127.0.0.1:18800/v1/status
+# Start the server (port printed to stdout on launch)
+ch serve
 
-# stream a chat
+# Discover all endpoints — no auth required
+curl http://127.0.0.1:18800/v1/
+
+# Liveness probe — no auth required
+curl http://127.0.0.1:18800/v1/health
+
+# Stream a chat (SSE — first event is stream_id)
 curl -N -X POST http://127.0.0.1:18800/v1/chat/stream \
   -H 'content-type: application/json' \
-  -d '{"prompt":"list the files in src/","sessionId":"default"}'
+  -H "Authorization: Bearer $CH_HTTP_TOKEN" \
+  -d '{"prompt":"list src/","sessionId":"default"}'
+
+# Abort an in-flight stream
+curl -X DELETE http://127.0.0.1:18800/v1/chat/stream/<stream_id> \
+  -H "Authorization: Bearer $CH_HTTP_TOKEN"
+
+# Submit a delegation (agent | goal | async-tool | mcp | plugin | api | human-approval | workflow)
+curl -X POST http://127.0.0.1:18800/v1/delegations \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CH_HTTP_TOKEN" \
+  -d '{"kind":"agent","prompt":"review auth flow"}'
+
+# Walk active + recent delegations and loops
+curl http://127.0.0.1:18800/v1/delegations \
+  -H "Authorization: Bearer $CH_HTTP_TOKEN"
+curl http://127.0.0.1:18800/v1/loops \
+  -H "Authorization: Bearer $CH_HTTP_TOKEN"
+
+# Drill down on a specific delegation or loop
+curl http://127.0.0.1:18800/v1/delegations/<id> \
+  -H "Authorization: Bearer $CH_HTTP_TOKEN"
+curl http://127.0.0.1:18800/v1/loops/<id> \
+  -H "Authorization: Bearer $CH_HTTP_TOKEN"
+
+# Approve or deny a pending bash-tool approval
+curl -X POST http://127.0.0.1:18800/v1/approval/respond \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CH_HTTP_TOKEN" \
+  -d '{"id":"<approval_id>","decision":"approve"}'
 ```
+
+All endpoints are exercised in the integration test suite
+(`server-expansion.test.ts`, `server-hardening.test.ts`) which spawns
+a real `ch serve` on a free port and walks every route.
 
 ## MCP server (Model Context Protocol)
 
@@ -497,62 +545,101 @@ stay in the session JSONL — compaction is reversible (load and rewind).
 
 ```
 src/
-  cli.ts                 # Entry point, arg parsing
-  runtime.ts             # Wires everything (provider + agent + session + slash + sub-agents + skills + memory)
-  types.ts               # ChatMessage, Provider, Tool, ToolResult
+  cli.ts                   # Entry point, 22 subcommands (serve, web, mcp, …)
+  runtime.ts               # Wires provider + agent loop + session + slash + tools
+  types.ts                 # ChatMessage, Provider, Tool, ToolResult, LoopRecord
+  server.ts                # ch serve — HTTP/SSE server, 40+ /v1/* routes
+  mcp-server.ts            # ch mcp — MCP server (HTTP+SSE or stdio transport)
+  updater.ts               # ch update — self-updater (git pull + rebuild + link)
+  doctor.ts                # ch doctor — diagnostics
+  attach-client.ts         # ch attach — stdio bridge to a running server
 
   agent/
-    loop.ts              # The agent loop (the file that does or doesn't crash)
-    session.ts           # JSONL session with tree structure (parent/child links)
-    agents.ts            # Sub-agent definitions (built-ins + user JSON)
-    subagent.ts          # SubAgentManager — spawn isolated child runs
-    skills.ts            # SkillRegistry (agentskills.io loader)
-    memory.ts            # Persistent MEMORY.md / USER.md
-    context.ts           # AGENTS.md/CLAUDE.md walker
-    prompts.ts           # Prompt template loader (~/.codingharness/prompts/)
-    cron.ts              # CronStore + cron expression parser
-    compaction.ts        # /compact logic
-    extensions.ts        # Extension manifest loader
+    loop.ts                # The agent loop
+    session.ts             # JSONL session with tree (parent/child links)
+    agents.ts              # Built-in + user-defined sub-agent definitions
+    subagent.ts            # SubAgentManager — spawns isolated child runs
+    delegation.ts          # Delegation kinds (agent|goal|async-tool|mcp|plugin|api|
+                           #   human-approval|workflow) + GoalStore
+    goals.ts               # Goal persistence (JSONL per goal, state machine)
+    memory.ts              # Persistent MEMORY.md / USER.md (3-layer)
+    memory-layers.ts       # Layer store interface
+    memory-vector.ts       # 4th layer: brute-force cosine + RRF fusion
+    skills.ts              # SkillRegistry (agentskills.io SKILL.md loader)
+    context.ts             # AGENTS.md/CLAUDE.md walker
+    prompts.ts             # Prompt template loader (~/.codingharness/prompts/)
+    cron.ts                # CronStore + cron expression parser
+    compaction.ts          # /compact logic (summarization + rewind)
+    cost.ts                # Per-call + cumulative cost tracking
+    trajectory.ts          # JSONL trajectory export (hermes/openai/share formats)
+    council.ts             # Multi-perspective deliberation (9 voices)
+    vision-routing.ts      # Route to vision-capable model when image in prompt
+    approval.ts            # Approval bridge: pendingApprovals map + SSE event
+    steering.ts            # steer tool (goal/loop/agent/workflow/tool directives)
+    extensions.ts          # Extension manifest loader
     tools/
-      read.ts            # Atomic read
-      write.ts           # Atomic write (temp + rename)
-      edit.ts            # Targeted replacement (refuses on ambiguity)
-      bash.ts            # Shell exec with timeout + abort
-      grep.ts            # Content search (JS fallback, no ripgrep dep)
-      find.ts            # File finder
-      ls.ts              # Directory listing
-      http.ts            # HTTP fetch with timeout
-      web-search.ts      # DuckDuckGo search (no API key)
-      todo.ts            # In-session todo list
-      spawn-subagent.ts  # The spawn_subagent tool
-      skill.ts           # The skill tool
-      memory.ts          # The memory tool
-      registry.ts        # Tool interface, validation helpers
-      index.ts           # Default registry
+      read.ts              # Atomic read
+      write.ts             # Atomic write (temp + rename)
+      edit.ts              # Targeted replacement (refuses on ambiguity)
+      bash.ts              # Shell exec with timeout + abort
+      grep.ts              # Content search (no ripgrep dependency)
+      find.ts              # Glob-based file finder
+      ls.ts                # Directory listing
+      http.ts              # HTTP fetch with timeout
+      web-search.ts        # DuckDuckGo search (no API key)
+      todo.ts              # In-session todo list
+      spawn-subagent.ts    # spawn_subagent tool
+      skill.ts             # skill tool
+      memory.ts            # memory tool
+      registry.ts          # Tool interface + validation helpers
+      index.ts             # Default registry
 
   providers/
-    openai-compat.ts     # OpenAI, OpenRouter, LM Studio, vLLM, DeepSeek, ...
-    anthropic.ts         # Native Anthropic Messages API
-    registry.ts          # Provider discovery + stub registration (for tests)
+    registry.ts            # Provider discovery + stub registration (for tests)
+    openai-compat.ts       # OpenAI, OpenRouter, LM Studio, vLLM, DeepSeek, …
+    anthropic.ts          # Native Anthropic Messages API
+    codex.ts              # Codex OAuth device-code flow
+    omni.ts               # Omni-provider (unified interface)
+    presets.ts            # Provider presets
+    oauth/                # OAuth helpers (device-code, PKCE)
 
   slash/
-    registry.ts          # Slash command interface
-    builtin.ts           # 30 built-in commands
-
-  config/
-    paths.ts             # ~/.codingharness/ paths (lazy-evaluated)
-    settings.ts          # settings.json loader
+    builtin.ts            # 30+ built-in slash commands
+    registry.ts           # Slash command interface
+    tree-render.ts        # Tree renderer for /tree output
 
   ui/
-    colors.ts            # Tiny ANSI helpers
-    repl.ts              # Line-based REPL with AbortSignal plumbing
+    tui.ts                # OpenTUI harness entry
+    tui-app.ts            # OpenTUI app (Box, ScrollBox, Textarea, flex layout)
+    approval-modal.ts     # Approval modal (TUI)
+    repl.ts               # Line-based REPL
+    repl-v2.ts            # Next-gen REPL
+    colors.ts             # ANSI color helpers
+
+  web/
+    index.html            # Web UI (vanilla JS, no build step)
+    styles.css
+    app.js
+
+  config/
+    paths.ts              # ~/.codingharness/ paths (lazy-evaluated)
+    settings.ts           # settings.json loader
+    providers.ts          # Provider env-var wiring
 
   util/
-    logger.ts            # Leveled logger
-    errors.ts            # ToolError, withTimeout, anySignal
-    retry.ts             # Exponential backoff
+    logger.ts             # Leveled logger
+    errors.ts             # ToolError, withTimeout, anySignal
+    retry.ts              # Exponential backoff
 
-  doctor.ts              # ch doctor diagnostics
+  project/
+    detection.ts         # Project root detection + AGENTS.md discovery
+    state.ts             # Project state persistence
+
+  electron/
+    main.cjs              # Electron main process (CommonJS)
+    preload.js            # Context bridge (sandboxed renderer)
+
+  __tests__/              # bun test suite (586+ tests across 42 files)
 ```
 
 ## Reliability notes
@@ -569,9 +656,10 @@ The places where most harnesses crash, and what we do:
 ## Testing
 
 ```bash
-npm test               # 42 tests across agent loop, tools, slash, new systems
-npm run test:smoke     # end-to-end smoke with stub provider
+npm test               # 586+ tests across 42 files (bun — required by OpenTUI FFI)
+npm run test:node      # tsx fallback, skips OpenTUI FFI tests
 npx tsc --noEmit       # type check
+npm run typecheck      # same as tsc --noEmit
 ```
 
 ## What's NOT in v0.2 (and why)

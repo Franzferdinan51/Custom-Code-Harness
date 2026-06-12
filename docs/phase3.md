@@ -3,7 +3,49 @@
 **Ratifies:** [`phase2-decisions.md`](./phase2-decisions.md) (Q1–Q10) and [`phase2.md`](./phase2.md) (T1–T5)
 **Source plan:** `plans/plan_phase1/notes/agnt-port-plan.md` §6.3
 **Date:** 2026-06-09
-**Status:** SHIPPED 2026-06-10 (all 5 production tracks + closeout on `main`)
+**Status:** SHIPPED 2026-06-10 (all 5 production tracks + closeout on `main`) + 2 followup drops on 2026-06-11 / 2026-06-12
+
+## Post-closeout drops
+
+Two followup commits landed on `main` after the Phase 3 closeout.
+Neither was a Phase 3 track — both are stability / correctness fixes
+that surfaced in the days after the closeout as the system got
+exercised in new environments. Both are fully documented in
+[`CHANGELOG.md` Unreleased](../../CHANGELOG.md) (they are the first
+two entries there), so this section is the short index, not a
+duplicate.
+
+- **`e721c55` — `fix(delegation): honor actual goal store state on
+  post-state-machine abort`** (2026-06-11). `runGoalKind` was
+  short-circuiting to `status: "failed", iterations: 0` on any
+  post-state-machine abort, even when the goal had reached a
+  terminal state (`done` / `failed` / `paused`) on the store.
+  Fix reads the live state off the goal store, so a goal that
+  finished cleanly and then got a late Ctrl-C is now reported as
+  `status: "done", iterations: N, cancelled: true`. Two new
+  regression tests cover both the "done then cancel" and "runner
+  throws mid-execute" paths. `src/agent/delegation.ts`,
+  `src/__tests__/delegation.test.ts`. Suite 588 pass / 0 fail.
+
+- **`b8d01ca` — `feat(server): wire bash-tool approval over
+  HTTP/SSE` + `fix(memory): stable 4th-layer sort`**
+  (2026-06-12). Two changes landed together because they both
+  crossed the 588 → 592 threshold on the same session and the
+  approval-bridge work surfaced a memory-layer flake during
+  verification. The first closes the gap where the web UI's
+  approval modal was wired up but the server never produced the
+  `approval_required` SSE event the modal was waiting on. The
+  second is the vector-memory stability fix called out in
+  CHANGELOG (RRF sort + drop the `s > 0` vec filter) — it
+  closed a 1-in-10 flake in the "doc with more matches ranks
+  first" test. Suite 592 pass / 0 fail, stable across 10
+  consecutive runs.
+
+`docs/phase3.md` itself was NOT revised in those two commits —
+the `final gate` line below reflects the closeout moment
+(586 tests). The current on-`main` test count is **592**; the
+`final gate` line is the closeout-snapshot number, not the
+post-closeout number.
 
 ## Shipped
 

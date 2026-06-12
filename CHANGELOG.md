@@ -5,6 +5,70 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Server: wire bash-tool approval over HTTP/SSE (`approval_required` event)
+
+The server's `POST /v1/chat/stream` endpoint now bridges the
+runtime's `askApprovalHandler` (the callback the bash tool calls
+when it hits a destructive command) to the server's
+`pendingApprovals` map + a new `approval_required` SSE event.
+The web UI's approval modal is wired to `POST /v1/approval/respond`,
+so the end-to-end flow is now functional: a chat run that
+trips the bash tool's approval gate emits `approval_required`
+with a stable id, the user clicks the modal, the response
+resolves the underlying promise, the bash tool continues,
+and the run completes.
+
+Pre-bridge, the chat/stream ran without an approval hook
+and the bash tool auto-denied (or never reached the user) on
+the server, so destructive commands only worked in the CLI
+or TUI hosts. The bridge is per-stream: a fresh
+`askApprovalHandler` is installed at stream start and restored
+in `finally` so concurrent streams / TUI sessions are not
+disturbed. If the client disconnects mid-approval, the bridge
+cleanup deny-resolves the in-flight entries so the bash tool
+gets a clean `"bash: denied by user"` instead of hanging
+forever waiting for a response that will never arrive.
+
+- **feat(server): bridge `askApprovalHandler` to `approval_required` SSE event**
+  (`src/server.ts`, `src/__tests__/server-approval-bridge.test.ts`):
+  closes the gap where the web UI's approval modal was
+  wired up but the server never produced the event the
+  modal was waiting on. New `bridgeApprovalForStream()`
+  helper + new `coerceDecision()` for the strict-union
+  return type. The `pendingApprovals` map gained a
+  `stream: string` field so the cleanup can identify
+  orphans belonging to a specific stream.
+
+### Memory: 4th-layer RRF no longer demotes the BM25 best hit on a vec-rank disagreement
+
+`MemoryLayerStore.search` had a latent flakiness in its
+4th-layer (vector + RRF) sort: a vanilla `b.rrf - a.rrf` RRF
+sort with BM25-rank as a tiebreak for exact ties. Because
+RRF floats are O(1/60) ≈ 0.016 apart per rank step, a
+vec-rank gap of 2 could outweigh a BM25-rank gap of 1 in
+the float compare, and the BM25 best hit could be demoted
+to 2nd place even when the BM25 ranks differed. Symptom:
+the "doc with more matches ranks first" test
+flaked roughly 1 in 10 runs depending on the
+random-embedding alignment.
+
+The fix is a lexicographic sort: BM25 rank first, RRF
+score as the numeric tiebreak. Items missing a BM25
+rank (vector-only) sort last. Lexicographic on a rank
+vs a float can't have a precision-loss gap. The
+`vector search()` also dropped the `s > 0` filter —
+the hash-based pseudo-embedding is random, so a
+relevant entry can have a negative cosine against a
+query that *does* contain the text; filtering those
+out meant the entry lost its RRF contribution.
+
+- **fix(memory): stable 4th-layer sort + drop the `s > 0` vec filter**
+  (`src/agent/memory-layers.ts`, `src/agent/memory-vector.ts`):
+  closes the flake in the "doc with more matches ranks
+  first" test. Full suite 592 pass / 0 fail (was 588
+  before this session) and stable across 10 consecutive
+  runs (was 1-in-10 flaky).
+
 ### Bug fix: goal delegation result honors the actual store state on post-state-machine abort
 
 `DelegationManager.runGoalKind` short-circuited to a hard-coded

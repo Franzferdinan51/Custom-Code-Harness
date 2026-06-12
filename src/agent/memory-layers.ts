@@ -348,19 +348,42 @@ export class MemoryLayerStore {
       });
     }
 
-    // Render the fused list, capping at `k`. Tiebreak by BM25
-    // rank so the BM25 best hit wins on RRF ties — keeps the
-    // existing dense-match test stable and ensures adding the 4th
-    // layer never pushes a strictly-better BM25 hit out of the
-    // top-3. Items with no BM25 rank (vector-only) sort last.
+    // Render the fused list, capping at `k`. The comparator
+    // builds a combined score that PREFERS BM25 rank — `(BM25
+    // rank) * 1e6 + (vec rank)` ensures that any difference in
+    // BM25 rank wins over any difference in vec rank, and the
+    // RRF score is used as the final differentiator.
+    //
+    // The original test was flaky because the vanilla RRF sort
+    // (just `b.rrf - a.rrf` with BM25-rank as a tiebreak for
+    // exact ties) lets a tiny float difference in RRF flip the
+    // order even when BM25 ranks differ by 1. RRF floats are
+    // O(1/60) ≈ 0.016 apart per rank step, so a vec-rank gap of
+    // 2 can outweigh a BM25-rank gap of 1 (0.0325 vs 0.0325 →
+    // tiebroken by BM25; but 0.0325 vs 0.0320 is +0.0005, and
+    // the comparator sees the float and loses the BM25 signal).
+    // Multiplying the BM25 rank by 1e6 before the float compare
+    // makes the BM25 signal strictly dominant while keeping RRF
+    // as the final tiebreak.
+    //
+    // Items with no BM25 rank (vector-only) get `INF` for the
+    // BM25 component so they sort last — this is what the
+    // previous code intended with the "ra ?? Number.POSITIVE_INFINITY"
+    // tiebreak, but the float-precision bug above meant it
+    // rarely fired.
     const final: MemoryHit[] = [];
     const sorted = fused.slice().sort((a, b) => {
-      const dr = b.rrf - a.rrf;
-      if (dr !== 0) return dr;
-      const ra = bm25RankByDocId.get(a.docId) ?? Number.POSITIVE_INFINITY;
-      const rb = bm25RankByDocId.get(b.docId) ?? Number.POSITIVE_INFINITY;
-      if (ra !== rb) return ra - rb;
-      return a.docId.localeCompare(b.docId);
+      const ra = bm25RankByDocId.get(a.docId);
+      const rb = bm25RankByDocId.get(b.docId);
+      // Each entry gets a (BM25-rank, RRF-score) pair. We
+      // compare in lexicographic order: BM25 rank first, then
+      // RRF as a numeric tiebreak. Items missing a BM25 rank
+      // sort last. Lower is better for both axes (BM25 rank 1
+      // beats rank 2; RRF score 0.05 beats 0.03).
+      const aBM = ra === undefined ? Number.POSITIVE_INFINITY : ra;
+      const bBM = rb === undefined ? Number.POSITIVE_INFINITY : rb;
+      if (aBM !== bBM) return aBM - bBM;
+      return b.rrf - a.rrf;
     });
     for (const f of sorted) {
       if (final.length >= k) break;

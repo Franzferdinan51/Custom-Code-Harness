@@ -243,17 +243,31 @@ export class VectorIndex {
    */
   search(queryVec: Float32Array, k: number): VectorHit[] {
     if (k <= 0 || this.vecs.length === 0) return [];
+    // Return EVERY entry, not just the positive-cosine ones. RRF
+    // uses the rank (position in this sorted list) as its signal,
+    // not the score — so an entry with a negative cosine still
+    // contributes a "this is the lowest-ranked vec match" weight
+    // (1 / (k0 + rank)) and gets a fair shot in the fused ranking.
+    //
+    // The old `if (s > 0)` filter was wrong for the hash-based
+    // pseudo-embedding: a 64-dim SHA-256 cycled vector can have a
+    // negative cosine against a query that *does* contain the
+    // text — it's random, not semantic. Filtering those out meant
+    // a relevant entry could be dropped from the vec list and
+    // lose its RRF contribution, letting a strictly weaker BM25
+    // hit (e.g. one that *happens* to align with the random
+    // embedding direction) win the fused ranking. Symptom: a
+    // 4-layer search occasionally demoted the dense-match hit to
+    // 2nd place.
     const scored: VectorHit[] = [];
     for (let i = 0; i < this.vecs.length; i++) {
       const v = this.vecs[i] ?? new Float32Array(0);
       const s = cosineSimilarity(queryVec, v);
-      if (s > 0) {
-        scored.push({
-          docId: this.docIds[i] ?? "",
-          line: this.lines[i] ?? -1,
-          score: s,
-        });
-      }
+      scored.push({
+        docId: this.docIds[i] ?? "",
+        line: this.lines[i] ?? -1,
+        score: s,
+      });
     }
     scored.sort((a, b) => (b.score - a.score) || a.docId.localeCompare(b.docId));
     return scored.slice(0, k);

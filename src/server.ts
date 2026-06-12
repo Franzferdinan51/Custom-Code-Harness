@@ -240,8 +240,21 @@ function sendError(res: ServerResponse, code: number, error: string): void {
   sendJson(res, code, { error });
 }
 
-/** In-flight approval requests waiting for a user response. */
-const pendingApprovals = new Map<string, { resolve: (decision: string) => void; createdAt: number }>();
+/** In-flight approval requests waiting for a user response. The
+ *  value's `resolve` is what the bridge in `streamChat` calls when
+ *  `POST /v1/approval/respond` lands — it's the matching end of the
+ *  promise the bash tool is awaiting. The `stream` field on a fresh
+ *  entry is set by the bridge so the cleanup can find entries that
+ *  belong to a specific SSE stream (and deny-resolve them on abort
+ *  so the agent loop doesn't hang). */
+interface PendingApproval {
+  resolve: (decision: string) => void;
+  createdAt: number;
+  /** Stream id this approval belongs to. Set by the bridge so the
+   *  per-stream cleanup can deny-resolve orphans on abort. */
+  stream?: string;
+}
+const pendingApprovals = new Map<string, PendingApproval>();
 
 /** Active SSE stream controllers, keyed by the stream id returned in
  *  the `stream_id` SSE event. The `DELETE /v1/chat/stream/:id` handler
@@ -1331,6 +1344,91 @@ function scrubSensitiveSettings(settings: Settings): Settings {
   return clone;
 }
 
+/**
+ * Bridge `runtime.askApprovalHandler` to the server's
+ * `pendingApprovals` map + SSE `approval_required` event for the
+ * lifetime of a single stream. Returns a cleanup function that:
+ *   1. Restores the prior `askApprovalHandler` (so the next stream
+ *      on the same runtime — e.g. when the TUI attach client
+ *      reuses a session — starts fresh).
+ *   2. Deny-resolves any pending approval entries that belong to
+ *      this stream so an aborted client can't leave the bash tool
+ *      hung forever waiting for a user response that will never
+ *      arrive.
+ *
+ * Pre-bridge, the chat/stream endpoint ran the model without any
+ * approval hook — the runtime's `askApprovalHandler` was null, so
+ * the bash tool's `askFn` short-circuited to its static "approval
+ * required" error and the user had to run commands in the CLI to
+ * drive the agent. Wiring the bridge makes the web UI's approval
+ * modal functional end-to-end.
+ */
+function bridgeApprovalForStream(
+  runtime: HarnessRuntime,
+  res: ServerResponse,
+  streamId: string,
+): () => void {
+  const prev = runtime.askApprovalHandler;
+  // Sub-map of entries this bridge owns. The cleanup iterates it to
+  // deny-resolve orphans; entries created by other streams (e.g.
+  // concurrent TUI sessions) are untouched.
+  const owned = new Set<string>();
+  runtime.askApprovalHandler = async (command: string, reason: string) => {
+    const id = streamId + "-ap-" + randomUUID();
+    const promise = new Promise<"allow-once" | "allow-always" | "deny">((resolve) => {
+      pendingApprovals.set(id, { resolve: (d) => resolve(coerceDecision(d)), createdAt: Date.now(), stream: streamId });
+    });
+    owned.add(id);
+    // Emit the SSE event so the client can pop the approval modal.
+    // If the stream was already aborted (client gone) we skip the
+    // event — there's nobody to receive it — and deny-resolve
+    // immediately so the bash tool gets a clean "deny" instead of
+    // hanging on a promise that will never resolve.
+    if (res.writableEnded) {
+      pendingApprovals.delete(id);
+      owned.delete(id);
+      return "deny";
+    }
+    res.write(sse("approval_required", { id, command, reason }));
+    const decision = await promise;
+    pendingApprovals.delete(id);
+    owned.delete(id);
+    return decision;
+  };
+  return () => {
+    runtime.askApprovalHandler = prev;
+    // Deny-resolve any entries still in flight for this stream.
+    // The bash tool's `askFn` awaiter will see "deny" and return
+    // the structured "bash: denied by user" error, the agent loop
+    // will surface that to the model, and the runAgent call will
+    // exit on the next `opts.signal.aborted` check.
+    for (const id of owned) {
+      const entry = pendingApprovals.get(id);
+      if (entry) {
+        entry.resolve("deny");
+        pendingApprovals.delete(id);
+      }
+    }
+    owned.clear();
+  };
+}
+
+/** Coerce a free-form client decision string into the strict union
+ *  the runtime's `askApprovalHandler` is typed to return. Anything
+ *  unrecognised falls back to "deny" — fail-safe, since the worst
+ *  case is the user has to confirm again. The `coerceDecision`
+ *  helper is also the central place to record a structured
+ *  "denied by server: unknown decision <x>" log if a misbehaving
+ *  client ever sends a non-allowed value. Exported for unit tests
+ *  in `__tests__/server-approval-bridge.test.ts` — the rest of the
+ *  bridge's behavior is exercised by the integration test in
+ *  `server-expansion.test.ts`. */
+export function coerceDecision(s: string): "allow-once" | "allow-always" | "deny" {
+  if (s === "allow-once" || s === "allow-always" || s === "deny") return s;
+  log.warn("approval: unknown decision " + JSON.stringify(s) + " — defaulting to deny");
+  return "deny";
+}
+
 function serveStatic(res: ServerResponse, file: string): void {
   const path = join(WEB_DIR, file);
   if (!existsSync(path)) { sendError(res, 404, "not found: " + file); return; }
@@ -1452,6 +1550,16 @@ async function streamChat(
   let usage = { inputTokens: 0, outputTokens: 0 };
   let steps = 0;
 
+  // Bridge the runtime's askApprovalHandler to the SSE
+  // approval_required event + /v1/approval/respond for the
+  // lifetime of this stream. The bridge cleanup is guaranteed
+  // to run (even on abort/throw) so the handler is restored
+  // and any in-flight approval entries are deny-resolved —
+  // otherwise the bash tool would hang on a promise the
+  // client will never resolve.
+  const streamIdForApproval = opts.streamId ?? "anon";
+  const restoreApproval = bridgeApprovalForStream(runtime, res, streamIdForApproval);
+
   try {
     const result = await runAgent({
       provider, model,
@@ -1485,6 +1593,11 @@ async function streamChat(
     } else {
       res.write(sse("error", { text: (e as Error).message }));
     }
+  } finally {
+    // Always restore the prior handler and deny-resolve any
+    // in-flight approvals — the finally fires on success, error,
+    // and abort, which is exactly the invariant we need.
+    restoreApproval();
   }
 
   res.write(sse("done", { text: lastText, usage, steps }));

@@ -376,6 +376,8 @@ async function readJson<T>(req: IncomingMessage, limit: number = MAX_BODY_BYTES)
   return new Promise<T>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    let settled = false;
+    const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
     req.on("data", (c: Buffer) => {
       total += c.length;
       if (total > limit) {
@@ -390,21 +392,37 @@ async function readJson<T>(req: IncomingMessage, limit: number = MAX_BODY_BYTES)
       chunks.push(c);
     });
     req.on("end", () => {
-      if ((req as IncomingMessage & { _chOversize?: boolean })._chOversize) {
-        reject(new BodyTooLargeError(limit));
-        return;
-      }
-      const text = Buffer.concat(chunks).toString("utf-8");
-      if (!text) { reject(new Error("empty body")); return; }
-      try { resolve(JSON.parse(text) as T); } catch (e) { reject(e as Error); }
+      settle(() => {
+        if ((req as IncomingMessage & { _chOversize?: boolean })._chOversize) {
+          reject(new BodyTooLargeError(limit));
+          return;
+        }
+        const text = Buffer.concat(chunks).toString("utf-8");
+        if (!text) { reject(new Error("empty body")); return; }
+        try { resolve(JSON.parse(text) as T); } catch (e) { reject(e as Error); }
+      });
     });
-    req.on("error", (e) => reject(e));
+    req.on("error", (e) => settle(() => reject(e)));
     req.on("close", () => {
-      // If we never got 'end' (e.g. client disconnect mid-body), reject
-      // with a body-too-large if the flag is set, else a generic abort.
-      if ((req as IncomingMessage & { _chOversize?: boolean })._chOversize) {
-        reject(new BodyTooLargeError(limit));
-      }
+      // If the request socket closes before `end` fires — a
+      // client disconnect mid-body is the most common cause —
+      // we have to reject explicitly. Otherwise the promise
+      // hangs forever (Node's default 2-minute server timeout
+      // would eventually kill the socket, but the connection
+      // would stay pinned in the meantime and every
+      // mid-disconnect POST would waste a handler slot).
+      // Reject with body-too-large if the flag is set, else
+      // a generic AbortError so the route's catch sees a
+      // structured failure rather than an unhandled rejection.
+      settle(() => {
+        if ((req as IncomingMessage & { _chOversize?: boolean })._chOversize) {
+          reject(new BodyTooLargeError(limit));
+        } else {
+          const err = new Error("request aborted: client disconnected mid-body");
+          err.name = "AbortError";
+          reject(err);
+        }
+      });
     });
   });
 }
@@ -438,12 +456,21 @@ function authenticate(req: IncomingMessage): { ok: true } | { ok: false, reason:
 
 /** Wire the IncomingMessage's TCP close / legacy "aborted" events into
  *  an AbortController. Returns the controller so the caller can pass
- *  `controller.signal` into the agent loop or sub-agent spawn. */
+ *  `controller.signal` into the agent loop or sub-agent spawn.
+ *
+ *  Both listeners are `once` so they self-deregister on the first
+ *  fire. The `IncomingMessage` is one of the longest-lived objects
+ *  in the request lifecycle (an SSE stream can stay open for the
+ *  whole chat turn), so persistent `on(...)` listeners would keep
+ *  the controller + its `fire` closure alive until the message
+ *  itself is GC'd. The two events fire in close succession (Node
+ *  fires `aborted` first on TCP RST, then `close` once the socket
+ *  is fully torn down) — `once` on each is enough to be reliable. */
 function abortOnDisconnect(req: IncomingMessage): AbortController {
   const ac = new AbortController();
   const fire = () => { if (!ac.signal.aborted) ac.abort(); };
-  req.on("close", fire);
-  req.on("aborted", fire);
+  req.once("close", fire);
+  req.once("aborted", fire);
   return ac;
 }
 

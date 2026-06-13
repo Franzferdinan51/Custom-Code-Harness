@@ -385,3 +385,49 @@ test("abort: client disconnect during /v1/chat/stream ends the SSE cleanly (no c
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Body read resilience — disconnect mid-body must not pin the request
+// ---------------------------------------------------------------------------
+
+/** Send a partial body and then `destroy()` the socket before the
+ *  end-of-body marker arrives. The server's `readJson` used to
+ *  leave the promise pending on this path — `end` and `error`
+ *  never fire, and `close` had no rejection — so the connection
+ *  stayed pinned until Node's 2-minute socket timeout. The fix
+ *  rejects in `close`. The test exercises that: after the
+ *  destroy, a follow-up request to the same server must complete
+ *  normally (no leaked connection / pinned handler). */
+test("body: client disconnect mid-body rejects the readJson promise (no pinned connection)", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ch-body-disc-"));
+  prepHome(home);
+  try {
+    const { port, kill } = await startServer(home);
+    try {
+      // Use raw http.request so we can destroy() mid-body to
+      // simulate a TCP RST from the client. The server's
+      // req.on("close") will fire; the readJson promise must
+      // reject on the same tick so the connection is freed.
+      const req = http.request({
+        hostname: "127.0.0.1",
+        port,
+        path: "/v1/chat",
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      }, () => { /* response is irrelevant — we'll never read it */ });
+      req.on("error", () => { /* expected: server RSTs our half-open socket */ });
+      // Send a partial body. The server's readJson sees a few
+      // bytes, then the socket closes.
+      req.write('{"prompt":"this never');
+      req.destroy();
+      // Give the server a moment to process the close.
+      await new Promise((r) => setTimeout(r, 250));
+      // If the connection is pinned, the next /v1/health call
+      // may be queued behind it. With the fix the connection is
+      // freed and /v1/health returns 200 promptly.
+      const health = await getJson<{ ok: boolean }>(`http://127.0.0.1:${port}/v1/health`);
+      assert.equal(health.status, 200, "server must remain responsive after a mid-body disconnect");
+      assert.equal(health.body.ok, true);
+    } finally { kill(); }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});

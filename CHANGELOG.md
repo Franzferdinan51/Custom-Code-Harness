@@ -5,6 +5,57 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Server: `readJson` rejects on client-disconnect-mid-body (no more pinned connection)
+
+The server's `readJson` body reader had a latent resource
+bug: when a client disconnected mid-body (TCP RST before the
+end-of-body marker), the `end` and `error` events would
+fire inconsistently depending on the OS / Node version, and
+the `close` handler had no reject path. The Promise could
+hang forever, pinning the HTTP connection (Node's default
+2-minute socket timeout would eventually fire, but the
+handler slot stayed consumed in the meantime). Every
+mid-disconnect POST was effectively a 2-minute resource
+leak.
+
+The fix: a `settled` flag plus a `close` handler that
+rejects with an `AbortError` (or `BodyTooLargeError` if
+the oversize flag was set on the way down). The `end`
+and `error` handlers go through the same `settled` gate
+so a clean path is unaffected. New test in
+`server-hardening.test.ts` posts a partial body, calls
+`req.destroy()`, and asserts the server is still
+responsive on a follow-up `/v1/health` within the
+2-minute budget.
+
+- **fix(server): `readJson` rejects on client-disconnect-mid-body**
+  (`src/server.ts`, `src/__tests__/server-hardening.test.ts`):
+  closes the "pinned connection" gap. Full suite
+  593 pass / 0 fail (was 592 before this session).
+
+### Server: `abortOnDisconnect` listeners are `once` (no IncomingMessage listener leak)
+
+The server's `abortOnDisconnect(req)` helper registered
+two `req.on("close", ...)` / `req.on("aborted", ...)`
+listeners per request. The `IncomingMessage` is one of
+the longest-lived objects in the request lifecycle (an
+SSE stream can stay open for the whole chat turn, easily
+30+ seconds), so persistent `on(...)` listeners held a
+closure reference to the `AbortController` + `fire` arrow
+until the message itself was GC'd. The same TCP-tear-down
+event is fired by Node within microseconds of each
+other, so the listeners don't need to be persistent —
+`once` is enough. Each listener auto-deregisters on the
+first fire, freeing the closure for GC.
+
+- **fix(server): `abortOnDisconnect` listeners are `once`**
+  (`src/server.ts`): belt-and-suspenders next to the
+  `readJson` fix — the long-lived SSE request shape
+  means a `once` vs `on` listener is the difference
+  between a request handler that frees its closure
+  on the first event vs one that pins the closure
+  until the response is GC'd.
+
 ### Server: wire bash-tool approval over HTTP/SSE (`approval_required` event)
 
 The server's `POST /v1/chat/stream` endpoint now bridges the

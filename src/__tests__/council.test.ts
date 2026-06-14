@@ -311,3 +311,25 @@ test("council: synthesizer is always the last entry", async () => {
   const last = r.transcript[r.transcript.length - 1]!;
   assert.equal(last.role, "synthesizer");
 });
+
+test("council: throws when the caller supplies more than one synthesizer in the roster", async () => {
+  // The synthesizer is a singleton — it always runs last and gets
+  // the verbatim transcript of the deliberators. A caller-provided
+  // roster that lists the synthesizer role twice is a config
+  // error: silently picking one and dropping the other would be
+  // surprising. The thrown error is a fail-fast signal so the
+  // caller can fix their roster rather than get an unexplained
+  // transcript.
+  const deps = makeStubDeps({});
+  const roster: Councilor[] = [
+    BUILTIN_COUNCILORS.skeptic,
+    BUILTIN_COUNCILORS.synthesizer,
+    // Caller's mistake: a second synthesizer entry. We expect
+    // this to throw, not to silently drop one of them.
+    { ...BUILTIN_COUNCILORS.synthesizer, name: "Second Synthesizer" },
+  ];
+  await assert.rejects(
+    () => runCouncil("Q", { mode: "consensus", councilors: roster, cwd: process.cwd() }, deps),
+    /at most one synthesizer/i,
+  );
+});

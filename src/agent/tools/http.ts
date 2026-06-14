@@ -12,9 +12,11 @@ interface HttpArgs {
   headers_json?: string;
   body?: string;
   max_bytes?: number;
+  timeout_ms?: number;
 }
 
 const MAX_DEFAULT = 500_000;
+const MAX_TIMEOUT_MS = 300_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const spec: ToolSpec = {
@@ -28,8 +30,9 @@ const spec: ToolSpec = {
       url: { type: "string", description: "URL to fetch" },
       method: { type: "string", description: "HTTP method. Default GET." },
       headers_json: { type: "string", description: "JSON object of headers (optional)" },
-      body: { type: "string", description: "Request body (optional)" },
+      body: { type: "string", description: "Request body (optional, ignored for GET/DELETE/HEAD methods)" },
       max_bytes: { type: "number", description: "Max response body bytes. Default 500000, max 5000000." },
+      timeout_ms: { type: "number", description: "Request timeout in milliseconds. Default 30000, max 300000 (5 min)." },
     },
     required: ["url"],
     additionalProperties: false,
@@ -46,6 +49,7 @@ export const httpTool: Tool = {
       headers_json: a.headers_json !== undefined ? asString(a.headers_json, "headers_json", { maxLen: 8_000 }) : undefined,
       body: a.body !== undefined ? asString(a.body, "body", { maxLen: 5_000_000 }) : undefined,
       max_bytes: a.max_bytes !== undefined ? asNumber(a.max_bytes, "max_bytes", { integer: true, min: 1, max: 5_000_000 }) : MAX_DEFAULT,
+      timeout_ms: a.timeout_ms !== undefined ? asNumber(a.timeout_ms, "timeout_ms", { integer: true, min: 1, max: MAX_TIMEOUT_MS }) : DEFAULT_TIMEOUT_MS,
     } as unknown as Record<string, unknown>;
   },
   async run(rawArgs, ctx: ToolContext) {
@@ -56,12 +60,24 @@ export const httpTool: Tool = {
         try { Object.assign(headers, JSON.parse(args.headers_json)); }
         catch (e) { throw new ToolError("http", "headers_json: " + (e as Error).message); }
       }
+      // GET/DELETE/HEAD are body-less by spec. Without this guard
+      // fetch will happily send the body, and many servers (incl.
+      // strict REST APIs and several CDNs) reject the request or
+      // return a 411 Length Required. Matches the behavior of
+      // `DelegationManager.runApiKind` in src/agent/delegation.ts.
+      const method = (args.method ?? "GET").toUpperCase();
+      const hasBody = args.body !== undefined && method !== "GET" && method !== "DELETE" && method !== "HEAD";
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
+      const t = setTimeout(() => ctrl.abort(), args.timeout_ms ?? DEFAULT_TIMEOUT_MS);
       const onAbort = () => ctrl.abort(ctx.signal.reason);
       if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener("abort", onAbort, { once: true });
       try {
-        const res = await fetch(args.url, { method: args.method, headers, body: args.body, signal: ctrl.signal });
+        const res = await fetch(args.url, {
+          method,
+          headers,
+          ...(hasBody ? { body: args.body } : {}),
+          signal: ctrl.signal,
+        });
         const buf = await res.arrayBuffer();
         clearTimeout(t);
         ctx.signal.removeEventListener("abort", onAbort);

@@ -5,6 +5,48 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### http tool: configurable `timeout_ms` + GET/DELETE no longer transmit a body
+
+The `http` tool's timeout was hard-coded to 30 seconds
+(per-request) with no way for the caller to override it —
+annoying for endpoints that genuinely need longer (large
+file downloads, slow upstream APIs) and impossible to
+shorten for tight retry loops. The tool now accepts a
+`timeout_ms` field (default 30000, max 300000 = 5 min),
+parallel to the bash tool's `timeout_ms` and the
+delegation API's `timeoutSeconds`.
+
+The tool also dropped a long-standing bug where
+`fetch(..., { body: "..." })` for GET / DELETE / HEAD
+requests sent the body anyway — many servers (incl.
+strict REST APIs and several CDNs) reject the request
+or return 411 Length Required. The fix matches
+`DelegationManager.runApiKind`'s body-suppression
+behavior: methods that have no spec-mandated body
+(GET, DELETE, HEAD) strip `body` from the request
+before the call, even if the caller passed one.
+
+- **feat(http): configurable `timeout_ms` + GET/DELETE body guard**
+  (`src/agent/tools/http.ts`, `src/__tests__/http-tool.test.ts`):
+  4 new tests cover the GET/DELETE no-body contract
+  and the timeout-cap contract. Full suite 602
+  pass / 0 fail (was 593 before this session).
+
+### Council: throw on multiple synthesizers in the roster (fail-fast on config error)
+
+`runCouncil` used `config.councilors.find(...)` to pick
+the synthesizer and silently dropped any extras. A
+caller who accidentally listed the synthesizer role
+twice (e.g. merged two council configs) would have
+one synthesizer run and the others vanish with no
+warning — surprising and hard to debug from a
+transcript alone. The new check throws with a clear
+error message: "council: at most one synthesizer is
+allowed in the roster; got N".
+
+- **fix(council): throw on multiple synthesizers in the roster**
+  (`src/agent/council.ts`, `src/__tests__/council.test.ts`)
+
 ### Server: `readJson` rejects on client-disconnect-mid-body (no more pinned connection)
 
 The server's `readJson` body reader had a latent resource

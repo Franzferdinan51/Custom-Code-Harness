@@ -312,8 +312,16 @@ export async function runCouncil(
   // The synthesizer is special — it always runs last and gets the
   // verbatim transcript of the others. If the caller already added
   // a synthesizer to the roster, use that. Otherwise inject one.
+  // A caller-provided roster that lists the synthesizer role
+  // more than once is a configuration error: only the first
+  // synthesizer can run, and silently dropping the extras is
+  // surprising. Surface the conflict up front.
+  const synthesizersInRoster = config.councilors.filter((c) => c.role === "synthesizer");
+  if (synthesizersInRoster.length > 1) {
+    throw new Error("council: at most one synthesizer is allowed in the roster; got " + synthesizersInRoster.length);
+  }
   const roster = config.councilors.filter((c) => c.role !== "synthesizer");
-  const synthesizer: Councilor = config.councilors.find((c) => c.role === "synthesizer") ?? {
+  const synthesizer: Councilor = synthesizersInRoster[0] ?? {
     ...BUILTIN_COUNCILORS.synthesizer,
     model: config.model,
     providerId: config.providerId,

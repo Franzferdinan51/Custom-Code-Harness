@@ -7,12 +7,12 @@
 
 ## Post-closeout drops
 
-Two followup commits landed on `main` after the Phase 3 closeout.
-Neither was a Phase 3 track — both are stability / correctness fixes
+Five followup commits landed on `main` after the Phase 3 closeout.
+None was a Phase 3 track — all are stability / correctness fixes
 that surfaced in the days after the closeout as the system got
-exercised in new environments. Both are fully documented in
+exercised in new environments. All are fully documented in
 [`CHANGELOG.md` Unreleased](../../CHANGELOG.md) (they are the first
-two entries there), so this section is the short index, not a
+five entries there), so this section is the short index, not a
 duplicate.
 
 - **`e721c55` — `fix(delegation): honor actual goal store state on
@@ -41,9 +41,52 @@ duplicate.
   first" test. Suite 592 pass / 0 fail, stable across 10
   consecutive runs.
 
-`docs/phase3.md` itself was NOT revised in those two commits —
+- **`458f5f6` — `fix(server): reject readJson on
+  client-disconnect-mid-body + once-listeners`** (2026-06-13).
+  Latent resource bug: when a client disconnected mid-body
+  (TCP RST before end-of-body), the `end` and `error` events
+  fired inconsistently across OS / Node versions, the
+  `close` handler had no reject path, and the Promise could
+  hang forever pinning the HTTP connection. Fix: settled
+  flag + close handler that rejects with `AbortError` (or
+  `BodyTooLargeError` if the oversize flag was set on the
+  way down). Also: `abortOnDisconnect` used to register
+  persistent `req.on('close', …)` / `req.on('aborted', …)`
+  listeners per request — replaced with `once` to release
+  the closure on the first event so long-lived SSE streams
+  don't keep a stale AbortController alive. 2 new tests
+  pin both contracts. Suite 593 pass / 0 fail.
+
+- **`a2d7a6b` — `feat(http): configurable timeout_ms + GET/DELETE
+  no-body guard; fix(council): throw on multiple synthesizers`**
+  (2026-06-14). The http tool's timeout was hard-coded to 30s
+  with no override. Tool now accepts `timeout_ms` (default
+  30000, max 300000 = 5 min), parallel to the bash tool's
+  `timeout_ms` and the delegation API's `timeoutSeconds`.
+  Also dropped a long-standing bug where `fetch(…, { body:
+  '…' })` for GET / DELETE / HEAD requests sent the body
+  anyway — matches `DelegationManager.runApiKind`'s
+  body-suppression behavior. Council: `runCouncil` used
+  `find(...)` to pick the synthesizer and silently dropped
+  any extras — the new check throws with a clear error
+  message ("at most one synthesizer is allowed in the
+  roster; got N"). 5 new tests. Suite 602 pass / 0 fail.
+
+- **`1546c40` — `fix(cost): formatUSD zero + negative + drop
+  dead records_()`** (2026-06-15). `formatUSD` had two
+  cosmetic-but-recurring issues: zero hit the `< 0.01` branch
+  and emitted "$0.0000" (visible on every cold start before
+  the first model call), and negative values rendered as
+  "$-0.5000" reading as a credit instead of a charge. Two
+  new tests pin both contracts; the web app's duplicate
+  `formatUSD` updated in lockstep. Also dropped the dead
+  `CostTracker.records_()` accessor (defined, never called,
+  leftover from an early sketch). Suite 604 pass / 0 fail,
+  stable across 5 consecutive runs.
+
+`docs/phase3.md` itself was NOT revised in those five commits —
 the `final gate` line below reflects the closeout moment
-(586 tests). The current on-`main` test count is **592**; the
+(586 tests). The current on-`main` test count is **604**; the
 `final gate` line is the closeout-snapshot number, not the
 post-closeout number.
 

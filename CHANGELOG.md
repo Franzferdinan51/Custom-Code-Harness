@@ -5,6 +5,173 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Workflow integration — delegation + runtime + CLI + slash (Phase 4 T1 steps 5-7)
+
+Phase 4 T1 is the real port of the agnt-gg workflow
+engine into our `Delegation { kind: "workflow" }` kind.
+The foundation (steps 1-2) shipped the types + graph
+helpers + template evaluator; the executor (steps 3-4)
+shipped the engine + store + tool registry. This commit
+closes steps 5-7 — the integration layer that wires
+those pieces into the runtime's discriminated-union
+delegation manager, the CLI subcommands, and the
+in-REPL `/workflow` slash command.
+
+Per [`docs/agnt-workflow-audit.md` §8.4](./agnt-workflow-audit.md#84-order-of-work-proposed-for-the-follow-up-plan)
+the integration ships three of the eight T1 steps:
+
+5. **`src/agent/delegation.ts` updates** —
+   - `WorkflowDelegation` gains a closed `trigger?`
+     discriminated union (`{ kind: "manual" }` /
+     `{ kind: "webhook"; path }` /
+     `{ kind: "timer"; cron }`). v1 only honors
+     `manual`; webhook / timer are T1.5 follow-ups
+     (long-lived listeners that survive a CLI exit —
+     the audit's open question #2 resolution:
+     "in-process, fire-and-forget").
+   - `DelegationResult { kind: "workflow" }` expands
+     from `{ workflowId, status: "stub" }` to
+     `{ workflowId, status: "completed" | "failed" | "running", steps, error?, costUsd? }`.
+     `status: "running"` is reserved for a future
+     "detach" mode; v1 is fire-and-forget so the
+     runtime always sees the terminal status.
+     `costUsd` tracks the per-run cap usage
+     (audit decision #3).
+   - The Phase 2 `runStubKind` is replaced with
+     `runWorkflowKind`, which loads the workflow
+     record from the wired `WorkflowStore`,
+     instantiates a `WorkflowEngine` against the
+     wired `WorkflowToolRegistry` + the runtime's
+     configured provider / model, and awaits
+     `_executeWorkflow()`. The abort path reads
+     the engine's final state (steps / cost) so
+     partial work isn't lost — mirrors the Phase 3
+     T1 goal-store fix at commit `e721c55`.
+   - New optional fields on `DelegationRuntimeDeps`:
+     `workflowStore`, `workflowToolRegistry`,
+     `workflowProvider`, `workflowModel`,
+     `workflowMaxCostUsd`. All optional so
+     existing tests that don't wire them still
+     pass (the runner returns a typed `failed`
+     result with "no workflow store wired" when
+     unset — matches the `mcp` / `plugin` / `goal`
+     "no dep wired" pattern).
+
+6. **`src/runtime.ts` wiring** — `HarnessRuntime`
+   now exposes:
+   - `runtime.workflowStore: WorkflowStore` —
+     constructed lazily against
+     `paths.workflows` (`~/.codingharness/workflows/`).
+     The directory is created on first write, not
+     at construction; matches the `GoalStore`
+     pattern (no eager mkdir on import).
+   - `runtime.workflowToolRegistry: WorkflowToolRegistry` —
+     the v1 default registry. Empty in v1 (the 4
+     built-in types are inlined in
+     `NodeExecutor.executeCustom` for
+     cost-tracking proximity). T1.5 follow-ups
+     register more types here without touching the
+     engine.
+   - `runtime.runWorkflow(workflowId, opts)` —
+     public entry point that creates a
+     `WorkflowEngine` and runs it inline. Returns
+     the engine's `WorkflowRunResult` (status,
+     costUsd, stepsRun, outputs, errors). The
+     CLI's `ch workflow run <id>` calls this
+     directly; the `/workflow run <id>` slash
+     command can too.
+   - The `WorkflowStore` + `WorkflowToolRegistry`
+     + the configured `defaultProvider` /
+     `defaultModel` are forwarded into
+     `DelegationManager` via the new
+     `DelegationRuntimeDeps` fields.
+
+7. **CLI + slash command**:
+   - 8 `ch workflow *` subcommands (audit §6.2):
+     `list` / `show <id>` / `new` (opens
+     `$EDITOR` with a 3-node linear template) /
+     `edit <id>` (opens the existing record in
+     `$EDITOR`, preserves the id) / `delete <id>`
+     (with confirmation prompt) / `run <id>
+     [--input k=v ...]` (synchronous inline
+     execution; prints `status · steps · cost
+     [--json]` ) / `export <id>` (writes the
+     v1 `format: "share"` envelope to stdout) /
+     `import <file>` (reads an envelope, imports
+     with a fresh id). Editor fallback:
+     `$EDITOR` unset → `vi`; editor missing →
+     "set $EDITOR" hint.
+   - `/workflow` slash command with
+     `list` / `show <id>` / `run <id>` /
+     `delete <id>` subcommands (mirrors the
+     `/goal` / `/loop` structure). `new` / `edit`
+     are CLI-only — opening `$EDITOR` from inside
+     the REPL's readline would block the prompt
+     loop; the spec calls this out explicitly.
+   - `ch help` adds the `workflow` subcommand to
+     the "Run a prompt" group (next to `goal` /
+     `loop`).
+
+Tests:
+- `src/__tests__/workflow-cli.test.ts` NEW (6 tests):
+  list-on-empty, list-after-createOrUpdate,
+  export+import round-trip with a fresh id, run
+  a 3-node linear workflow (completed / steps=3 /
+  cost>0), `runtime.runWorkflow` on a missing id
+  throws "not found", `/workflow` is registered
+  in `BUILTIN_REGISTRY` with `group: "workflow"`.
+- `src/__tests__/delegation.test.ts` MODIFIED
+  (1 test): the Phase 2 "workflow kind is still
+  a stub" test is updated to the Phase 4 T1
+  contract (the runner returns a typed `failed`
+  result with "no workflow store wired" when the
+  store isn't wired — same contract every other
+  kind uses for "no dep wired").
+
+Decisions worth flagging:
+- **WorkflowToolRegistry v1 surface**: empty. The
+  executor inlines the 4 built-in types
+  (`generate-with-ai-llm`, `execute-javascript`,
+  `mcp-client`, `stop-workflow`). T1.5 can
+  register more types in the runtime's
+  `workflowToolRegistry` without touching the
+  engine or the executor.
+- **Lazy workflow dir creation**: the runtime
+  does NOT `mkdir paths.workflows` at
+  construction. `WorkflowStore.ensureRoot()` is
+  the only place a mkdir happens (on first
+  write). Matches the GoalStore pattern.
+- **`$EDITOR` fallback**: `ch workflow new` /
+  `edit` use `$EDITOR` with `vi` as the default.
+  When `$EDITOR` is unset, the user can set it
+  in their shell rc — the fallback to `vi` is
+  best-effort.
+- **MCP registry not wired by the runtime**: the
+  `mcp` delegation kind is still "no MCP
+  registry wired" in production. The
+  `mcp-client` workflow node type returns
+  `{ result: null, error: "no MCP registry wired" }`
+  for that step. Wiring the runtime's
+  `McpRegistry` is a T1.5 follow-up; the engine
+  already accepts the dep when a caller provides
+  one.
+
+- **feat(workflow): delegation + runtime + CLI + slash — steps 5-7 of audit §8.4**
+  (`src/agent/delegation.ts` MODIFIED,
+  `src/runtime.ts` MODIFIED,
+  `src/cli.ts` MODIFIED,
+  `src/slash/builtin.ts` MODIFIED,
+  `src/__tests__/workflow-cli.test.ts` NEW,
+  `src/__tests__/delegation.test.ts` MODIFIED):
+  Phase 4 T1 steps 5-7 land. 686 → 692 pass
+  (6 new tests, 0 fail). Typecheck clean.
+  No dependency additions. The 4 foundation /
+  executor files from the prior 2 commits
+  (`workflow-types.ts`, `workflow-graph.ts`,
+  `workflow-eval.ts`, `workflow-store.ts`,
+  `workflow-steps.ts`, `workflow.ts`,
+  `toolLibrary.json`) are unchanged.
+
 ### Workflow foundation — types, graph helpers, template + edge eval (Phase 4 T1 steps 1-2)
 
 Phase 4 track T1 (D-WORKFLOW-IMPL) is the real port of the

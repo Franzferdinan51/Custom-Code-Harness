@@ -166,11 +166,31 @@ export interface HumanApprovalDelegation extends DelegationBase {
 
 /** Phase 2 stubs. Declared now so the union is closed and the
  *  discriminator exhausts cleanly. Each carries only `kind` + the
- *  fields the runner needs to fail fast. */
+ *  fields the runner needs to fail fast.
+ *
+ *  `trigger` is a discriminated union per audit §2.5: the runner
+ *  dispatches by `kind`. v1 only honors `{ kind: "manual" }` —
+ *  the audit's open question #2 is resolved by "in-process,
+ *  fire-and-forget" and the `webhook` / `timer` arms are
+ *  reserved T1.5 follow-ups that require long-lived listeners
+ *  surviving a CLI exit (see `docs/phase4.md` T1.5). The
+ *  discriminator is still closed (TS exhaustiveness) so adding
+ *  a new arm is a one-line change in both this type and the
+ *  runner. */
 export interface WorkflowDelegation extends DelegationBase {
   kind: "workflow";
   workflowId: string;
   inputs?: Record<string, unknown>;
+  /**
+   * How this workflow run was triggered. Default is `manual` —
+   * the caller is invoking the workflow directly (e.g. `ch
+   * workflow run <id>` or a one-shot CLI invocation). Webhook
+   * and timer triggers are reserved for T1.5.
+   */
+  trigger?:
+    | { kind: "manual" }
+    | { kind: "webhook"; path: string }
+    | { kind: "timer"; cron: string };
 }
 /**
  * MCP kind — invoke a tool on a registered MCP server. The
@@ -273,7 +293,46 @@ export type DelegationResult =
   error?: string }
   | { kind: "async_tool"; toolName: string; iterations: number; result: unknown }
   | { kind: "human_approval"; decision: "allow" | "deny"; reason?: string }
-  | { kind: "workflow"; workflowId: string; status: "stub" }
+  | {
+      kind: "workflow";
+      workflowId: string;
+      /**
+       * The terminal status of the run. `completed` /
+       * `failed` are the v1 terminal states; `running` is
+       * reserved for a future "detach" mode that returns
+       * a handle without awaiting completion. The audit's
+       * status vocabulary (audit §4.1) uses
+       * `completed` / `failed` only; `running` is added
+       * here so the type stays forward-compatible without
+       * a v2 reshape.
+       */
+      status: "completed" | "failed" | "running";
+      /**
+       * Number of distinct nodes that executed (counts
+       * re-executions once each per `WorkflowEngine`).
+       * Mirrors `WorkflowRunResult.stepsRun`.
+       */
+      steps: number;
+      /**
+       * First error message when `status: "failed"`,
+       * absent on success. Comes from
+       * `WorkflowRunResult.error` (which is the
+       * engine's `firstErrorMessage` /
+       * `result.error` for the abort / cap-exceeded
+       * paths). Mirrors the `error?` field on
+       * `agent` / `mcp` / `api` results.
+       */
+      error?: string;
+      /**
+       * Cumulative cost (USD) from every model call
+       * inside the workflow. Mirrors
+       * `WorkflowRunResult.costUsd`. Tracked so the
+       * runtime / CLI can report the per-run cap usage
+       * alongside the per-step `maxCostUsd` cap on
+       * the engine (audit decision #3).
+       */
+      costUsd?: number;
+    }
   | { kind: "mcp"; serverId: string; tool: string; status: Phase2Status; output?: unknown; error?: string }
   | { kind: "plugin"; pluginId: string; tool: string; status: Phase2Status; output?: unknown; error?: string }
   | { kind: "api"; url: string; method: string; status: Phase2Status; output?: unknown; error?: string };
@@ -422,6 +481,46 @@ export interface DelegationRuntimeDeps {
    * full lifecycle.
    */
   runGoalAgent?: GoalRunAgentFn;
+  /**
+   * Workflow store. Required for the `workflow` kind. When
+   * unset, `runWorkflowKind` returns a `failed` delegation
+   * with "no workflow store wired" (matches the `mcp` /
+   * plugin patterns). The runtime wires a `WorkflowStore`
+   * instance constructed lazily against
+   * `paths.workflows` — the directory is created on first
+   * write, not at constructor time.
+   */
+  workflowStore?: import("./workflow-store.js").WorkflowStore;
+  /**
+   * Tool registry for built-in workflow actions. The v1
+   * registry ships empty (`defaultWorkflowToolRegistry()`);
+   * the engine's `NodeExecutor` inlines the 4 built-ins
+   * (`generate-with-ai-llm`, `execute-javascript`,
+   * `mcp-client`, `stop-workflow`) for cost-tracking
+   * proximity. The runtime wires a default here so the
+   * `workflow` delegation kind can construct a
+   * `WorkflowEngine` without the caller having to
+   * pre-register anything. Tests inject a stripped-down
+   * registry.
+   */
+  workflowToolRegistry?: import("./workflow-steps.js").WorkflowToolRegistry;
+  /**
+   * Default provider / model for the `workflow` kind. The
+   * engine's `NodeExecutor` consults these when a
+   * `generate-with-ai-llm` node does not specify its own
+   * provider / model in `parameters`. The runtime wires
+   * the configured `defaultProvider` / `defaultModel`.
+   */
+  workflowProvider?: import("../types.js").Provider;
+  workflowModel?: string;
+  /**
+   * Per-workflow-run `maxCostUsd` cap (USD). When set, the
+   * engine aborts the run *between* steps if the cumulative
+   * cost exceeds the cap. Optional. The runtime forwards its
+   * own cap from the `WorkflowDelegation.maxCostUsd` (or
+   * `runtime.cost` accumulator if unset).
+   */
+  workflowMaxCostUsd?: number;
 }
 
 /** Signature of the function that actually executes an async tool.
@@ -819,7 +918,7 @@ export class DelegationManager {
       case "human_approval":
         return this.runHumanApprovalKind(work, signal, emit);
       case "workflow":
-        return this.runStubKind(work);
+        return this.runWorkflowKind(work, signal, emit);
       case "mcp":
         return this.runMcpKind(work, signal, emit);
       case "plugin":
@@ -1239,17 +1338,168 @@ export class DelegationManager {
     }
   }
 
-  // ---- workflow stub (Phase 2) ----
+  // ---- workflow (Phase 4 T1) ----
   //
-  // The workflow kind is the only remaining stub — the port plan
-  // calls it a 2-3 week track (per
-  // `plans/plan_phase2/notes/agnt-port-plan.md` §2.4). The other
-  // three Phase 2 kinds (mcp, plugin, api) have real impls
-  // below.
+  // Instantiates a `WorkflowEngine` against the injected
+  // `WorkflowStore` and awaits `_executeWorkflow()`. The
+  // engine owns the lifetime — the manager does not detach
+  // (v1 is fire-and-forget per the audit's open question #2
+  // resolution: "in-process, fire-and-forget"). The
+  // delegation is the integration seam: it maps the
+  // engine's `WorkflowRunResult` onto the `DelegationResult`
+  // discriminated union's `kind: "workflow"` arm.
+  //
+  // Failure modes:
+  //   - No `workflowStore` wired: returns
+  //     `status: "failed", error: "no workflow store wired"`.
+  //   - Unknown `workflowId`: returns
+  //     `status: "failed", error: "workflow not found"` after
+  //     the store throws `WorkflowStoreError("not_found")`.
+  //   - No `workflowToolRegistry` wired: same pattern, with
+  //     a clear "no workflow tool registry wired" message.
+  //     The runtime always wires the default
+  //     (`defaultWorkflowToolRegistry()`) so this only fires
+  //     in tests that skip the wiring.
+  //   - Engine throws / aborts: the abort path is special —
+  //     the engine's final state is read even on `signal`
+  //     abort, so partial work (steps / cost) is not lost.
+  //     This mirrors the Phase 3 T1 goal-store fix at
+  //     commit `e721c55`.
 
-  private runStubKind(work: WorkflowDelegation): { value: DelegationResult; cancelled: boolean } {
-    log.warn("delegation: kind " + work.kind + " is a Phase 2 stub");
-    return { value: { kind: "workflow", workflowId: work.workflowId, status: "stub" }, cancelled: false };
+  private async runWorkflowKind(
+    work: WorkflowDelegation,
+    signal: AbortSignal,
+    emit: (ev: DelegationEvent) => void,
+  ): Promise<{ value: DelegationResult; cancelled: boolean }> {
+    const store = this.deps.workflowStore;
+    if (!store) {
+      const err = "no workflow store wired (set DelegationRuntimeDeps.workflowStore)";
+      emit({ kind: "log", line: "[workflow] " + err });
+      return { value: { kind: "workflow", workflowId: work.workflowId, status: "failed", steps: 0, error: err }, cancelled: false };
+    }
+    const tools = this.deps.workflowToolRegistry;
+    if (!tools) {
+      const err = "no workflow tool registry wired (set DelegationRuntimeDeps.workflowToolRegistry)";
+      emit({ kind: "log", line: "[workflow] " + err });
+      return { value: { kind: "workflow", workflowId: work.workflowId, status: "failed", steps: 0, error: err }, cancelled: false };
+    }
+    // 1. Load the workflow record.
+    let record;
+    try {
+      record = await store.get(work.workflowId);
+    } catch (e) {
+      const err = "workflow not found: " + work.workflowId + " (" + (e as Error).message + ")";
+      emit({ kind: "log", line: "[workflow] " + err });
+      return { value: { kind: "workflow", workflowId: work.workflowId, status: "failed", steps: 0, error: err }, cancelled: false };
+    }
+    // 2. Resolve trigger data. v1 only honors `manual` —
+    //    webhook / timer are T1.5 (long-lived listeners).
+    //    The audit's open question #2 is resolved by
+    //    "in-process, fire-and-forget"; a `webhook` /
+    //    `timer` trigger in v1 surfaces a clear error
+    //    rather than silently no-op'ing.
+    const trig = work.trigger ?? { kind: "manual" as const };
+    if (trig.kind === "webhook" || trig.kind === "timer") {
+      const err = `workflow trigger "${trig.kind}" is a T1.5 follow-up; v1 only supports "manual" (audit §2.5)`;
+      emit({ kind: "log", line: "[workflow] " + err });
+      return { value: { kind: "workflow", workflowId: work.workflowId, status: "failed", steps: 0, error: err }, cancelled: false };
+    }
+    // 3. Build the trigger data. For `manual`, the caller's
+    //    `inputs` is the trigger payload (renamed under
+    //    `trigger.*` for template resolution, matching the
+    //    audit §3.2 "the trigger's output is the trigger
+    //    payload" rule).
+    const triggerData: Record<string, unknown> = {
+      trigger: { kind: "manual", ...(work.inputs ?? {}) },
+      inputs: work.inputs ?? {},
+    };
+    emit({ kind: "log", line: "[workflow] " + work.workflowId + " (manual)" });
+
+    // 4. Instantiate the engine. The maxCostUsd cap is
+    //    forwarded from the delegation when set; otherwise
+    //    from the runtime's wired default. When neither
+    //    is set, the engine runs with no cap (matches
+    //    audit decision #3 — cap is opt-in).
+    const maxCostUsd = work.maxCostUsd ?? this.deps.workflowMaxCostUsd;
+    // Dynamic imports keep the delegation file's cold
+    // path slim for the non-workflow kinds (Phase 1
+    // pre-existing tests don't pay the import cost).
+    const { WorkflowEngine } = await import("./workflow.js");
+    const engine = new WorkflowEngine(record, {
+      provider: this.deps.workflowProvider,
+      model: this.deps.workflowModel,
+      mcpRegistry: this.deps.mcpRegistry,
+      tools,
+      triggerData,
+      signal,
+      ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    });
+    // 5. Run.
+    let cancelled = false;
+    let result;
+    try {
+      result = await engine._executeWorkflow();
+    } catch (e) {
+      // A throw here is rare — the engine catches
+      // `NodeExecutionError` internally and records it
+      // on `engine.errors`. The abort path produces
+      // `result.status: "failed", result.error: "cancelled"`,
+      // not a throw. So a real throw usually means a
+      // programming error (e.g. a misconfigured
+      // `nodeExecutor` callback). Surface it as a
+      // failed result; the engine's partial state is
+      // still readable for the `steps` / `costUsd`
+      // accounting.
+      const err = (e as Error).message;
+      emit({ kind: "log", line: "[workflow] engine threw: " + err });
+      return {
+        value: {
+          kind: "workflow",
+          workflowId: work.workflowId,
+          status: "failed",
+          steps: engine.nodeExecutionCounts.size,
+          error: err,
+          costUsd: engine.costUsd,
+        },
+        cancelled: false,
+      };
+    }
+    // 6. Abort-path: the engine returns a "failed /
+    //    cancelled" result when the signal fires, but
+    //    the partial `steps` and `costUsd` are still on
+    //    the engine. Surface them.
+    if (signal.aborted) {
+      cancelled = true;
+      return {
+        value: {
+          kind: "workflow",
+          workflowId: work.workflowId,
+          status: "failed",
+          steps: engine.nodeExecutionCounts.size,
+          error: result.error ?? "aborted",
+          costUsd: result.costUsd,
+        },
+        cancelled: true,
+      };
+    }
+    // 7. Normal path. Map the engine's `WorkflowRunResult`
+    //    to the `DelegationResult` shape. `error` is
+    //    only set on `status: "failed"` (the engine
+    //    fills `result.error` with the first node
+    //    error or a cap-exceeded / cancel / iter-cap
+    //    message; absent on `status: "completed"`).
+    const status: "completed" | "failed" = result.status === "completed" ? "completed" : "failed";
+    return {
+      value: {
+        kind: "workflow",
+        workflowId: work.workflowId,
+        status,
+        steps: result.stepsRun,
+        ...(status === "failed" && result.error !== undefined ? { error: result.error } : {}),
+        costUsd: result.costUsd,
+      },
+      cancelled: false,
+    };
   }
 
   // ---- mcp ----

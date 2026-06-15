@@ -18,6 +18,7 @@ import { c } from "./ui/colors.js";
 import { log } from "./util/logger.js";
 import { BUILTIN_REGISTRY } from "./slash/builtin.js";
 import { runTui, isTuiCapable } from "./ui/tui-app.js";
+import { formatUSD } from "./agent/cost.js";
 
 // ---------- Subcommand registry ----------
 
@@ -221,6 +222,10 @@ registerSubcommand("council", "Run a multi-agent council deliberation on a quest
   "ch council <question> [--mode consensus|adversarial] [--provider <id>] [--model <name>] [--rounds N] [--json] [--mission <id>]",
   async (ctx) => { return runCouncilCmd(ctx); });
 
+registerSubcommand("workflow", "Manage and run workflows (agnt-gg-style visual workflows, ported to a CLI surface).",
+  "ch workflow [list|show <id>|run <id> [--input k=v ...]|new|edit <id>|delete <id>|export <id>|import <file>]",
+  async (ctx) => { return runWorkflowCmd(ctx); });
+
 // ---------- Help / version ----------
 
 const VERSION = "0.2.2";
@@ -237,7 +242,7 @@ function showHelp(cmd?: string): number {
     { title: "Get started", blurb: "Open the harness (OpenCode: serve + attach + web + desktop).",
       names: ["chat", "tui", "repl", "serve", "attach", "web", "desktop", "welcome", "onboard", "provider"] },
     { title: "Run a prompt", blurb: "One-shot, autonomous, or multi-step.",
-      names: ["run", "agent", "code", "goal", "loop"] },
+      names: ["run", "agent", "code", "goal", "loop", "workflow"] },
     { title: "Inspect & manage", blurb: "Sessions, memory, skills, scheduling, goals.",
       names: ["sessions", "tree", "fork", "todo", "compact", "memory", "skills", "agents", "skill", "cron", "init", "export", "goals"] },
     { title: "Settings", blurb: "Thinking level and model preferences.",
@@ -2035,6 +2040,394 @@ async function runCouncilCmd(ctx: SubcommandContext): Promise<number> {
     process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
     return 1;
   }
+}
+
+// ---------- ch workflow (Phase 4 T1) ----------
+//
+// The workflow subcommand is the CLI surface for the
+// `WorkflowStore` + `WorkflowEngine` from audit §6.2 / §8.4
+// step 7. Eight subcommands (`list` / `show` / `new` /
+// `edit` / `delete` / `run` / `export` / `import`) are
+// implemented; the matching `/workflow` slash command
+// ships in `src/slash/builtin.ts`.
+//
+// Design notes:
+//   - The CLI delegates to a `WorkflowStore` for CRUD and
+//     to `runtime.runWorkflow` for execution. The runtime
+//     holds the workflow deps; this command is a thin
+//     adapter.
+//   - The editor pattern (`ch workflow new` / `edit`)
+//     opens the JSON in `$EDITOR` (falling back to `vi`).
+//     We do NOT shell out via a child process for read
+//     — the editor is invoked synchronously via
+//     `child_process.spawnSync` and we read the file back
+//     after the editor exits. The agnt-gg "open in editor"
+//     flow (audit §6.2) is the same.
+//   - The `run` subcommand prints a one-line result with
+//     `status`, `steps`, and `cost`. Use `--json` to get
+//     the full `WorkflowRunResult` for piping.
+
+/** Parse `--input k=v k=v ...` from a CLI arg list. Returns
+ *  the parsed map and the index *after* the last consumed
+ *  arg (so the caller can continue parsing). Numeric and
+ *  JSON-parseable values are coerced to their native type;
+ *  everything else stays a string. */
+function parseWorkflowInputs(args: string[]): { inputs: Record<string, unknown>; nextIndex: number } {
+  const inputs: Record<string, unknown> = {};
+  let i = 0;
+  while (i < args.length) {
+    const a = args[i]!;
+    if (!a.startsWith("--input")) break;
+    // Accept "--input k=v", "--input=k=v", "--input", "k=v" (next arg).
+    let kv: string | undefined;
+    if (a === "--input") {
+      kv = args[++i];
+    } else if (a.startsWith("--input=")) {
+      kv = a.slice("--input=".length);
+    } else {
+      // a is "--input" with no value — bail.
+      break;
+    }
+    if (kv === undefined) break;
+    const eq = kv.indexOf("=");
+    if (eq <= 0) {
+      process.stderr.write(c.yellow("warning: ignoring --input without '=': ") + kv + "\n");
+      i++;
+      continue;
+    }
+    const key = kv.slice(0, eq);
+    const valRaw = kv.slice(eq + 1);
+    // Try to coerce. JSON first (handles booleans, numbers,
+    // null, nested objects / arrays), then fall back to
+    // string. The user's intent for a workflow input is
+    // usually a primitive, so this rarely produces
+    // surprising results.
+    let val: unknown = valRaw;
+    if (valRaw === "true") val = true;
+    else if (valRaw === "false") val = false;
+    else if (valRaw === "null") val = null;
+    else if (/^-?\d+$/.test(valRaw)) val = parseInt(valRaw, 10);
+    else if (/^-?\d+\.\d+$/.test(valRaw)) val = parseFloat(valRaw);
+    else if (valRaw.startsWith("{") || valRaw.startsWith("[") || valRaw.startsWith("\"")) {
+      try { val = JSON.parse(valRaw); } catch { /* leave as string */ }
+    }
+    inputs[key] = val;
+    i++;
+  }
+  return { inputs, nextIndex: i };
+}
+
+/** Open a temp file in `$EDITOR` (falling back to `vi`,
+ *  then to a friendly "set $EDITOR" error). Returns the
+ *  edited contents on exit, or throws on failure. The
+ *  `initial` is the file's starting contents (the
+ *  template for `new`, the current record for `edit`). */
+function openInEditor(initial: string): string {
+  const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+  const { mkdtempSync, writeFileSync, readFileSync, rmSync } = require("node:fs") as typeof import("node:fs");
+  const { tmpdir } = require("node:os") as typeof import("node:os");
+  const { join } = require("node:path") as typeof import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "ch-workflow-"));
+  const file = join(dir, "workflow.json");
+  try {
+    writeFileSync(file, initial, "utf-8");
+    const editor = process.env.EDITOR?.trim() || "vi";
+    const r = spawnSync(editor, [file], { stdio: "inherit" });
+    if (r.error) {
+      // The editor itself wasn't found.
+      throw r.error;
+    }
+    if (typeof r.status === "number" && r.status !== 0) {
+      // Vim returns non-zero on ":cq" / errors. We treat
+      // any non-zero as a cancellation — the user can
+      // re-invoke the command to retry.
+      throw new Error("editor exited with status " + r.status + " — workflow not saved");
+    }
+    return readFileSync(file, "utf-8");
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+}
+
+/** A starter template for `ch workflow new`. Modeled on
+ *  the agnt-gg `automated_email_summarizer.json` shape
+ *  (audit §3 / Appendix A) — a 3-node linear flow
+ *  (trigger → LLM → stop). The user can edit the
+ *  `prompt` / `model` fields in their editor before
+ *  saving. */
+function workflowTemplate(): string {
+  return JSON.stringify({
+    id: "",
+    name: "Untitled workflow",
+    description: "Edit this in your $EDITOR, then save and exit.",
+    nodes: [
+      {
+        id: "t",
+        text: "Trigger",
+        x: 100, y: 100,
+        type: "webhook-listener",
+        category: "trigger",
+        parameters: { path: "/webhook" },
+      },
+      {
+        id: "l",
+        text: "Summarize",
+        x: 300, y: 100,
+        type: "generate-with-ai-llm",
+        category: "action",
+        parameters: {
+          model: "gpt-4o-mini",
+          prompt: "Summarize: {{trigger.body}}",
+        },
+      },
+      {
+        id: "s",
+        text: "Stop",
+        x: 500, y: 100,
+        type: "stop-workflow",
+        category: "control",
+        parameters: { reason: "done" },
+      },
+    ],
+    edges: [
+      { id: "e1", start: { id: "t", type: "output" }, end: { id: "l", type: "input" } },
+      { id: "e2", start: { id: "l", type: "output" }, end: { id: "s", type: "input" } },
+    ],
+  }, null, 2) + "\n";
+}
+
+async function runWorkflowCmd(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const args = ctx.args ?? [];
+  const sub = args[0];
+  // Build a runtime so we get the wired `WorkflowStore`
+  // and the default provider. `ch workflow list` etc.
+  // doesn't need a session / model, so we use
+  // `ephemeral: true` to skip the session creation.
+  const runtime = new HarnessRuntime({ cwd: ctx.cwd, ephemeral: true });
+  const { WorkflowStore, WorkflowStoreError } = await import("./agent/workflow-store.js");
+  // The runtime's `workflowStore` is a `WorkflowStore` —
+  // use it directly so the same instance the
+  // `delegations` manager uses is the one we CRUD against.
+  const store = runtime.workflowStore;
+  if (!sub || sub === "list") {
+    const all = await store.list();
+    if (all.length === 0) {
+      process.stdout.write("(no workflows — use `ch workflow new` to create one)\n");
+      return 0;
+    }
+    // Plain text table — keep it short and greppable.
+    process.stdout.write(
+      c.cyan("ID".padEnd(38)) + c.cyan("NAME".padEnd(28)) + c.cyan("NODES") + "\n",
+    );
+    for (const s of all) {
+      const id = s.id.padEnd(38);
+      const name = (s.name ?? "").slice(0, 26).padEnd(28);
+      const counts = s.nodeCount + "/" + s.edgeCount;
+      process.stdout.write(id + name + counts + "\n");
+    }
+    return 0;
+  }
+  if (sub === "show") {
+    const id = args[1];
+    if (!id) { process.stderr.write("usage: ch workflow show <id>\n"); return 2; }
+    try {
+      const rec = await store.get(id);
+      if (ctx.json) {
+        process.stdout.write(JSON.stringify(rec, null, 2) + "\n");
+      } else {
+        process.stdout.write(c.cyan("Workflow: ") + rec.id + "\n");
+        process.stdout.write("  name:        " + rec.name + "\n");
+        if (rec.description) process.stdout.write("  description: " + rec.description + "\n");
+        if (rec.category) process.stdout.write("  category:    " + rec.category + "\n");
+        process.stdout.write("  nodes:       " + rec.nodes.length + "\n");
+        process.stdout.write("  edges:       " + rec.edges.length + "\n");
+        if (rec.nodes.length > 0) {
+          process.stdout.write("  steps:\n");
+          for (const n of rec.nodes) {
+            process.stdout.write("    - " + n.id + "  " + n.text + "  (" + n.category + "/" + n.type + ")\n");
+          }
+        }
+      }
+      return 0;
+    } catch (e) {
+      if (e instanceof WorkflowStoreError && e.code === "not_found") {
+        process.stderr.write(c.red("no such workflow: ") + id + "\n");
+        return 1;
+      }
+      throw e;
+    }
+  }
+  if (sub === "new") {
+    // Open the template in the editor. On save, parse +
+    // write to the store. A new id is generated.
+    let edited: string;
+    try {
+      edited = openInEditor(workflowTemplate());
+    } catch (e) {
+      process.stderr.write(c.red("editor failed: ") + (e as Error).message + "\n");
+      process.stderr.write("hint: set $EDITOR to a path on your PATH (e.g. `export EDITOR=code`)\n");
+      return 1;
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(edited); } catch (e) {
+      process.stderr.write(c.red("error: ") + "edited file is not valid JSON: " + (e as Error).message + "\n");
+      return 1;
+    }
+    const rec = parsed as Record<string, unknown>;
+    // The template's `id` is "" — we always assign a
+    // fresh id so the user can re-run `new` without
+    // worrying about collisions.
+    rec.id = "";
+    if (!Array.isArray(rec.nodes) || !Array.isArray(rec.edges)) {
+      process.stderr.write(c.red("error: ") + "workflow must have nodes and edges arrays\n");
+      return 1;
+    }
+    if (typeof rec.name !== "string" || rec.name.length === 0) {
+      process.stderr.write(c.red("error: ") + "workflow must have a non-empty name\n");
+      return 1;
+    }
+    const stored = await store.createOrUpdate({ record: rec as unknown as import("./agent/workflow-types.js").WorkflowRecord });
+    process.stdout.write(c.green("✓ created ") + stored.id + " (" + stored.name + ")\n");
+    return 0;
+  }
+  if (sub === "edit") {
+    const id = args[1];
+    if (!id) { process.stderr.write("usage: ch workflow edit <id>\n"); return 2; }
+    let existing;
+    try { existing = await store.get(id); }
+    catch (e) {
+      if (e instanceof WorkflowStoreError && e.code === "not_found") {
+        process.stderr.write(c.red("no such workflow: ") + id + "\n");
+        return 1;
+      }
+      throw e;
+    }
+    let edited: string;
+    try { edited = openInEditor(JSON.stringify(existing, null, 2) + "\n"); }
+    catch (e) {
+      process.stderr.write(c.red("editor failed: ") + (e as Error).message + "\n");
+      return 1;
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(edited); } catch (e) {
+      process.stderr.write(c.red("error: ") + "edited file is not valid JSON: " + (e as Error).message + "\n");
+      return 1;
+    }
+    const rec = parsed as Record<string, unknown>;
+    // Preserve the id — the user is editing, not
+    // importing. A new id on `edit` would be
+    // surprising.
+    rec.id = id;
+    if (!Array.isArray(rec.nodes) || !Array.isArray(rec.edges) || typeof rec.name !== "string") {
+      process.stderr.write(c.red("error: ") + "edited workflow must keep name, nodes, and edges\n");
+      return 1;
+    }
+    const stored = await store.createOrUpdate({ record: rec as unknown as import("./agent/workflow-types.js").WorkflowRecord });
+    process.stdout.write(c.green("✓ updated ") + stored.id + " (" + stored.name + ")\n");
+    return 0;
+  }
+  if (sub === "delete" || sub === "remove") {
+    const id = args[1];
+    if (!id) { process.stderr.write("usage: ch workflow delete <id>\n"); return 2; }
+    try { await store.delete(id); }
+    catch (e) {
+      if (e instanceof WorkflowStoreError && e.code === "not_found") {
+        process.stderr.write(c.red("no such workflow: ") + id + "\n");
+        return 1;
+      }
+      throw e;
+    }
+    process.stdout.write(c.green("✓ deleted ") + id + "\n");
+    return 0;
+  }
+  if (sub === "run") {
+    const id = args[1];
+    if (!id) { process.stderr.write("usage: ch workflow run <id> [--input k=v ...]\n"); return 2; }
+    // `--input` may appear after the id or interleaved.
+    // We scan the whole args tail starting at index 2
+    // and collect every `k=v` form. The parser also
+    // supports `--input k=v` (the form the spec asks
+    // for).
+    const { inputs } = parseWorkflowInputs(args.slice(2));
+    const ac = new AbortController();
+    process.on("SIGINT", () => ac.abort());
+    let result;
+    try {
+      result = await runtime.runWorkflow(id, { inputs, signal: ac.signal });
+    } catch (e) {
+      if (e instanceof WorkflowStoreError && e.code === "not_found") {
+        process.stderr.write(c.red("no such workflow: ") + id + "\n");
+        return 1;
+      }
+      throw e;
+    }
+    if (ctx.json) {
+      // The WorkflowRunResult has Map fields; serialize
+      // them as plain objects for JSON output.
+      const jsonable = {
+        status: result.status,
+        costUsd: result.costUsd,
+        stepsRun: result.stepsRun,
+        error: result.error,
+        outputs: Object.fromEntries(result.outputs),
+        errors: Object.fromEntries([...result.errors].map(([k, v]) => [k, v.message])),
+      };
+      process.stdout.write(JSON.stringify(jsonable, null, 2) + "\n");
+    } else {
+      const statusColor = result.status === "completed" ? c.green : c.red;
+      process.stdout.write(
+        statusColor(result.status) +
+        " · " + result.stepsRun + " step" + (result.stepsRun === 1 ? "" : "s") +
+        " · cost " + formatUSD(result.costUsd) +
+        (result.error ? " · " + c.red(result.error) : "") +
+        "\n",
+      );
+    }
+    return result.status === "completed" ? 0 : 1;
+  }
+  if (sub === "export") {
+    const id = args[1];
+    if (!id) { process.stderr.write("usage: ch workflow export <id>\n"); return 2; }
+    try {
+      const env = await store.exportWorkflow(id);
+      process.stdout.write(JSON.stringify(env, null, 2) + "\n");
+      return 0;
+    } catch (e) {
+      if (e instanceof WorkflowStoreError && e.code === "not_found") {
+        process.stderr.write(c.red("no such workflow: ") + id + "\n");
+        return 1;
+      }
+      throw e;
+    }
+  }
+  if (sub === "import") {
+    const file = args[1];
+    if (!file) { process.stderr.write("usage: ch workflow import <file>\n"); return 2; }
+    let raw: string;
+    try {
+      const { readFileSync } = require("node:fs") as typeof import("node:fs");
+      raw = readFileSync(file, "utf-8");
+    } catch (e) {
+      process.stderr.write(c.red("error: ") + "could not read " + file + ": " + (e as Error).message + "\n");
+      return 1;
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch (e) {
+      process.stderr.write(c.red("error: ") + "file is not valid JSON: " + (e as Error).message + "\n");
+      return 1;
+    }
+    try {
+      const rec = await store.importWorkflow(parsed);
+      process.stdout.write(c.green("✓ imported ") + rec.id + " (" + rec.name + ")\n");
+      return 0;
+    } catch (e) {
+      process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+      return 1;
+    }
+  }
+  process.stderr.write("usage: ch workflow [list|show <id>|new|edit <id>|delete <id>|run <id> [--input k=v ...]|export <id>|import <file>]\n");
+  return 2;
 }
 
 main().then((code) => { process.exit(code); }).catch((e) => {

@@ -427,14 +427,22 @@ test("delegation: human_approval calls askApproval when wired", async () => {
 
 // ---------- 6. Phase 2 stubs ----------
 
-test("delegation: workflow kind is still a stub (Phase 2)", async () => {
+test("delegation: workflow kind without store returns status=failed with reason (Phase 4 T1)", async () => {
+  // Phase 4 T1 replaced the Phase 2 stub with a real
+  // `runWorkflowKind` that consults the injected
+  // `WorkflowStore`. When the store isn't wired, the
+  // delegation returns a typed `failed` result (not
+  // a throw) — same contract every other kind uses
+  // for "no dep wired" (mcp / plugin / goal).
   const { deps } = makeDeps();
   const mgr = new DelegationManager(deps);
   const w = mgr.submit({ kind: "workflow", workflowId: "wf-1", cwd: tmp });
   const res = await w.result();
   assert.equal(res.kind, "workflow");
   if (res.kind === "workflow") {
-    assert.equal(res.status, "stub");
+    assert.equal(res.status, "failed");
+    assert.match(res.error ?? "", /no workflow store wired/);
+    assert.equal(res.steps, 0);
   }
 });
 

@@ -958,6 +958,109 @@ const loopCommand: SlashCommand = {
   },
 };
 
+// ---------- /workflow (Phase 4 T1) ----------
+//
+// Mirrors `ch workflow *` from `src/cli.ts`. The
+// in-REPL/TUI version of the workflow management
+// surface. The command delegates to the runtime's
+// `workflowStore` (so it sees the same per-user
+// workflows the CLI does) and to `runtime.runWorkflow`
+// for execution. The `new` / `edit` editor flow is
+// NOT mirrored here — the TUI is single-line input
+// and opening $EDITOR from inside the prompt loop
+// would block the readline. Those subcommands remain
+// CLI-only; `/workflow` covers list / show / run /
+// delete (the read-only / execute operations).
+
+const workflowCommand: SlashCommand = {
+  name: "workflow",
+  description: "List, show, run, or delete persisted workflows (agnt-gg-style workflows, ported).",
+  group: "workflow",
+  usage: "/workflow [list|show <id>|run <id>|delete <id>]",
+  async run(args, ctx) {
+    const { WorkflowStore, WorkflowStoreError } = await import("../agent/workflow-store.js");
+    const rt = ctx.runtime?.() as
+      | (NonNullable<SlashContext["runtime"]> extends () => infer R ? R : never)
+      | undefined;
+    if (!rt) return "(no runtime)";
+    // The runtime wires `workflowStore` in the
+    // constructor (Phase 4 T1 step 6). We reach for
+    // the same instance the `delegations` manager
+    // uses so list / show / delete / run all see a
+    // consistent view.
+    const store = (rt as unknown as { workflowStore: InstanceType<typeof WorkflowStore> }).workflowStore;
+    if (!store) return "(workflow store not wired in this runtime)";
+    const parts = args.trim().split(/\s+/);
+    const sub = parts[0];
+    if (!sub || sub === "list") {
+      const all = await store.list();
+      if (all.length === 0) return "(no workflows — use `ch workflow new` to create one)";
+      const lines: string[] = [];
+      lines.push("Workflows (" + all.length + "):");
+      for (const s of all) {
+        lines.push("  " + s.id.padEnd(38) + (s.name ?? "").slice(0, 30).padEnd(32) + s.nodeCount + "/" + s.edgeCount);
+      }
+      return lines.join("\n");
+    }
+    if (sub === "show") {
+      const id = parts[1];
+      if (!id) return "usage: /workflow show <id>";
+      try {
+        const rec = await store.get(id);
+        const lines: string[] = [];
+        lines.push("Workflow: " + rec.id);
+        lines.push("  name:    " + rec.name);
+        if (rec.description) lines.push("  desc:    " + rec.description);
+        lines.push("  nodes:   " + rec.nodes.length);
+        lines.push("  edges:   " + rec.edges.length);
+        for (const n of rec.nodes) {
+          lines.push("    - " + n.id + "  " + n.text + "  (" + n.category + "/" + n.type + ")");
+        }
+        return lines.join("\n");
+      } catch (e) {
+        if (e instanceof WorkflowStoreError && e.code === "not_found") return "no such workflow: " + id;
+        return "show failed: " + (e as Error).message;
+      }
+    }
+    if (sub === "run") {
+      const id = parts[1];
+      if (!id) return "usage: /workflow run <id>";
+      // `/workflow run` does NOT support --input parsing
+      // in the slash form (the args string is positional
+      // and not a full argv parser). Callers that need
+      // inputs use `ch workflow run <id> --input k=v`.
+      rt.print("[workflow] running " + id + "...");
+      try {
+        const result = await (rt as unknown as {
+          runWorkflow: (id: string, opts?: { inputs?: Record<string, unknown> }) => Promise<{
+            status: "completed" | "failed";
+            stepsRun: number;
+            costUsd: number;
+            error?: string;
+          }>;
+        }).runWorkflow(id);
+        rt.print("[workflow] " + result.status + " · " + result.stepsRun + " step" + (result.stepsRun === 1 ? "" : "s") + " · cost $" + result.costUsd.toFixed(6) + (result.error ? " · " + result.error : ""));
+        return result.status === "completed" ? "workflow complete" : "workflow failed";
+      } catch (e) {
+        if (e instanceof WorkflowStoreError && e.code === "not_found") return "no such workflow: " + id;
+        return "run failed: " + (e as Error).message;
+      }
+    }
+    if (sub === "delete" || sub === "remove") {
+      const id = parts[1];
+      if (!id) return "usage: /workflow delete <id>";
+      try {
+        await store.delete(id);
+        return "✓ deleted " + id;
+      } catch (e) {
+        if (e instanceof WorkflowStoreError && e.code === "not_found") return "no such workflow: " + id;
+        return "delete failed: " + (e as Error).message;
+      }
+    }
+    return "usage: /workflow [list|show <id>|run <id>|delete <id>]";
+  },
+};
+
 // ---------- /status / /usage / /think / /verbose / /trace ----------
 
 const statusCommand: SlashCommand = {
@@ -1695,6 +1798,7 @@ BUILTIN_REGISTRY.register(goalCommand);
 BUILTIN_REGISTRY.register(goalsCommand);
 BUILTIN_REGISTRY.register(councilCommand);
 BUILTIN_REGISTRY.register(loopCommand);
+BUILTIN_REGISTRY.register(workflowCommand);
 BUILTIN_REGISTRY.register(exportCommand);
 BUILTIN_REGISTRY.register(statusCommand);
 BUILTIN_REGISTRY.register(usageCommand);

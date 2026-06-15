@@ -5,6 +5,22 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Phase 4 T1 closedout (2026-06-15)
+
+D-WORKFLOW-IMPL — the real in-process `WorkflowEngine` port
+(`Delegation { kind: "workflow" }` is no longer a stub) — landed
+on `main` at `399c88c` via four `--no-ff` merges chained from the
+Phase 4 ratification commit `65234d2`: foundation
+(`ed65376` / `da9c907`), executor + store + engine
+(`46df149` / `0852a5c`), delegation + runtime + CLI + slash
+(`0820460` / `d9b29d4`), and the real agnt-gg
+`automated_email_summarizer.json` E2E
+(`a6dfe0e` / `399c88c`). Final gate: `npm run typecheck` clean,
+`npm test` 694 / 694 / 0 fail across 50 files, stable across
+3 consecutive runs (was 604 at the Phase 3 closeout; +90 net
+new tests). See `docs/phase4.md` for the closeout index and
+per-track decisions. `main` pushed to `origin`.
+
 ### Workflow E2E — load real agnt-gg workflow JSON, execute, assert output (Phase 4 T1 step 8)
 
 Phase 4 T1 step 8 lands an end-to-end test that loads the

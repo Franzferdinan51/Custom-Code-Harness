@@ -3,7 +3,7 @@
 **Ratifies:** [`phase3.md`](./phase3.md) "Tracks explicitly deferred" (D-WORKFLOW-IMPL, D-INSIGHT, D-INK) and the [D-WORKFLOW source audit](./agnt-workflow-audit.md)
 **Source plan:** `plans/plan_phase1/notes/agnt-port-plan.md` §6.3–§6.4
 **Date:** 2026-06-15
-**Status:** READY FOR KICKOFF
+**Status:** T1 SHIPPED 2026-06-15
 
 Phase 3 closed out on 2026-06-10 with the 8-kind `Delegation` union's
 `workflow` kind still as a stub, the D-WORKFLOW audit shipped as
@@ -39,6 +39,49 @@ D-WORKFLOW engine, TS extension loader, MCP client, REPL upgrade).
 Size legend: **S** ≤ 200 LOC, **M** 200–600 LOC, **L** 600+ LOC. All tracks
 assume the Phase 3 baseline (`npm run typecheck` + `npm test` both green;
 604 pass / 0 fail across 44 files, 2026-06-15 snapshot).
+
+---
+
+## T1 Shipped (2026-06-15)
+
+D-WORKFLOW-IMPL landed via four task branches merged in series with
+`--no-ff` to keep the chain visible. The `workflow` kind in the
+8-kind `Delegation` union is no longer a stub; it drives a real
+in-process `WorkflowEngine` end-to-end. Per-track decisions live
+in each branch's deliverable; the closeout index is below.
+
+- **`feat(workflow): foundation — types, graph helpers, template+edge eval`**
+  — commit `ed65376`, merge `da9c907` (T1 steps 1-2 of audit §8.4).
+  3 NEW source files (`workflow-types.ts` 199 LOC, `workflow-graph.ts`
+  273 LOC, `workflow-eval.ts` 373 LOC) + `toolLibrary.json` 62 LOC +
+  2 NEW tests (33 + 19 = 52 tests).
+- **`feat(workflow): executor + store + engine — steps 3-4 of audit §8.4`**
+  — commit `46df149`, merge `0852a5c`. 3 NEW source files
+  (`workflow-store.ts` 387 LOC, `workflow-steps.ts` 398 LOC,
+  `workflow.ts` 503 LOC) + 2 NEW tests (30 tests) + 1 MODIFIED
+  (`paths.ts` added workflows dir).
+- **`feat(workflow): delegation + runtime + CLI + slash — steps 5-7 of audit §8.4`**
+  — commit `0820460`, merge `d9b29d4`. 4 MODIFIED files
+  (`delegation.ts` +276, `runtime.ts` +96, `cli.ts` +395,
+  `slash/builtin.ts` +104) + 1 NEW test (`workflow-cli.test.ts` 6
+  tests) + 1 MODIFIED test (`delegation.test.ts` stub→failed).
+- **`test(workflow): E2E — load real agnt-gg workflow JSON, execute, assert output shape`**
+  — commit `a6dfe0e`, merge `399c88c` (T1 step 8). 2 NEW files
+  (`automated_email_summarizer.json` 198 LOC verbatim from agnt-gg,
+  `workflow-e2e.test.ts` 434 LOC, 2 tests) + 1 MODIFIED
+  (`workflow-steps.ts` +105 — generic `WorkflowToolRegistry` path
+  template-resolves `node.parameters` before dispatch, mirroring
+  agnt-gg `NodeExecutor.js:145`; v1 gap the E2E test surfaced).
+
+**Final gate (T1 closeout moment, 2026-06-15):** `npm run typecheck`
+clean, `npm test` **694 / 694 / 0 fail** across **50 files** stable
+across 3 consecutive runs (was 604 in the Phase 3 baseline; +90 net
+new tests across T1's 8 audit steps). `main` is at `399c88c`;
+`git push origin main` succeeded.
+
+The T1 scope, decision matrix, and target files sections below
+remain unchanged — they are the planner's work, per the Phase 3
+closeout rule (planner-owned, not closeout-rewritten).
 
 ---
 

@@ -66,6 +66,25 @@ test("formatUSD: small amounts show 4 decimals", () => {
   assert.equal(formatUSD(123.45), "$123.45");
 });
 
+test("formatUSD: zero renders as $0.00 (fresh-session cosmetic)", () => {
+  // Pre-fix, formatUSD(0) hit the `< 0.01` branch and returned
+  // "$0.0000" — fine for a number, ugly in the cost UI on a
+  // cold start where the user sees "$0.0000 · session" for the
+  // first turn's pre-model phase.
+  assert.equal(formatUSD(0), "$0.00");
+  assert.equal(formatUSD(0).length, "$0.00".length);
+});
+
+test("formatUSD: negative values render as -$X.XX (refund / correction)", () => {
+  // Pre-fix, formatUSD(-0.5) hit the `< 0.01` branch and
+  // returned "$-0.5000" — a leading minus on a string that
+  // reads as a credit instead of a charge.
+  assert.equal(formatUSD(-0.0001), "-$0.0001");
+  assert.equal(formatUSD(-0.5), "-$0.500");
+  assert.equal(formatUSD(-1.5), "-$1.50");
+  assert.equal(formatUSD(-123.45), "-$123.45");
+});
+
 // ---- approval ----
 
 test("approval: off mode allows everything", () => {

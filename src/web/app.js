@@ -930,6 +930,13 @@ function chainToString(chain) {
 }
 
 function formatUSD(n) {
+  // Mirrors src/agent/cost.ts:formatUSD. Zero renders as
+  // "$0.00" (avoids the "< 0.01" branch returning "$0.0000"
+  // on a fresh session with no usage yet). Negative values
+  // show as "-$X.XX" so a refund / correction reads as a
+  // credit instead of a charge.
+  if (n === 0) return "$0.00";
+  if (n < 0) return "-" + formatUSD(-n);
   if (n < 0.01) return "$" + n.toFixed(4);
   if (n < 1) return "$" + n.toFixed(3);
   return "$" + n.toFixed(2);

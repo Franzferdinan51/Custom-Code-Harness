@@ -119,11 +119,20 @@ export class CostTracker {
     }
     return [...m.values()].sort((a, b) => b.cost - a.cost);
   }
-
-  records_(): UsageRecord[] { return this.records; }
 }
 
 export function formatUSD(n: number): string {
+  // Stable display for the three small / boundary cases that
+  // surface in the cost UI before any model call has run
+  // (`cost` is 0) or during a refund / correction path
+  // (negative cents). Without the explicit `n === 0` guard
+  // the `< 0.01` branch returned `"$0.0000"` for a fresh
+  // session; without the `n < 0` clamp the function emitted
+  // a leading minus and a string that read as a credit instead
+  // of a charge. Both were cosmetic but showed up in the
+  // web UI on every cold start.
+  if (n === 0) return "$0.00";
+  if (n < 0) return "-" + formatUSD(-n);
   if (n < 0.01) return "$" + n.toFixed(4);
   if (n < 1) return "$" + n.toFixed(3);
   return "$" + n.toFixed(2);

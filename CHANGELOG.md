@@ -5,6 +5,35 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### `formatUSD`: zero renders as `$0.00`, negatives render as `-$X.XX`
+
+The cost-UI display helper had two cosmetic-but-recurring
+issues. `formatUSD(0)` hit the `< 0.01` branch and emitted
+`"$0.0000"` — visible in the web UI sidebar's "session
+cost" line on every cold start before the first model
+call had run, and in the runtime's "(tokens in=X out=Y
+· session cost $0.0000)" footer. Negative values rendered
+as `"$-0.5000"`, reading as a credit instead of a charge
+for the rare refund / correction path. Two new tests
+pin the zero and negative contracts; the web app's
+duplicate `formatUSD` was updated in lockstep.
+
+### Cost: drop the dead `CostTracker.records_()` accessor
+
+`CostTracker.records_()` was a `private`-prefixed
+accessor that returned the full record array. It was
+defined, never called, and its name + underscore suffix
+were leftovers from an early sketch — the public
+`perModel()` / `perAgent()` / `total()` accessors are
+what callers use. Removed.
+
+- **fix(cost): `formatUSD` zero + negative + drop dead `records_()`**
+  (`src/agent/cost.ts`, `src/web/app.js`,
+  `src/__tests__/cost-approval.test.ts`):
+  2 new tests cover the zero / negative contract.
+  Full suite 604 pass / 0 fail (was 602 before this
+  session).
+
 ### http tool: configurable `timeout_ms` + GET/DELETE no longer transmit a body
 
 The `http` tool's timeout was hard-coded to 30 seconds

@@ -23,6 +23,9 @@ import { paths } from "./config/paths.js";
 import type { ChatMessage, ToolCall, ToolResult, Provider, ProviderRequest } from "./types.js";
 import { CostTracker, formatUSD, callCost } from "./agent/cost.js";
 import { DEFAULT_APPROVAL, type ApprovalConfig } from "./agent/approval.js";
+import { WorkflowStore } from "./agent/workflow-store.js";
+import { WorkflowEngine, type WorkflowRunResult } from "./agent/workflow.js";
+import { defaultWorkflowToolRegistry } from "./agent/workflow-steps.js";
 import { saveSettings } from "./config/settings.js";
 
 export interface RuntimeOptions {
@@ -92,6 +95,17 @@ export class HarnessRuntime implements SlashRuntime {
   /** Persisted goal store. Scoped to `this.mission` — see
    *  RuntimeOptions.mission. */
   readonly goalStore: GoalStore;
+  /** Phase 4 T1: persisted workflow store. One JSON file
+   *  per workflow at `paths.workflows/<id>.json`. The
+   *  directory is created lazily on first write (not at
+   *  construction) — `WorkflowStore.ensureRoot()` is the
+   *  only place a `mkdir` happens. */
+  readonly workflowStore: import("./agent/workflow-store.js").WorkflowStore;
+  /** Phase 4 T1: built-in workflow tool registry. v1 ships
+   *  empty (4 built-in types are inlined in `NodeExecutor` for
+   *  cost-tracking proximity). T1.5 follow-ups register more
+   *  types here without touching the engine. */
+  readonly workflowToolRegistry: import("./agent/workflow-steps.js").WorkflowToolRegistry;
   /** Sub-agents spawned during this session. */
   readonly subagentHistory: Array<{ name: string; prompt: string; status: string; at: number; cost: number; steps: number }> = [];
 
@@ -173,6 +187,17 @@ export class HarnessRuntime implements SlashRuntime {
     this.subagents = new SubAgentManager(this.providerRegistry, this.settings, { cwd: this.cwd });
     this.mission = opts.mission ?? "default";
     this.goalStore = new GoalStore({ mission: this.mission });
+    // Phase 4 T1: lazy workflow store. The store's
+    // constructor does NOT mkdir — `ensureRoot()` is
+    // called on first write. The same pattern is used by
+    // `GoalStore` (no eager mkdir on import).
+    this.workflowStore = new WorkflowStore();
+    this.workflowToolRegistry = defaultWorkflowToolRegistry();
+    // Resolve the default provider / model for the
+    // `generate-with-ai-llm` node. The `providerRegistry.default()`
+    // is the same lookup the agent loop uses, so the workflow
+    // engine sees the same provider as the chat loop.
+    const defaultProvider = this.providerRegistry.default();
     this.delegations = new DelegationManager({
       providers: this.providerRegistry,
       settings: this.settings,
@@ -180,6 +205,17 @@ export class HarnessRuntime implements SlashRuntime {
       subagent: this.subagents,
       goalStore: this.goalStore,
       runGoalAgent: this.buildRunGoalAgent(),
+      // Phase 4 T1: forward the workflow deps so the
+      // `workflow` delegation kind can instantiate a
+      // `WorkflowEngine` against the wired store. All
+      // four fields are optional on `DelegationRuntimeDeps`,
+      // so existing tests that skip this wiring still
+      // pass (the `runWorkflowKind` returns a typed
+      // `failed` result with "no workflow store wired").
+      workflowStore: this.workflowStore,
+      workflowToolRegistry: this.workflowToolRegistry,
+      ...(defaultProvider ? { workflowProvider: defaultProvider } : {}),
+      ...(this.settings.defaultModel ? { workflowModel: this.settings.defaultModel } : {}),
     });
     this.skills = new SkillRegistry({ cwd: this.cwd });
     this.memory = new MemoryStore();
@@ -831,6 +867,66 @@ export class HarnessRuntime implements SlashRuntime {
       });
       return { content: result.final.content, steps: result.steps };
     };
+  }
+
+  /**
+   * Phase 4 T1: run a workflow to completion. Returns the
+   * engine's `WorkflowRunResult` (with status, costUsd,
+   * stepsRun, outputs, errors). The CLI's `ch workflow run
+   * <id>` calls this directly; the `/workflow` slash command
+   * can use it too.
+   *
+   * The engine runs **inline** (not detached) per the
+   * audit's open question #2 resolution: v1 is
+   * in-process, fire-and-forget. The `signal` is wired
+   * from the caller's AbortController; the engine's
+   * post-abort state (steps / cost) is still readable so
+   * partial work isn't lost (mirrors the Phase 3 T1
+   * goal-store fix at commit `e721c55`).
+   *
+   * Failure modes:
+   *   - Workflow not found: throws `WorkflowStoreError`
+   *     (the CLI catches it and prints "no such workflow").
+   *   - No provider configured (and the workflow has a
+   *     `generate-with-ai-llm` node): the engine runs but
+   *     the LLM step returns `{ generatedText: "", error:
+   *     "no provider wired" }` and the run ends in
+   *     `failed` — the same contract the executor uses
+   *     for "no provider" (see `workflow-steps.ts`).
+   *   - Workflow has a `mcp-client` node and the runtime
+   *     has no `McpRegistry` wired: the executor returns
+   *     `{ result: null, error: "no MCP registry wired" }`
+   *     for that step (matches the existing
+   *     `executeMcpClient` contract). T1.5 follow-ups
+   *     can wire the runtime's `McpRegistry` here without
+   *     touching the engine.
+   *
+   * Public so tests can drive a workflow without going
+   * through the CLI / slash command.
+   */
+  async runWorkflow(
+    workflowId: string,
+    opts: {
+      inputs?: Record<string, unknown>;
+      signal?: AbortSignal;
+      maxCostUsd?: number;
+    } = {},
+  ): Promise<WorkflowRunResult> {
+    const record = await this.workflowStore.get(workflowId);
+    const triggerData: Record<string, unknown> = {
+      trigger: { kind: "manual", ...(opts.inputs ?? {}) },
+      inputs: opts.inputs ?? {},
+    };
+    const defaultProvider = this.providerRegistry.default();
+    const engine = new WorkflowEngine(record, {
+      provider: defaultProvider ?? undefined,
+      model: this.settings.defaultModel,
+      tools: this.workflowToolRegistry,
+      triggerData,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      ...(opts.maxCostUsd !== undefined ? { maxCostUsd: opts.maxCostUsd } : {}),
+    });
+    return await engine._executeWorkflow();
   }
 
   /**

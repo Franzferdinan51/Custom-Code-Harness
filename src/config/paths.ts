@@ -34,6 +34,13 @@ export const paths = {
   get cron() { return join(home(), "cron"); },
   get memory() { return join(home(), "memory"); },
   get context() { return join(home(), "context"); },
+  /** Workflow records — one JSON file per workflow at
+   *  `<id>.json`. Created lazily on first write by
+   *  `WorkflowStore` (see `src/agent/workflow-store.ts`). The
+   *  per-file layout (not a JSONL log, not SQLite) matches the
+   *  audit's git-versionable framing and the `session.ts`
+   *  pattern. */
+  get workflows() { return join(home(), "workflows"); },
   /** Legacy single-file v1/v2 location. New code reads/writes the
    *  per-mission state via `goalsMissionFile(mission)` instead.
    *  Kept here as a sentinel so the legacy migration can detect
@@ -59,7 +66,7 @@ export const paths = {
 } as const;
 
 export function ensurePaths(): void {
-  for (const dir of [paths.home, paths.sessions, paths.logs, paths.cache, paths.extensions, paths.prompts, paths.skills, paths.agents, paths.cron, paths.memory, paths.context]) {
+  for (const dir of [paths.home, paths.sessions, paths.logs, paths.cache, paths.extensions, paths.prompts, paths.skills, paths.agents, paths.cron, paths.memory, paths.context, paths.workflows]) {
     mkdirSync(dir, { recursive: true });
   }
 }

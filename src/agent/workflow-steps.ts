@@ -37,7 +37,7 @@
 import { runInNewContext, type Context } from "node:vm";
 
 import { callCost } from "./cost.js";
-import { resolveTemplate } from "./workflow-eval.js";
+import { resolveTemplate, buildNodeTextMap } from "./workflow-eval.js";
 import type { McpCallResult, McpRegistry } from "./delegation.js";
 import type { Provider, ProviderRequest, ProviderStreamEvent } from "../types.js";
 import type { ChatMessage } from "../types.js";
@@ -226,8 +226,42 @@ export class NodeExecutor {
                 node.id,
             );
         }
+        // Template resolution for the generic tool path.
+        // The agnt-gg `NodeExecutor` runs every node's
+        // `node.parameters` through
+        // `parameterResolver.resolveParameters` before
+        // dispatching (`NodeExecutor.js:145`). The v1 port
+        // inlines that resolution for the two built-in
+        // types that read params as strings
+        // (`generate-with-ai-llm` for the `prompt`,
+        // `execute-javascript` reads `code` raw — see
+        // "Known fixture/engine mismatch" comment in
+        // `workflow-e2e.test.ts`). For the
+        // `WorkflowToolRegistry` path we walk the
+        // `params` object and resolve every string value
+        // through `resolveTemplate`, using the
+        // already-executed nodes' outputs as the lookup
+        // source. The `nodeTextToOutputs` fallback is
+        // built lazily per call (audit §7 #4 — nodeId is
+        // primary; nodeText is a fallback for agnt-gg
+        // imports). Recursion is bounded — a
+        // self-referencing `{{nodeA.x}}` in a param of
+        // `nodeA` would not loop because `nodeA`'s
+        // output is not yet in `engine.outputs` at the
+        // time we resolve. For a node that depends on
+        // its own prior output (e.g. a loop body's
+        // first iteration), the prior execution's
+        // output is in the map.
+        const outputs = Object.fromEntries(engine.outputs);
+        const nodeTextToOutputs = buildNodeTextMapForResolve(workflow.nodes, outputs);
+        const resolvedParams = resolveParams(
+            node.parameters,
+            outputs,
+            engine.currentTriggerData,
+            nodeTextToOutputs,
+        );
         return entry.fn({
-            params: node.parameters,
+            params: resolvedParams,
             inputData,
             workflow,
             engine,
@@ -396,3 +430,70 @@ export function defaultWorkflowToolRegistry(): WorkflowToolRegistry {
  *  intentionally keep the alias narrow — anything more
  *  would couple the engine to provider internals. */
 export type { ProviderStreamEvent };
+
+// ---------- params template resolution (generic tool path) ----------
+
+/** Wrapper around `buildNodeTextMap` so the executor's
+ *  template-resolution pass uses the same nodeText map
+ *  builder the engine's edge evaluator uses. Kept as a
+ *  function for stack-trace clarity in error reports
+ *  (the call site reads "we are resolving tool params"
+ *  not "we are evaluating an edge condition"). */
+function buildNodeTextMapForResolve(
+    nodes: ReadonlyArray<WorkflowNode>,
+    outputs: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+    return buildNodeTextMap(nodes, outputs);
+}
+
+/** Walk a `node.parameters` object and resolve every
+ *  string value through `resolveTemplate`. Non-string
+ *  values pass through unchanged. Objects and arrays
+ *  are walked recursively so deeply-nested params
+ *  (e.g. `args: { foo: "{{x}}" }` on an `mcp-client`
+ *  node) are also resolved.
+ *
+ *  The resolution is bounded: a `{{self}}` reference
+ *  inside a node's own params would not loop because
+ *  the current node's output is not yet in
+ *  `engine.outputs` at the time we resolve. Loops
+ *  re-execute after the first pass writes back into
+ *  `engine.outputs`, so subsequent iterations see the
+ *  resolved values. */
+function resolveParams(
+    params: Record<string, unknown>,
+    outputs: Readonly<Record<string, unknown>>,
+    currentTriggerData: Readonly<Record<string, unknown>>,
+    nodeTextToOutputs: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(params)) {
+        out[k] = resolveValue(v, outputs, currentTriggerData, nodeTextToOutputs);
+    }
+    return out;
+}
+
+function resolveValue(
+    v: unknown,
+    outputs: Readonly<Record<string, unknown>>,
+    currentTriggerData: Readonly<Record<string, unknown>>,
+    nodeTextToOutputs: Readonly<Record<string, unknown>>,
+): unknown {
+    if (typeof v === "string") {
+        // If the string has no `{{`, short-circuit to
+        // avoid the regex pass.
+        if (!v.includes("{{")) return v;
+        return resolveTemplate(v, outputs, currentTriggerData, nodeTextToOutputs);
+    }
+    if (Array.isArray(v)) {
+        return v.map((item) => resolveValue(item, outputs, currentTriggerData, nodeTextToOutputs));
+    }
+    if (v !== null && typeof v === "object") {
+        const out: Record<string, unknown> = {};
+        for (const [k, item] of Object.entries(v as Record<string, unknown>)) {
+            out[k] = resolveValue(item, outputs, currentTriggerData, nodeTextToOutputs);
+        }
+        return out;
+    }
+    return v;
+}

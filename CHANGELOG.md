@@ -5,6 +5,81 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Workflow E2E — load real agnt-gg workflow JSON, execute, assert output (Phase 4 T1 step 8)
+
+Phase 4 T1 step 8 lands an end-to-end test that loads the
+real `agnt-gg` `automated_email_summarizer.json` (8 nodes,
+6 edges, 1 trigger, 2 LLM calls, 2 `execute-javascript`
+utilities, 2 `send-email` actions, 1 disconnected `label`)
+into a `WorkflowEngine` and asserts the output shape
+matches the agnt-gg engine's. Two tests:
+
+1. **Direct engine** — instantiates a `WorkflowEngine`
+   with the fixture + a `WorkflowToolRegistry` carrying
+   stubs for the three agnt-gg-specific types
+   (`receive-email`, `send-email`, `webhook-listener`),
+   runs `_executeWorkflow`, and asserts:
+   - `result.status === "completed"`
+   - `engine.outputs` has one entry per executed node
+     (7 of 8; the `label` node has no edges)
+   - `stepEnd` events fire in the expected BFS tree-walk
+     order: `receiveEmail → summarizeEmail → processResults
+     → generateResponse → logSummaryData → sendResponse
+     → notifyTeam`
+   - The two `send-email` stub calls are recorded, and
+     `sendResponse`'s `body` is the resolved LLM
+     `generatedText` (the fixture's
+     `{{generateResponse.generatedText}}` template
+     resolves to the second LLM call's reply)
+   - `engine.costAccumulator > 0` and matches
+     `2 × callCost("claude-3-haiku-20240307", 100, 50)`
+     (the fixture hard-codes the claude-3-haiku model on
+     each LLM node)
+2. **Full `runWorkflowKind` path** — persists the fixture
+   to a `WorkflowStore`, wires a `DelegationManager` with
+   the same stubs, submits a `WorkflowDelegation`, awaits
+   the result, and asserts the `DelegationResult` shape:
+   `kind: "workflow"`, `status: "completed"`, `steps: 7`,
+   `costUsd > 0`, `error === undefined`. Two `send-email`
+   calls fire through the full runtime path.
+
+**One small engine fix shipped with the test:**
+
+The v1 port's `NodeExecutor.executeCustom` for the
+generic `WorkflowToolRegistry` path passed
+`node.parameters` raw to the registered tool function.
+The agnt-gg engine resolves every node's params through
+`parameterResolver.resolveParameters` before dispatching
+(`NodeExecutor.js:145`); the v1 port was missing this
+pass for the non-built-in action types. Without it, the
+fixture's `send-email` nodes received the literal
+`{{generateResponse.generatedText}}` string in their
+`body` instead of the resolved value.
+
+The fix is in `src/agent/workflow-steps.ts`:
+`executeCustom` now walks `node.parameters`, resolving
+every string value through `resolveTemplate` using the
+engine's already-executed outputs map (plus the
+`nodeTextToOutputs` fallback for agnt-gg imports). The
+two built-in types that read params as strings
+(`generate-with-ai-llm` for `prompt`,
+`execute-javascript` for `code`) are unchanged — the
+LLM inlines its own template resolution; the JS node is
+a separate T1.5 enhancement (see the "known gap"
+comment in `workflow-e2e.test.ts`).
+
+**Target files:**
+- `src/__tests__/fixtures/automated_email_summarizer.json`
+  NEW (198 LOC, verbatim from
+  `agnt-gg/backend/src/stream/example_workflows/`)
+- `src/__tests__/workflow-e2e.test.ts` NEW (~440 LOC)
+- `src/agent/workflow-steps.ts` MODIFIED (+103 LOC) —
+  generic tool path template resolution
+
+**Gate:** `npm run typecheck` clean; `npm test`
+692 → 694 pass (2 new E2E tests, 0 fail), 5/5 stable
+runs of both the E2E in isolation and the full suite.
+
 ### Workflow integration — delegation + runtime + CLI + slash (Phase 4 T1 steps 5-7)
 
 Phase 4 T1 is the real port of the agnt-gg workflow

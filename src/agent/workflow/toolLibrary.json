@@ -1,0 +1,62 @@
+{
+    "version": 1,
+    "description": "Stub tool library for v1 workflow engine — see docs/agnt-workflow-audit.md §6.3. Hard-coded minimum set; the real WorkflowToolRegistry (T1 step 4) will replace this with a dynamic loader that reads from the same paths agnt-gg uses (tools/library/{triggers,actions,utilities,controls}/).",
+    "types": {
+        "generate-with-ai-llm": {
+            "category": "action",
+            "icon": "magic",
+            "description": "Single LLM call — stateless, one-shot, no sub-agent loop.",
+            "inputs": ["provider", "model", "prompt", "maxTokens", "temperature"],
+            "outputs": ["generatedText", "tokenCount", "error"]
+        },
+        "mcp-client": {
+            "category": "mcp",
+            "icon": "plug",
+            "description": "Invoke a tool on a registered MCP server. Resolved by McpRegistry at step-execution time.",
+            "inputs": ["serverId", "tool", "args"],
+            "outputs": ["result", "error"]
+        },
+        "execute-javascript": {
+            "category": "utility",
+            "icon": "code",
+            "description": "Run a JS snippet with the previous step's output as inputData. Sandboxed.",
+            "inputs": ["code", "inputData"],
+            "outputs": ["result", "error"]
+        },
+        "for-loop": {
+            "category": "control",
+            "icon": "repeat",
+            "description": "Iterate over an array. Has a 'done' output (one per iteration) and a 'loop' output (after the last iteration). Bounded by edge.maxIterations.",
+            "inputs": ["items", "variableName"],
+            "outputs": ["item", "index", "done"]
+        },
+        "delay": {
+            "category": "control",
+            "icon": "clock",
+            "description": "Pause for N milliseconds before continuing. Resolved as a control-flow node — does not appear as a Delegation kind.",
+            "inputs": ["ms"],
+            "outputs": []
+        },
+        "stop-workflow": {
+            "category": "control",
+            "icon": "stop",
+            "description": "Built-in terminator — sets engine.stopRequested=true with an optional reason.",
+            "inputs": ["reason"],
+            "outputs": []
+        },
+        "webhook-listener": {
+            "category": "trigger",
+            "icon": "webhook",
+            "description": "Long-lived HTTP listener. Trigger lifecycle is a property of the WorkflowDelegation (manual/webhook/timer), not a sibling kind (audit §5.1 #1).",
+            "inputs": ["path", "method"],
+            "outputs": ["body", "headers", "query"]
+        },
+        "trigger-timer": {
+            "category": "trigger",
+            "icon": "timer",
+            "description": "Cron-style timer trigger. Same as webhook-listener — trigger config is a property of the WorkflowDelegation.",
+            "inputs": ["cron"],
+            "outputs": ["firedAt"]
+        }
+    }
+}

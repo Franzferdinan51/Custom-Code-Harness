@@ -5,6 +5,70 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Workflow foundation — types, graph helpers, template + edge eval (Phase 4 T1 steps 1-2)
+
+Phase 4 track T1 (D-WORKFLOW-IMPL) is the real port of the
+agnt-gg workflow engine into our `Delegation { kind: "workflow" }`
+kind. This is the foundation half — types, pure graph helpers,
+and the `{{template}}` + edge condition evaluator. No runtime
+integration yet; the engine wiring (steps 3-7) lands in
+follow-up commits.
+
+Per [`docs/agnt-workflow-audit.md` §8.4](./agnt-workflow-audit.md#84-order-of-work-proposed-for-the-follow-up-plan)
+the foundation ships two of the eight T1 steps:
+
+1. **`src/agent/workflow-types.ts`** — synthesized
+   `WorkflowRecord`, `WorkflowNode`, `WorkflowEdge`,
+   `WorkflowCondition` interfaces from audit §2.2-2.4. Strict
+   types, `noUncheckedIndexedAccess` safe. `outputs` on
+   `WorkflowNode` is a schema, not a value (per audit §2.3).
+2. **`src/agent/workflow/toolLibrary.json`** — stub tool library
+   with 8 hard-coded v1 step types
+   (`generate-with-ai-llm`, `mcp-client`, `execute-javascript`,
+   `for-loop`, `delay`, `stop-workflow`, `webhook-listener`,
+   `trigger-timer`). The T1 step 4 `WorkflowToolRegistry` will
+   replace this with a dynamic loader.
+3. **`src/agent/workflow-graph.ts`** — 8 pure helpers ported
+   from `agnt-gg/backend/src/services/WorkflowManipulationService.js`:
+   `calculateAutoLayout` (300x150 grid snapping),
+   `validateNodeType` (warns on unknown, returns true — graceful
+   degradation matches agnt-gg), `validateNodeConnections` (catches
+   missing nodes + self-loops), `cleanupOrphanedEdges`,
+   `generateNodeId` / `generateEdgeId` (UUID-based),
+   `diffWorkflows` (returns `nodesAdded/Removed/Modified/edgesAdded/Removed`
+   with counts), `findNodeByIdentifier` (id or case-insensitive
+   label), `buildNodeReferenceMap` (formats as
+   `[1] "label" (id: x, type: y)` for LLM context).
+4. **`src/agent/workflow-eval.ts`** — 10 condition operators
+   (`is_empty`, `is_not_empty`, `equals`, `not_equals`,
+   `greater_than`, `less_than`, `greater_than_or_equal`,
+   `less_than_or_equal`, `contains`, `not_contains`) from
+   audit §4.3 + the `{{template}}` resolver. Per
+   [phase4 T1 decision #4](./phase4.md#t1--d-workflow-impl--workflow-real-port-headline)
+   the resolver prefers `nodeId`
+   (`{{node_abc123.field.subfield[0]}}`) over `nodeName`; the
+   agnt-gg name-based fallback is supported for back-compat
+   with imported workflows. Special prefixes `trigger` and
+   `input` resolve to `currentTriggerData[prefix]` (audit §3.2).
+   The resolver takes `outputs` + `currentTriggerData` as args,
+   not a class instance — pure, testable in isolation.
+5. **`src/__tests__/workflow-graph.test.ts`** + **`workflow-eval.test.ts`** —
+   52 unit tests (33 graph + 19 eval) using `node:test` +
+   `node:assert` to match the existing test style.
+
+- **feat(workflow): foundation — types, graph helpers, template+edge eval**
+  (`src/agent/workflow-types.ts` NEW,
+  `src/agent/workflow-graph.ts` NEW,
+  `src/agent/workflow-eval.ts` NEW,
+  `src/agent/workflow/toolLibrary.json` NEW,
+  `src/__tests__/workflow-graph.test.ts` NEW,
+  `src/__tests__/workflow-eval.test.ts` NEW):
+  Phase 4 T1 steps 1-2 land. 604 → 656 pass (52 new tests, 0 fail).
+  No modifications to `delegation.ts`, `runtime.ts`, `cli.ts`, or
+  any existing file. No dependency additions (`node:crypto`
+  for UUIDs, as used elsewhere). Foundation only — engine
+  integration (steps 3-7) follows in subsequent commits.
+
 ### `formatUSD`: zero renders as `$0.00`, negatives render as `-$X.XX`
 
 The cost-UI display helper had two cosmetic-but-recurring

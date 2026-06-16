@@ -426,11 +426,15 @@ export class WorkflowEngine extends EventEmitter {
         // (per-workflow-run, not per-tree).
         const subEngine = new WorkflowEngine(subRecord, {
             // Reuse the executor deps from the parent so
-            // tools / providers stay consistent.
-            provider: this.nodeExecutor["deps"].provider,
-            model: this.nodeExecutor["deps"].model,
-            mcpRegistry: this.nodeExecutor["deps"].mcpRegistry,
-            tools: this.nodeExecutor["deps"].tools,
+            // tools / providers stay consistent. The
+            // `getDep` accessor avoids the
+            // `this.nodeExecutor["deps"]` private-field
+            // bracket-access that compiled under TypeScript
+            // but read as a code smell.
+            provider: this.nodeExecutor.getDep("provider"),
+            model: this.nodeExecutor.getDep("model"),
+            mcpRegistry: this.nodeExecutor.getDep("mcpRegistry"),
+            tools: this.nodeExecutor.getDep("tools"),
             triggerData: this.currentTriggerData,
             signal: this.signal,
         }, { isSubWorkflow: true });

@@ -230,11 +230,55 @@ function nodeEqual(a: WorkflowNode, b: WorkflowNode): boolean {
     return true;
 }
 
-/** Stable JSON-stringify-based deep equality. Keys are sorted
- *  so `{"a":1,"b":2}` and `{"b":2,"a":1}` compare equal. */
+/** Deep equality for two arbitrary values. The two
+ *  pre-fix strategies both had a bug:
+ *  - `JSON.stringify(a) === JSON.stringify(b)` is
+ *    key-order sensitive: `{a:1,b:2}` and `{b:2,a:1}` produce
+ *    different strings.
+ *  - `JSON.stringify(a, Object.keys(a).sort()) === ...`
+ *    was supposed to fix the key order, but
+ *    `JSON.stringify`'s second arg is a *replacer*, not a
+ *    key-sorter. When passed an array of keys, it filters
+ *    the output to ONLY those keys — and keeps them in
+ *    the *source* object's key order. So two structurally
+ *    equal objects with different key orders still
+ *    produce different strings.
+ *
+ *  The fix is a small custom deep-equal that recursively
+ *  compares arrays element-by-element and object keys
+ *  independently of insertion order. Cheaper than a JSON
+ *  round-trip, no parse / re-stringify allocation, and
+ *  matches what callers actually mean by "node equal". */
 function jsonEqual(a: unknown, b: unknown): boolean {
-    return JSON.stringify(a, Object.keys(a as object).sort()) ===
-        JSON.stringify(b, Object.keys(b as object).sort());
+    if (a === b) return true;
+    if (a === null || b === null) return false;
+    if (typeof a !== typeof b) return false;
+    if (Array.isArray(a)) {
+        if (!Array.isArray(b)) return false;
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) {
+            if (!jsonEqual(a[i], b[i])) return false;
+        }
+        return true;
+    }
+    if (typeof a === "object" && typeof b === "object") {
+        const ak = Object.keys(a as Record<string, unknown>);
+        const bk = Object.keys(b as Record<string, unknown>);
+        if (ak.length !== bk.length) return false;
+        // Key presence + value compare. We don't need a
+        // separate key-set check because length-equal
+        // AND every key from `a` is in `b` is enough
+        // (length-equal implies the sets are equal).
+        for (const k of ak) {
+            if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+            if (!jsonEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+        }
+        return true;
+    }
+    // Primitives — the strict `===` above handled the
+    // same-value case; this branch is "same type, different
+    // value" (e.g. 1 vs 2).
+    return false;
 }
 
 // ---------- 7. findNodeByIdentifier ----------

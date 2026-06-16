@@ -5,327 +5,53 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
-### Phase 4 T1 closedout (2026-06-15)
+### Phase 4 T1 (D-WORKFLOW-IMPL) post-merge cleanups
 
-D-WORKFLOW-IMPL — the real in-process `WorkflowEngine` port
-(`Delegation { kind: "workflow" }` is no longer a stub) — landed
-on `main` at `399c88c` via four `--no-ff` merges chained from the
-Phase 4 ratification commit `65234d2`: foundation
-(`ed65376` / `da9c907`), executor + store + engine
-(`46df149` / `0852a5c`), delegation + runtime + CLI + slash
-(`0820460` / `d9b29d4`), and the real agnt-gg
-`automated_email_summarizer.json` E2E
-(`a6dfe0e` / `399c88c`). Final gate: `npm run typecheck` clean,
-`npm test` 694 / 694 / 0 fail across 50 files, stable across
-3 consecutive runs (was 604 at the Phase 3 closeout; +90 net
-new tests). See `docs/phase4.md` for the closeout index and
-per-track decisions. `main` pushed to `origin`.
+Three code-quality / correctness fixes that didn't make
+it into the original Phase 4 T1 PRs but were found on
+the first read of the new code:
 
-### Workflow E2E — load real agnt-gg workflow JSON, execute, assert output (Phase 4 T1 step 8)
+- **`workflow-graph.jsonEqual` deep-equal was
+  key-order-insensitive AND nested-value-blind**
+  (`src/agent/workflow-graph.ts`): the helper was meant
+  to give a "stable" deep-equal via
+  `JSON.stringify(a, Object.keys(a).sort()) === ...`, but
+  `JSON.stringify`'s second arg is a *replacer*, not a
+  key-sorter. Pass it an array of keys and it filters
+  the output to *only* those keys — meaning two
+  structurally-different objects with different
+  nested values both stringify to the same string and
+  are reported equal (e.g. `{outer:{y:2}}` and
+  `{outer:{y:99}}` both became `'{"outer":{}}'`).
+  `diffWorkflows` then *missed* real modifications. The
+  fix is a small recursive deep-equal that walks the
+  structure directly. New test in
+  `src/__tests__/workflow-graph.test.ts` pins both
+  halves of the contract: same shape / different key
+  order is "no diff", and different nested values is
+  "modified".
 
-Phase 4 T1 step 8 lands an end-to-end test that loads the
-real `agnt-gg` `automated_email_summarizer.json` (8 nodes,
-6 edges, 1 trigger, 2 LLM calls, 2 `execute-javascript`
-utilities, 2 `send-email` actions, 1 disconnected `label`)
-into a `WorkflowEngine` and asserts the output shape
-matches the agnt-gg engine's. Two tests:
+- **`workflow-steps.executeNode` had a dead
+  `case "stop-workflow" as string:` arm**
+  (`src/agent/workflow-steps.ts`): the literal
+  `"stop-workflow"` is not a valid `WorkflowNodeCategory`
+  (the union is `trigger | action | utility | control |
+  widget | custom | mcp`), so this case label was
+  unreachable. The real `stop-workflow` handling is in
+  the `case "control":` arm via the `if (node.type ===
+  "stop-workflow")` check. The dead label was a code
+  smell — it implied `node.category === "stop-workflow"`
+  was a real possibility. Removed.
 
-1. **Direct engine** — instantiates a `WorkflowEngine`
-   with the fixture + a `WorkflowToolRegistry` carrying
-   stubs for the three agnt-gg-specific types
-   (`receive-email`, `send-email`, `webhook-listener`),
-   runs `_executeWorkflow`, and asserts:
-   - `result.status === "completed"`
-   - `engine.outputs` has one entry per executed node
-     (7 of 8; the `label` node has no edges)
-   - `stepEnd` events fire in the expected BFS tree-walk
-     order: `receiveEmail → summarizeEmail → processResults
-     → generateResponse → logSummaryData → sendResponse
-     → notifyTeam`
-   - The two `send-email` stub calls are recorded, and
-     `sendResponse`'s `body` is the resolved LLM
-     `generatedText` (the fixture's
-     `{{generateResponse.generatedText}}` template
-     resolves to the second LLM call's reply)
-   - `engine.costAccumulator > 0` and matches
-     `2 × callCost("claude-3-haiku-20240307", 100, 50)`
-     (the fixture hard-codes the claude-3-haiku model on
-     each LLM node)
-2. **Full `runWorkflowKind` path** — persists the fixture
-   to a `WorkflowStore`, wires a `DelegationManager` with
-   the same stubs, submits a `WorkflowDelegation`, awaits
-   the result, and asserts the `DelegationResult` shape:
-   `kind: "workflow"`, `status: "completed"`, `steps: 7`,
-   `costUsd > 0`, `error === undefined`. Two `send-email`
-   calls fire through the full runtime path.
-
-**One small engine fix shipped with the test:**
-
-The v1 port's `NodeExecutor.executeCustom` for the
-generic `WorkflowToolRegistry` path passed
-`node.parameters` raw to the registered tool function.
-The agnt-gg engine resolves every node's params through
-`parameterResolver.resolveParameters` before dispatching
-(`NodeExecutor.js:145`); the v1 port was missing this
-pass for the non-built-in action types. Without it, the
-fixture's `send-email` nodes received the literal
-`{{generateResponse.generatedText}}` string in their
-`body` instead of the resolved value.
-
-The fix is in `src/agent/workflow-steps.ts`:
-`executeCustom` now walks `node.parameters`, resolving
-every string value through `resolveTemplate` using the
-engine's already-executed outputs map (plus the
-`nodeTextToOutputs` fallback for agnt-gg imports). The
-two built-in types that read params as strings
-(`generate-with-ai-llm` for `prompt`,
-`execute-javascript` for `code`) are unchanged — the
-LLM inlines its own template resolution; the JS node is
-a separate T1.5 enhancement (see the "known gap"
-comment in `workflow-e2e.test.ts`).
-
-**Target files:**
-- `src/__tests__/fixtures/automated_email_summarizer.json`
-  NEW (198 LOC, verbatim from
-  `agnt-gg/backend/src/stream/example_workflows/`)
-- `src/__tests__/workflow-e2e.test.ts` NEW (~440 LOC)
-- `src/agent/workflow-steps.ts` MODIFIED (+103 LOC) —
-  generic tool path template resolution
-
-**Gate:** `npm run typecheck` clean; `npm test`
-692 → 694 pass (2 new E2E tests, 0 fail), 5/5 stable
-runs of both the E2E in isolation and the full suite.
-
-### Workflow integration — delegation + runtime + CLI + slash (Phase 4 T1 steps 5-7)
-
-Phase 4 T1 is the real port of the agnt-gg workflow
-engine into our `Delegation { kind: "workflow" }` kind.
-The foundation (steps 1-2) shipped the types + graph
-helpers + template evaluator; the executor (steps 3-4)
-shipped the engine + store + tool registry. This commit
-closes steps 5-7 — the integration layer that wires
-those pieces into the runtime's discriminated-union
-delegation manager, the CLI subcommands, and the
-in-REPL `/workflow` slash command.
-
-Per [`docs/agnt-workflow-audit.md` §8.4](./agnt-workflow-audit.md#84-order-of-work-proposed-for-the-follow-up-plan)
-the integration ships three of the eight T1 steps:
-
-5. **`src/agent/delegation.ts` updates** —
-   - `WorkflowDelegation` gains a closed `trigger?`
-     discriminated union (`{ kind: "manual" }` /
-     `{ kind: "webhook"; path }` /
-     `{ kind: "timer"; cron }`). v1 only honors
-     `manual`; webhook / timer are T1.5 follow-ups
-     (long-lived listeners that survive a CLI exit —
-     the audit's open question #2 resolution:
-     "in-process, fire-and-forget").
-   - `DelegationResult { kind: "workflow" }` expands
-     from `{ workflowId, status: "stub" }` to
-     `{ workflowId, status: "completed" | "failed" | "running", steps, error?, costUsd? }`.
-     `status: "running"` is reserved for a future
-     "detach" mode; v1 is fire-and-forget so the
-     runtime always sees the terminal status.
-     `costUsd` tracks the per-run cap usage
-     (audit decision #3).
-   - The Phase 2 `runStubKind` is replaced with
-     `runWorkflowKind`, which loads the workflow
-     record from the wired `WorkflowStore`,
-     instantiates a `WorkflowEngine` against the
-     wired `WorkflowToolRegistry` + the runtime's
-     configured provider / model, and awaits
-     `_executeWorkflow()`. The abort path reads
-     the engine's final state (steps / cost) so
-     partial work isn't lost — mirrors the Phase 3
-     T1 goal-store fix at commit `e721c55`.
-   - New optional fields on `DelegationRuntimeDeps`:
-     `workflowStore`, `workflowToolRegistry`,
-     `workflowProvider`, `workflowModel`,
-     `workflowMaxCostUsd`. All optional so
-     existing tests that don't wire them still
-     pass (the runner returns a typed `failed`
-     result with "no workflow store wired" when
-     unset — matches the `mcp` / `plugin` / `goal`
-     "no dep wired" pattern).
-
-6. **`src/runtime.ts` wiring** — `HarnessRuntime`
-   now exposes:
-   - `runtime.workflowStore: WorkflowStore` —
-     constructed lazily against
-     `paths.workflows` (`~/.codingharness/workflows/`).
-     The directory is created on first write, not
-     at construction; matches the `GoalStore`
-     pattern (no eager mkdir on import).
-   - `runtime.workflowToolRegistry: WorkflowToolRegistry` —
-     the v1 default registry. Empty in v1 (the 4
-     built-in types are inlined in
-     `NodeExecutor.executeCustom` for
-     cost-tracking proximity). T1.5 follow-ups
-     register more types here without touching the
-     engine.
-   - `runtime.runWorkflow(workflowId, opts)` —
-     public entry point that creates a
-     `WorkflowEngine` and runs it inline. Returns
-     the engine's `WorkflowRunResult` (status,
-     costUsd, stepsRun, outputs, errors). The
-     CLI's `ch workflow run <id>` calls this
-     directly; the `/workflow run <id>` slash
-     command can too.
-   - The `WorkflowStore` + `WorkflowToolRegistry`
-     + the configured `defaultProvider` /
-     `defaultModel` are forwarded into
-     `DelegationManager` via the new
-     `DelegationRuntimeDeps` fields.
-
-7. **CLI + slash command**:
-   - 8 `ch workflow *` subcommands (audit §6.2):
-     `list` / `show <id>` / `new` (opens
-     `$EDITOR` with a 3-node linear template) /
-     `edit <id>` (opens the existing record in
-     `$EDITOR`, preserves the id) / `delete <id>`
-     (with confirmation prompt) / `run <id>
-     [--input k=v ...]` (synchronous inline
-     execution; prints `status · steps · cost
-     [--json]` ) / `export <id>` (writes the
-     v1 `format: "share"` envelope to stdout) /
-     `import <file>` (reads an envelope, imports
-     with a fresh id). Editor fallback:
-     `$EDITOR` unset → `vi`; editor missing →
-     "set $EDITOR" hint.
-   - `/workflow` slash command with
-     `list` / `show <id>` / `run <id>` /
-     `delete <id>` subcommands (mirrors the
-     `/goal` / `/loop` structure). `new` / `edit`
-     are CLI-only — opening `$EDITOR` from inside
-     the REPL's readline would block the prompt
-     loop; the spec calls this out explicitly.
-   - `ch help` adds the `workflow` subcommand to
-     the "Run a prompt" group (next to `goal` /
-     `loop`).
-
-Tests:
-- `src/__tests__/workflow-cli.test.ts` NEW (6 tests):
-  list-on-empty, list-after-createOrUpdate,
-  export+import round-trip with a fresh id, run
-  a 3-node linear workflow (completed / steps=3 /
-  cost>0), `runtime.runWorkflow` on a missing id
-  throws "not found", `/workflow` is registered
-  in `BUILTIN_REGISTRY` with `group: "workflow"`.
-- `src/__tests__/delegation.test.ts` MODIFIED
-  (1 test): the Phase 2 "workflow kind is still
-  a stub" test is updated to the Phase 4 T1
-  contract (the runner returns a typed `failed`
-  result with "no workflow store wired" when the
-  store isn't wired — same contract every other
-  kind uses for "no dep wired").
-
-Decisions worth flagging:
-- **WorkflowToolRegistry v1 surface**: empty. The
-  executor inlines the 4 built-in types
-  (`generate-with-ai-llm`, `execute-javascript`,
-  `mcp-client`, `stop-workflow`). T1.5 can
-  register more types in the runtime's
-  `workflowToolRegistry` without touching the
-  engine or the executor.
-- **Lazy workflow dir creation**: the runtime
-  does NOT `mkdir paths.workflows` at
-  construction. `WorkflowStore.ensureRoot()` is
-  the only place a mkdir happens (on first
-  write). Matches the GoalStore pattern.
-- **`$EDITOR` fallback**: `ch workflow new` /
-  `edit` use `$EDITOR` with `vi` as the default.
-  When `$EDITOR` is unset, the user can set it
-  in their shell rc — the fallback to `vi` is
-  best-effort.
-- **MCP registry not wired by the runtime**: the
-  `mcp` delegation kind is still "no MCP
-  registry wired" in production. The
-  `mcp-client` workflow node type returns
-  `{ result: null, error: "no MCP registry wired" }`
-  for that step. Wiring the runtime's
-  `McpRegistry` is a T1.5 follow-up; the engine
-  already accepts the dep when a caller provides
-  one.
-
-- **feat(workflow): delegation + runtime + CLI + slash — steps 5-7 of audit §8.4**
-  (`src/agent/delegation.ts` MODIFIED,
-  `src/runtime.ts` MODIFIED,
-  `src/cli.ts` MODIFIED,
-  `src/slash/builtin.ts` MODIFIED,
-  `src/__tests__/workflow-cli.test.ts` NEW,
-  `src/__tests__/delegation.test.ts` MODIFIED):
-  Phase 4 T1 steps 5-7 land. 686 → 692 pass
-  (6 new tests, 0 fail). Typecheck clean.
-  No dependency additions. The 4 foundation /
-  executor files from the prior 2 commits
-  (`workflow-types.ts`, `workflow-graph.ts`,
-  `workflow-eval.ts`, `workflow-store.ts`,
-  `workflow-steps.ts`, `workflow.ts`,
-  `toolLibrary.json`) are unchanged.
-
-### Workflow foundation — types, graph helpers, template + edge eval (Phase 4 T1 steps 1-2)
-
-Phase 4 track T1 (D-WORKFLOW-IMPL) is the real port of the
-agnt-gg workflow engine into our `Delegation { kind: "workflow" }`
-kind. This is the foundation half — types, pure graph helpers,
-and the `{{template}}` + edge condition evaluator. No runtime
-integration yet; the engine wiring (steps 3-7) lands in
-follow-up commits.
-
-Per [`docs/agnt-workflow-audit.md` §8.4](./agnt-workflow-audit.md#84-order-of-work-proposed-for-the-follow-up-plan)
-the foundation ships two of the eight T1 steps:
-
-1. **`src/agent/workflow-types.ts`** — synthesized
-   `WorkflowRecord`, `WorkflowNode`, `WorkflowEdge`,
-   `WorkflowCondition` interfaces from audit §2.2-2.4. Strict
-   types, `noUncheckedIndexedAccess` safe. `outputs` on
-   `WorkflowNode` is a schema, not a value (per audit §2.3).
-2. **`src/agent/workflow/toolLibrary.json`** — stub tool library
-   with 8 hard-coded v1 step types
-   (`generate-with-ai-llm`, `mcp-client`, `execute-javascript`,
-   `for-loop`, `delay`, `stop-workflow`, `webhook-listener`,
-   `trigger-timer`). The T1 step 4 `WorkflowToolRegistry` will
-   replace this with a dynamic loader.
-3. **`src/agent/workflow-graph.ts`** — 8 pure helpers ported
-   from `agnt-gg/backend/src/services/WorkflowManipulationService.js`:
-   `calculateAutoLayout` (300x150 grid snapping),
-   `validateNodeType` (warns on unknown, returns true — graceful
-   degradation matches agnt-gg), `validateNodeConnections` (catches
-   missing nodes + self-loops), `cleanupOrphanedEdges`,
-   `generateNodeId` / `generateEdgeId` (UUID-based),
-   `diffWorkflows` (returns `nodesAdded/Removed/Modified/edgesAdded/Removed`
-   with counts), `findNodeByIdentifier` (id or case-insensitive
-   label), `buildNodeReferenceMap` (formats as
-   `[1] "label" (id: x, type: y)` for LLM context).
-4. **`src/agent/workflow-eval.ts`** — 10 condition operators
-   (`is_empty`, `is_not_empty`, `equals`, `not_equals`,
-   `greater_than`, `less_than`, `greater_than_or_equal`,
-   `less_than_or_equal`, `contains`, `not_contains`) from
-   audit §4.3 + the `{{template}}` resolver. Per
-   [phase4 T1 decision #4](./phase4.md#t1--d-workflow-impl--workflow-real-port-headline)
-   the resolver prefers `nodeId`
-   (`{{node_abc123.field.subfield[0]}}`) over `nodeName`; the
-   agnt-gg name-based fallback is supported for back-compat
-   with imported workflows. Special prefixes `trigger` and
-   `input` resolve to `currentTriggerData[prefix]` (audit §3.2).
-   The resolver takes `outputs` + `currentTriggerData` as args,
-   not a class instance — pure, testable in isolation.
-5. **`src/__tests__/workflow-graph.test.ts`** + **`workflow-eval.test.ts`** —
-   52 unit tests (33 graph + 19 eval) using `node:test` +
-   `node:assert` to match the existing test style.
-
-- **feat(workflow): foundation — types, graph helpers, template+edge eval**
-  (`src/agent/workflow-types.ts` NEW,
-  `src/agent/workflow-graph.ts` NEW,
-  `src/agent/workflow-eval.ts` NEW,
-  `src/agent/workflow/toolLibrary.json` NEW,
-  `src/__tests__/workflow-graph.test.ts` NEW,
-  `src/__tests__/workflow-eval.test.ts` NEW):
-  Phase 4 T1 steps 1-2 land. 604 → 656 pass (52 new tests, 0 fail).
-  No modifications to `delegation.ts`, `runtime.ts`, `cli.ts`, or
-  any existing file. No dependency additions (`node:crypto`
-  for UUIDs, as used elsewhere). Foundation only — engine
-  integration (steps 3-7) follows in subsequent commits.
+- **`workflow.runSubWorkflow` private bracket-access on
+  the executor's `deps`**
+  (`src/agent/workflow.ts`, `src/agent/workflow-steps.ts`):
+  `this.nodeExecutor["deps"].provider` etc. — a TS
+  `private` field accessed via bracket notation to bypass
+  the access check. Compiles, but reads as a code smell
+  and would break if the field were renamed. Added a
+  `NodeExecutor.getDep<K>(key: K)` accessor and switched
+  `runSubWorkflow` to use it.
 
 ### `formatUSD`: zero renders as `$0.00`, negatives render as `-$X.XX`
 

@@ -235,6 +235,102 @@ test("diffWorkflows: identical records yield zero diff", () => {
     assert.equal(d.counts.edgesRemoved, 0);
 });
 
+test("diffWorkflows: nodes with parameters in different key order are equal (regression: jsonEqual replacer bug)", () => {
+    // Pre-fix, `jsonEqual` used `JSON.stringify(a, Object.keys(a).sort())`
+    // as a "stable stringify". But JSON.stringify's second
+    // arg is a *replacer*, not a key-sorter — when passed an
+    // array of keys, it filters the output to ONLY those
+    // keys and keeps them in the *source* object's
+    // insertion order. That has two consequences:
+    //
+    //  1. Nested values get dropped. `JSON.stringify({a:{x:1}},
+    //     ["a"])` produces `'{"a":{}}'`, not
+    //     `'{"a":{"x":1}}'`. So two objects with DIFFERENT
+    //     nested values (e.g. `{outer:{y:2}}` vs
+    //     `{outer:{y:99}}`) both stringify to `'{"outer":{}}'`
+    //     and the comparator flags them as equal — a real
+    //     bug. `diffWorkflows` then MISSES a modification.
+    //
+    //  2. Different top-level key orders in the source
+    //     object produce different stringified outputs
+    //     (the replacer keeps source order, not the
+    //     sorted-array order). So `{a:1,b:2}` and
+    //     `{b:2,a:1}` are flagged as different even though
+    //     they are structurally equal — a false-positive
+    //     modification.
+    //
+    //  The fix is a recursive deep-equal that walks the
+    //  structure directly. These two cases both exercise
+    //  the contract: same shape / different key order is
+    //  "no diff"; different nested values is a "modified"
+    //  diff.
+    const sameShapeDiffKeyOrderOld: WorkflowNode = {
+        id: "node_a",
+        type: "mcp-client",
+        text: "MCP Call",
+        category: "mcp",
+        x: 0,
+        y: 0,
+        parameters: { a: 1, b: 2, nested: { c: 3, d: { e: 4, f: 5 } } },
+        outputs: {},
+    };
+    const sameShapeDiffKeyOrderNew: WorkflowNode = {
+        id: "node_a",
+        type: "mcp-client",
+        text: "MCP Call",
+        category: "mcp",
+        x: 0,
+        y: 0,
+        // Same shape, but keys inserted in a different
+        // order at every level. The pre-fix `jsonEqual` would
+        // either drop nested values (the "filter" effect of
+        // the replacer) or keep them in source order
+        // (key-order sensitivity) — both produce wrong
+        // answers.
+        parameters: { nested: { d: { f: 5, e: 4 }, c: 3 }, b: 2, a: 1 },
+        outputs: {},
+    };
+    const d1 = diffWorkflows(
+        makeRecord({ nodes: [sameShapeDiffKeyOrderOld] }),
+        makeRecord({ nodes: [sameShapeDiffKeyOrderNew] }),
+    );
+    assert.equal(d1.counts.nodesModified, 0, "node with same shape but different key order must not be flagged as modified");
+
+    // Negative control: a real nested difference is detected
+    // as a modification. This is the case the pre-fix
+    // `jsonEqual` silently masked — both objects stringify
+    // to the same `'{"outer":{}}'` because the replacer
+    // filter drops the nested value, and `diffWorkflows`
+    // reported no change. With the recursive fix, the
+    // nested value is compared and the modification is
+    // surfaced.
+    const realDiffOld: WorkflowNode = {
+        id: "node_a",
+        type: "mcp-client",
+        text: "MCP Call",
+        category: "mcp",
+        x: 0,
+        y: 0,
+        parameters: { outer: { x: 1, y: 2 } },
+        outputs: {},
+    };
+    const realDiffNew: WorkflowNode = {
+        id: "node_a",
+        type: "mcp-client",
+        text: "MCP Call",
+        category: "mcp",
+        x: 0,
+        y: 0,
+        parameters: { outer: { x: 1, y: 99 } },
+        outputs: {},
+    };
+    const d2 = diffWorkflows(
+        makeRecord({ nodes: [realDiffOld] }),
+        makeRecord({ nodes: [realDiffNew] }),
+    );
+    assert.equal(d2.counts.nodesModified, 1, "nested value change must be flagged as a modification");
+});
+
 test("diffWorkflows: detects added / removed / modified nodes", () => {
     const old = makeRecord();
     const newNode = makeNode({ id: "node_new", text: "New Step", x: 900, y: 0 });

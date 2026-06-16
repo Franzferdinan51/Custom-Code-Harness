@@ -135,6 +135,18 @@ export interface NodeExecutorDeps {
 export class NodeExecutor {
     constructor(private readonly deps: NodeExecutorDeps) {}
 
+    /** The executor's deps. Read-only public accessor used
+     *  by the engine's `runSubWorkflow` to thread the
+     *  parent's `provider` / `mcpRegistry` / `tools` into
+     *  the child engine. Without this, the engine would
+     *  have to do `this.nodeExecutor["deps"]` (private
+     *  bracket-access), which compiles under `private`
+     *  only because TypeScript's `private` is a compile-time
+     *  hint. */
+    getDep<K extends keyof NodeExecutorDeps>(key: K): NodeExecutorDeps[K] {
+        return this.deps[key];
+    }
+
     /** Execute a single node. Returns the step's output
      *  (shape per the `toolLibrary.json` entry's `outputs`
      *  schema). Throws `NodeExecutionError` on any failure.
@@ -153,8 +165,17 @@ export class NodeExecutor {
                 return executeTrigger(node, inputData);
             case "custom":
                 return this.executeCustom(node, inputData, workflow, engine, signal);
-            case "stop-workflow" as string:
             case "control":
+                // The `stop-workflow` node type is a built-in
+                // terminator in the `control` category. We
+                // handle it inline (the alternative is a
+                // registry lookup for a one-liner, and the
+                // `stopRequested` mutation needs the engine
+                // back-reference anyway). Any other control
+                // type is unimplemented in v1 — the throw
+                // here matches `executeCustom`'s error
+                // message so the user sees the same shape
+                // regardless of which arm matched.
                 if (node.type === "stop-workflow") {
                     engine.stopRequested = true;
                     return { stopped: true, reason: typeof node.parameters["reason"] === "string" ? node.parameters["reason"] : "" };

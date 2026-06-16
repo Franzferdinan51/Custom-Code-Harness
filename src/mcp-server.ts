@@ -27,48 +27,35 @@ import { loadSettings } from "./config/settings.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { HarnessRuntime } from "./runtime.js";
 import { DEFAULT_LIMITS } from "./agent/loop.js";
+import {
+  MCP_PROTOCOL_VERSION,
+  MCP_MAX_BODY_BYTES,
+  ERR_PARSE,
+  ERR_INVALID_REQUEST,
+  ERR_METHOD_NOT_FOUND,
+  ERR_INVALID_PARAMS,
+  ERR_INTERNAL,
+  parseJsonRpc,
+  tryInferId,
+  formatJsonRpcResponse,
+  okResponse,
+  errResponse,
+  type McpToolDefinition,
+  type McpJsonRpcRequest,
+  type McpJsonRpcResponse,
+  type McpServerInfo,
+  type McpParsedRpc,
+} from "./mcp-transport.js";
 
-// ---------- MCP protocol types (subset of the spec) ----------
-
-export interface McpToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: {
-    type: "object";
-    properties?: Record<string, unknown>;
-    required?: string[];
-    additionalProperties?: boolean;
-    [k: string]: unknown;
-  };
-  /** MCP clients use this to show a "this is dangerous" warning. */
-  annotations?: {
-    title?: string;
-    readOnlyHint?: boolean;
-    destructiveHint?: boolean;
-    idempotentHint?: boolean;
-    openWorldHint?: boolean;
-  };
-}
-
-export interface McpJsonRpcRequest {
-  jsonrpc: "2.0";
-  id?: string | number;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-export interface McpJsonRpcResponse {
-  jsonrpc: "2.0";
-  id: string | number | null;
-  result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
-}
-
-export interface McpServerInfo {
-  name: string;
-  title?: string;
-  version: string;
-}
+// Re-export the shared protocol types so the existing
+// `import { ... } from "./mcp-server.js"` surface stays intact.
+export type {
+  McpToolDefinition,
+  McpJsonRpcRequest,
+  McpJsonRpcResponse,
+  McpServerInfo,
+  McpParsedRpc,
+} from "./mcp-transport.js";
 
 const SERVER_INFO: McpServerInfo = {
   name: "codingharness",
@@ -76,17 +63,10 @@ const SERVER_INFO: McpServerInfo = {
   version: "0.2.2",
 };
 
-const PROTOCOL_VERSION = "2025-06-18";
-const MAX_BODY_BYTES = 1_048_576; // 1 MiB — match maxToolResultBytes
+const PROTOCOL_VERSION = MCP_PROTOCOL_VERSION;
+const MAX_BODY_BYTES = MCP_MAX_BODY_BYTES;
 const SLOWLORIS_HEADERS_TIMEOUT_MS = 10_000;
 const SLOWLORIS_REQUEST_TIMEOUT_MS = 60_000;
-
-// JSON-RPC standard error codes.
-const ERR_PARSE = -32700;
-const ERR_INVALID_REQUEST = -32600;
-const ERR_METHOD_NOT_FOUND = -32601;
-const ERR_INVALID_PARAMS = -32602;
-const ERR_INTERNAL = -32603;
 
 // Tools that should be flagged `destructive` / `not readOnly` so MCP
 // clients show a confirmation prompt before invoking.
@@ -359,17 +339,10 @@ export async function startMcpStdioServer(
   };
 }
 
-// Best-effort id inference so a malformed line with an explicit
-// `id` still gets a parse error back. Returns null when we can't
-// safely extract one.
-function tryInferId(line: string): string | number | null {
-  try {
-    const o = JSON.parse(line) as Record<string, unknown>;
-    if (typeof o.id === "string" || typeof o.id === "number") return o.id;
-    if (o.id === null) return null;
-  } catch { /* ignore */ }
-  return null;
-}
+// tryInferId is imported from ./mcp-transport.js — kept here only as a
+// comment trail. The old local definition was removed when the
+// JSON-RPC parser was extracted to `mcp-transport.ts` so the client
+// can reuse it.
 
 function logStdio(...parts: unknown[]): void {
   // Write a single line to stderr with the prefix. Avoid log.info
@@ -497,43 +470,11 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-export interface McpParsedRpc {
-  /** When undefined, treat as notification. When string, the id was present
-   *  and valid. The special sentinel "__invalid__" means the request had an
-   *  explicit `id: null` and must be answered with -32600. */
-  id?: string | number | "__invalid__";
-  method: string;
-  params?: Record<string, unknown>;
-}
+// McpParsedRpc is re-exported from ./mcp-transport.js (see top of file).
 
-function parseJsonRpc(body: string): McpParsedRpc | null {
-  if (!body) return null;
-  let parsed: unknown;
-  try { parsed = JSON.parse(body); } catch { return null; }
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const o = parsed as Record<string, unknown>;
-  if (o.jsonrpc !== "2.0") return null;
-  if (typeof o.method !== "string") return null;
-  // Per JSON-RPC 2.0: id MUST be string|integer, MUST NOT be null.
-  // - No `id` field at all → notification → no response
-  // - Explicit `id: null` → Invalid Request with id: null
-  // - Valid `id` → echo it back
-  if (!("id" in o)) {
-    return {
-      method: o.method,
-      params: (o.params && typeof o.params === "object") ? o.params as Record<string, unknown> : undefined,
-    };
-  }
-  const rawId = o.id;
-  if (rawId === null) {
-    return { id: "__invalid__", method: o.method, params: (o.params && typeof o.params === "object") ? o.params as Record<string, unknown> : undefined };
-  }
-  if (typeof rawId === "string" || typeof rawId === "number") {
-    return { id: rawId, method: o.method, params: (o.params && typeof o.params === "object") ? o.params as Record<string, unknown> : undefined };
-  }
-  // Some other type (boolean, object, etc.) — treat as invalid.
-  return { id: "__invalid__", method: o.method, params: (o.params && typeof o.params === "object") ? o.params as Record<string, unknown> : undefined };
-}
+// parseJsonRpc is imported from ./mcp-transport.js — the shared parser
+// is used by both the server (this file) and the client
+// (`src/agent/mcp-client.ts`).
 
 function respond(
   res: ServerResponse,
@@ -541,11 +482,9 @@ function respond(
   result?: unknown,
   error?: { code: number; message: string; data?: unknown },
 ): void {
-  const body: McpJsonRpcResponse = { jsonrpc: "2.0", id };
-  if (error) body.error = error;
-  else body.result = result;
+  const body: McpJsonRpcResponse = error ? errResponse(id, error.code, error.message, error.data) : okResponse(id, result);
   res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(body));
+  res.end(formatJsonRpcResponse(body));
 }
 
 // ---------- RPC dispatch ----------

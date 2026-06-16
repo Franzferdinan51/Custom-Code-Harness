@@ -63,6 +63,15 @@ export const paths = {
    *  re-indexing only re-embeds new lines. See
    *  `src/agent/memory-vector.ts`. */
   get memoryEmbeddingsFile() { return join(home(), "memory", "MEMORY.embeddings.json"); },
+  /** Installed MCP (Model Context Protocol) servers — JSON object
+   *  keyed by server id. Each entry holds the transport (stdio /
+   *  http), the launch command (for stdio) or URL (for http), the
+   *  server version advertised during `initialize`, the install
+   *  timestamp, and the discovered tool list. The single-file
+   *  layout matches `settings.json` / `providers.json` — small
+   *  enough to be human-editable and fast to read on every
+   *  delegation dispatch. See `src/agent/mcp-store.ts`. */
+  get mcpJson() { return join(home(), "mcp.json"); },
 } as const;
 
 export function ensurePaths(): void {

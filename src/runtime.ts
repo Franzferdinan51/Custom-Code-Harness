@@ -27,6 +27,7 @@ import { WorkflowStore } from "./agent/workflow-store.js";
 import { WorkflowEngine, type WorkflowRunResult } from "./agent/workflow.js";
 import { defaultWorkflowToolRegistry } from "./agent/workflow-steps.js";
 import { saveSettings } from "./config/settings.js";
+import { LocalMcpRegistry } from "./agent/mcp-registry.js";
 
 export interface RuntimeOptions {
   cwd: string;
@@ -106,6 +107,12 @@ export class HarnessRuntime implements SlashRuntime {
    *  cost-tracking proximity). T1.5 follow-ups register more
    *  types here without touching the engine. */
   readonly workflowToolRegistry: import("./agent/workflow-steps.js").WorkflowToolRegistry;
+  /** Phase 4 T3: MCP client registry. Reads from
+   *  `~/.codingharness/mcp.json` and lazily spawns / connects to
+   *  each server on `callTool`. The `delegations` field wires
+   *  this into `DelegationRuntimeDeps.mcpRegistry` so
+   *  `Delegation { kind: "mcp" }` works out of the box. */
+  readonly mcpRegistry: LocalMcpRegistry;
   /** Sub-agents spawned during this session. */
   readonly subagentHistory: Array<{ name: string; prompt: string; status: string; at: number; cost: number; steps: number }> = [];
 
@@ -193,6 +200,13 @@ export class HarnessRuntime implements SlashRuntime {
     // `GoalStore` (no eager mkdir on import).
     this.workflowStore = new WorkflowStore();
     this.workflowToolRegistry = defaultWorkflowToolRegistry();
+    // Phase 4 T3: MCP registry. Lazily spawns / connects to
+    // servers on each `callTool`. Wired through to the
+    // DelegationManager so `Delegation { kind: "mcp" }` works
+    // out of the box. Tests can pass a different
+    // `filePath` here by overriding `paths.mcpJson` via the
+    // `MCP_CONFIG_PATH` env var (read inside the registry).
+    this.mcpRegistry = new LocalMcpRegistry();
     // Resolve the default provider / model for the
     // `generate-with-ai-llm` node. The `providerRegistry.default()`
     // is the same lookup the agent loop uses, so the workflow
@@ -216,6 +230,11 @@ export class HarnessRuntime implements SlashRuntime {
       workflowToolRegistry: this.workflowToolRegistry,
       ...(defaultProvider ? { workflowProvider: defaultProvider } : {}),
       ...(this.settings.defaultModel ? { workflowModel: this.settings.defaultModel } : {}),
+      // Phase 4 T3: forward the MCP registry. When unset, an
+      // `mcp` delegation fails with "no MCP registry wired"
+      // (existing behavior); when set, it goes through
+      // `LocalMcpRegistry.callTool`.
+      mcpRegistry: this.mcpRegistry,
     });
     this.skills = new SkillRegistry({ cwd: this.cwd });
     this.memory = new MemoryStore();

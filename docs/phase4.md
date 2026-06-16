@@ -3,7 +3,7 @@
 **Ratifies:** [`phase3.md`](./phase3.md) "Tracks explicitly deferred" (D-WORKFLOW-IMPL, D-INSIGHT, D-INK) and the [D-WORKFLOW source audit](./agnt-workflow-audit.md)
 **Source plan:** `plans/plan_phase1/notes/agnt-port-plan.md` §6.3–§6.4
 **Date:** 2026-06-15
-**Status:** T1 SHIPPED 2026-06-15
+**Status:** T1 + T2 + T3 SHIPPED 2026-06-16
 
 Phase 3 closed out on 2026-06-10 with the 8-kind `Delegation` union's
 `workflow` kind still as a stub, the D-WORKFLOW audit shipped as
@@ -82,6 +82,82 @@ new tests across T1's 8 audit steps). `main` is at `399c88c`;
 The T1 scope, decision matrix, and target files sections below
 remain unchanged — they are the planner's work, per the Phase 3
 closeout rule (planner-owned, not closeout-rewritten).
+
+---
+
+## T2 Shipped (2026-06-16)
+
+TS extension loader (pi-style) landed via a single branch
+`phase4/t2-extensions` merged with `--no-ff`. JSON-manifest extensions
+keep working (the v1 public surface is preserved); users can now ship
+`extensions/<name>/index.ts` modules that hook into the agent loop
+at 4 well-defined seams.
+
+- **`feat(extensions): pi-style TS extension loader`**
+  — commit `1f29f18`, merge `b150a38`. 4 NEW source files
+  (`extensions/loader.ts` 506 LOC, `extensions/registry.ts` 295 LOC,
+  `extensions/context.ts` 108 LOC, `__tests__/extensions-loader.test.ts`
+  632 LOC) + 2 MODIFIED (`extensions.ts` route JSON manifests through
+  the same registry, `loop.ts` fire 3 in-loop hooks at natural seams).
+- **`fix(extensions): chain transformations in preSystemPrompt dispatch`**
+  — commit `bd1dac3`. Tests 1 + 4 + the runAgent integration test
+  rely on chained transformations (each handler sees the previous
+  handler's output). Fixed the registry's "last non-undefined wins"
+  semantics to chained.
+- **`docs(extensions): add owner-takeover deliverable.md`**
+  — commit `a38e66f`.
+
+**Final gate (T2 closeout moment, 2026-06-16):** `npm run typecheck`
+clean, `npx bun test src/__tests__/` **721 / 0 fail** across **51 files**
+stable across 3 consecutive runs (was 695 in the post-T1 baseline;
++26 net new tests for the loader/registry/context + 4 hook-point
+integration tests, all passing). `main` is at `1ab6a50` after T3
+merges in (T2 alone: `b150a38`).
+
+---
+
+## T3 Shipped (2026-06-16)
+
+Real MCP client (consume side) landed via a single branch
+`phase4/t3-mcp-client` merged with `--no-ff`. Symmetric with the
+existing `ch mcp` *server*; CodingHarness can now consume other MCP
+servers (Claude Code's `~/.claude/mcp_servers.json`, Cursor's, any
+third-party via `npx`).
+
+- **`fix(mcp): stdio dispatch routes responses, tighten package-name validation`**
+  — commit `4242a5c`. Routes stdio dispatch responses correctly,
+  tightens `validatePackageName` to reject path traversal (`..`),
+  multi-slash subpaths (`foo/bar/baz`), and oversized names per npm
+  spec.
+- **`feat(mcp): real MCP client (consume side) + LocalMcpRegistry + shared transport`**
+  — commit `dde8567`. 4 NEW source files (`agent/mcp-client.ts` 754
+  LOC, `agent/mcp-registry.ts` 175 LOC, `agent/mcp-store.ts` 296 LOC,
+  `mcp-transport.ts` 224 LOC) + 1 NEW test file
+  (`__tests__/mcp-client.test.ts` 614 LOC, 33 tests) + 1 NEW fixture
+  (`__tests__/mcp-fixture-server.mjs` 65 LOC) + 4 MODIFIED
+  (`mcp-server.ts` refactored to use shared transport, `cli.ts`
+  +227 LOC for `ch mcp get/add/list/remove`, `config/paths.ts` +9 LOC
+  for `MCP_CONFIG_PATH`, `runtime.ts` +19 LOC for env var wiring).
+
+**Final gate (T3 closeout moment, 2026-06-16):** `npm run typecheck`
+clean, `npx bun test src/__tests__/` **754 / 0 fail** across
+**52 files** stable across 3 consecutive runs (was 695 in the
+post-T1 baseline; +59 net new tests across T2 + T3, all passing).
+`main` is at `1ab6a50`; `git push origin main` succeeded.
+
+### Concurrent `mcp add` safety
+
+`mcp-store.ts` serializes concurrent `mcp add` calls via a per-process
+mutex (a module-scoped `Promise<void>` chain). The test covers 3
+parallel `add` calls in the full suite and the final file is
+well-formed with all 3 entries — no JSON corruption.
+
+### Transport reuse
+
+`src/mcp-server.ts` was refactored to import the JSON-RPC framing
+helpers from the new `src/mcp-transport.ts`. No duplicated JSON-RPC
+parsing; both sides (server + client) use the same parse/format
+helpers. Public surface of `mcp-server.ts` is unchanged.
 
 ---
 

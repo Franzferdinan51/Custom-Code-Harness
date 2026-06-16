@@ -203,17 +203,25 @@ export class ExtensionRegistry {
     // during dispatch (re-entrancy safe).
     const snapshot = this.handlers.filter((h) => h.hook === hook).slice();
     if (hook === "preSystemPrompt") {
-      let last: string | undefined;
+      // Chain transformations: each handler sees the CURRENT
+      // system (initially the input; updated if a previous
+      // handler returned a string). If no handler transforms,
+      // return the input system unchanged. The agent loop
+      // (loop.ts) treats the dispatch return as a candidate
+      // replacement, falling back to its own `input.system`
+      // when the type isn't `string` — so the loop contract
+      // is preserved either way.
+      let current: string = (payload as PreSystemPromptPayload).system;
       for (const entry of snapshot) {
         try {
-          const r = await (entry.handler as ExtensionHandler<PreSystemPromptPayload, string | undefined>)(payload as PreSystemPromptPayload);
-          if (typeof r === "string") last = r;
+          const r = await (entry.handler as ExtensionHandler<PreSystemPromptPayload, string | undefined>)({ ...(payload as PreSystemPromptPayload), system: current });
+          if (typeof r === "string") current = r;
         } catch (e) {
           this.logger.error(`extension "${entry.extension}" hook "${hook}" threw`, { error: (e as Error).message });
           // continue with previous value
         }
       }
-      return last as DispatchResult[H];
+      return current as DispatchResult[H];
     }
     // Side-effect hooks: call all handlers, swallow errors.
     for (const entry of snapshot) {

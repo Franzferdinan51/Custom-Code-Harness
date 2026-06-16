@@ -479,7 +479,12 @@ export async function loadExtensionsIntoRegistry(opts: LoadOptions): Promise<Loa
         logger.info(`loaded TS extension "${ext.name}" (${ext.version}) from ${file}`);
       } catch (e) {
         const err = e as Error;
-        const fallbackName = basename(dirname(file)) !== "." ? basename(dirname(file)) : basename(file, file.slice(file.lastIndexOf(".")));
+        // Use the file basename (sans .ts/.mts) as the fallback
+        // name. Tests rely on this for files like
+        // `dir/ext-bad.ts` → name = "ext-bad". Previously this
+        // used `basename(dirname(file))` which gave the
+        // parent-dir name and was wrong for flat layouts.
+        const fallbackName = basename(file).replace(/\.(ts|mts)$/, "");
         errors.push({ path: file, name: fallbackName, error: err.message });
         logger.error(`failed to load extension from ${file}: ${err.message}`);
       }

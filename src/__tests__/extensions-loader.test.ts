@@ -380,12 +380,15 @@ test("ExtensionContext.on after dispose throws", async () => {
   // a new handler under that name is fine, but the context's
   // disposed flag is internal. We test the equivalent: after
   // removeExtension, the next dispatch doesn't fire the old
-  // handlers.
+  // handlers. With chained transformations, the dispatch
+  // returns the input system unchanged ("S") when no handler
+  // transforms it — the "X" handler's return must NOT appear.
   const reg = new ExtensionRegistry({ logger: silentLogger() });
   reg.register("x", "preSystemPrompt", () => "X");
   reg.removeExtension("x");
   const out = await reg.dispatch("preSystemPrompt", { system: "S", userTurn: "", messageCount: 0 });
-  assert.equal(out, undefined);
+  assert.notEqual(out, "X");
+  assert.equal(out, "S");
 });
 
 // ---------- 8. Agent loop integration: the 4 hook points ----------

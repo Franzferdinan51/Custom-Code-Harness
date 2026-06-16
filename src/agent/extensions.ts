@@ -4,10 +4,21 @@
 //    .codingharness/extensions/. They can add tools, slash commands,
 //    and a system-prompt append. Loaded as plain data, no eval.
 //
-// 2. TypeScript modules (documented for v2, not implemented in v1).
-//    The plan: drop a .ts file in extensions/, we tsx-import it on
-//    startup, it exports a default function that gets the runtime
-//    and can register things on it.
+// 2. TypeScript modules (Phase 4 T2 — pi-style). Drop a
+//    `extensions/<name>/index.ts` file; the loader
+//    dynamic-imports it, validates a `manifest` export, calls
+//    `default(activateContext)`, and the extension registers
+//    hook handlers on the shared `ExtensionRegistry` via
+//    `ctx.on(...)`.
+//
+// The new `loadExtensionsIntoRegistry()` function loads BOTH
+// flavors into a single `ExtensionRegistry` so the agent loop
+// has a uniform hook surface. The v1 `loadExtensions()` + JSON
+// `manifestTools()` path is preserved verbatim — the v1 public
+// surface must not break. JSON extensions can also participate
+// in the hook system by declaring `systemPromptAppend`, which
+// is registered as a `preSystemPrompt` handler for parity with
+// the TS path.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, basename } from "node:path";
@@ -35,7 +46,9 @@ export interface ExtensionManifest {
     /** A shell command to run. Vars: {{input}}. */
     command?: string;
   }>;
-  /** Lines to append to the system prompt. */
+  /** Lines to append to the system prompt. Registered as a
+   *  `preSystemPrompt` hook by the new TS loader so JSON
+   *  extensions and TS extensions see identical behavior. */
   systemPromptAppend?: string;
   /** A regex list of bash commands that, if matched, are auto-allowed. */
   bashAllowlist?: string[];
@@ -102,3 +115,47 @@ function stringifyAll(o: Record<string, unknown>): Record<string, string> {
   for (const [k, v] of Object.entries(o)) out[k] = typeof v === "string" ? v : JSON.stringify(v);
   return out;
 }
+
+// ---------- Phase 4 T2 re-exports ----------
+//
+// `src/agent/extensions/loader.ts` + `registry.ts` + `context.ts`
+// hold the new TS extension loader. They're re-exported here
+// (the canonical import surface) so callers don't need to know
+// the on-disk split. The shape is:
+//
+//   import { loadExtensionsIntoRegistry, ExtensionRegistry,
+//            type ExtensionContext, type TsExtensionManifest } from "./extensions.js";
+//
+// Existing JSON-only callers keep using `loadExtensions` /
+// `manifestTools` and are unaffected.
+
+export {
+  ExtensionRegistry,
+  isHookName,
+  type ExtensionHookName,
+  type ExtensionInfo,
+  type PreSystemPromptPayload,
+  type PostToolResultPayload,
+  type OnErrorPayload,
+  type OnCompactionPayload,
+  type ExtensionHandler,
+  type DispatchResult,
+} from "./extensions/registry.js";
+
+export {
+  loadExtensionsIntoRegistry,
+  loadTsExtension,
+  validateManifest,
+  type LoadResult,
+  type LoadOptions,
+  type LoadedExtension as TsLoadedExtension,
+  type ExtensionManifestShim,
+} from "./extensions/loader.js";
+
+export type {
+  ExtensionContext,
+  ExtensionHandlerMap,
+  ExtensionLogger,
+  TsExtensionManifest,
+  Dispose,
+} from "./extensions/context.js";

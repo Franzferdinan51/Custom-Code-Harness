@@ -6,7 +6,7 @@ export type ProviderAuthMode = "apiKey" | "oauth" | "optional";
 export const PRIMARY_PROVIDER_ID = "lmstudio";
 
 /** First-class hosted providers (always surfaced prominently in UI/catalog). */
-export const HOSTED_PROVIDER_ORDER = ["openai", "grok", "minimax", "codex", "anthropic", "xai", "openrouter"] as const;
+export const HOSTED_PROVIDER_ORDER = ["minimax", "openai", "grok", "codex", "anthropic", "xai", "openrouter"] as const;
 
 /** Additional local inference backends. */
 export const LOCAL_PROVIDER_ORDER = ["vllm", "vllm-omni"] as const;
@@ -126,7 +126,7 @@ const PRESETS: Record<string, ProviderPreset> = {
     tier: "hosted",
     protocol: "openai",
     defaultBaseUrl: "https://api.minimax.io/v1",
-    defaultModel: "MiniMax-M2.7",
+    defaultModel: "MiniMax-M3",
     apiKeyEnv: ["MINIMAX_API_KEY"],
     oauthTokenEnv: ["MINIMAX_OAUTH_TOKEN", "MINIMAX_AUTH_TOKEN"],
     baseUrlEnv: ["MINIMAX_BASE_URL"],

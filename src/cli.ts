@@ -206,8 +206,8 @@ registerSubcommand("desktop", "Launch the native desktop app (Electron).",
   "ch desktop [args...]",
   async (ctx) => { return runDesktopCmd(ctx); });
 
-registerSubcommand("mcp", "Run an MCP (Model Context Protocol) server exposing CodingHarness tools.",
-  "ch mcp [--port <n>] [--host <addr>] [--stdio] [--approve-bash] [--allow-remote]",
+registerSubcommand("mcp", "Run an MCP (Model Context Protocol) server, or consume external MCP servers (ch mcp get/add/list/remove).",
+  "ch mcp [--port <n>] [--host <addr>] [--stdio] [--approve-bash] [--allow-remote] | ch mcp [get|add <pkg-or-url>|list|remove <id>]",
   async (ctx) => { return runMcpCmd(ctx); });
 
 registerSubcommand("export", "Export a session as a training-friendly JSONL trajectory.",
@@ -249,7 +249,7 @@ function showHelp(cmd?: string): number {
       names: ["think", "verbose", "trace"] },
     { title: "Health",         blurb: "Connectivity and diagnostics.",
       names: ["doctor", "diag", "tokens", "info"] },
-    { title: "Integrate",      blurb: "MCP server, updates.",
+    { title: "Integrate",      blurb: "MCP server / client, updates.",
       names: ["mcp", "update"] },
   ];
   const lines: string[] = [
@@ -1286,6 +1286,26 @@ async function runServeCmd(ctx: SubcommandContext): Promise<number> {
  * drive the same tools.
  */
 async function runMcpCmd(ctx: SubcommandContext): Promise<number> {
+  // Subcommand dispatch: `ch mcp <subcommand> [args...]`.
+  // Falls back to running the server (the v0.2.x default) when
+  // no subcommand is present, for backward compatibility.
+  //
+  //   ch mcp                          # start the server (default)
+  //   ch mcp --stdio                  # same, stdio transport
+  //   ch mcp get <pkg-or-url>         # preview: connect + list tools, no persist
+  //   ch mcp add <pkg-or-url>         # install + persist to ~/.codingharness/mcp.json
+  //   ch mcp list                     # show installed servers
+  //   ch mcp remove <id>              # uninstall
+  const sub = (ctx.args[0] ?? "").toLowerCase();
+  if (sub === "get") return runMcpGet(ctx, ctx.args.slice(1));
+  if (sub === "add") return runMcpAdd(ctx, ctx.args.slice(1));
+  if (sub === "list" || sub === "ls") return runMcpList(ctx);
+  if (sub === "remove" || sub === "rm" || sub === "uninstall") return runMcpRemove(ctx, ctx.args.slice(1));
+  if (sub === "help" || sub === "-h" || sub === "--help") {
+    printMcpHelp();
+    return 0;
+  }
+  // No subcommand: start the server (default v0.2.x behavior).
   const stdio = !!ctx.stdio;
   const approveBash = !!ctx.approveBash;
   if (stdio) {
@@ -1318,6 +1338,207 @@ async function runMcpCmd(ctx: SubcommandContext): Promise<number> {
   return new Promise<number>((resolve) => {
     r.server.on("close", () => { process.removeListener("SIGINT", onSig); process.removeListener("SIGTERM", onSig); resolve(0); });
   });
+}
+
+function printMcpHelp(): void {
+  process.stdout.write(`ch mcp — manage MCP (Model Context Protocol) servers.
+
+Usage:
+  ch mcp                                Start the CodingHarness MCP server (HTTP+SSE)
+  ch mcp --stdio                        Start the CodingHarness MCP server (stdio)
+  ch mcp get <package-or-url>           Preview: connect, handshake, list tools. No side effects.
+  ch mcp add <package-or-url>           Install + persist to ~/.codingharness/mcp.json
+  ch mcp list                           Show installed MCP servers and their tools
+  ch mcp remove <id>                    Uninstall an MCP server by id
+
+Package resolution (npm-style for v1):
+  <package>          spawned as: npx -y <package>
+  http(s)://...      connected to: <url>/mcp via POST + SSE
+  @scope/name        id derived from scope+name (e.g. @mcp/server-fs → mcp_server-fs)
+
+Examples:
+  ch mcp add @modelcontextprotocol/server-filesystem
+  ch mcp add https://mcp.example.com/v1
+  ch mcp list
+  ch mcp remove mcp_server-filesystem
+`);
+}
+
+// ---------- ch mcp get ----------
+//
+// Connect to an MCP server (npm package or HTTP URL), run the
+// initialize handshake, list tools, print the result, and close.
+// No persistence — this is a dry-run / preview surface. Used to
+// confirm "is this package an MCP server?" before `mcp add`.
+
+async function runMcpGet(ctx: SubcommandContext, args: string[]): Promise<number> {
+  ensurePaths();
+  const target = args[0];
+  if (!target) {
+    process.stderr.write("error: `ch mcp get` requires a package name or URL\n");
+    return 2;
+  }
+  const { mcpGet, validatePackageName } = await import("./agent/mcp-client.js");
+  // Validate the name eagerly for non-http targets so the user
+  // gets a clear error before we spawn a subprocess.
+  if (!/^https?:\/\//.test(target)) {
+    try { validatePackageName(target); } catch (e) {
+      process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+      return 2;
+    }
+  }
+  const json = !!ctx.json;
+  process.stderr.write(c.dim("  connecting to " + target + "...\n"));
+  try {
+    const result = await mcpGet(target, { timeoutMs: 15_000 });
+    try {
+      if (json) {
+        process.stdout.write(JSON.stringify({
+          transport: result.resolved.transport,
+          id: result.resolved.id,
+          name: result.resolved.displayName,
+          serverInfo: result.serverInfo,
+          protocolVersion: result.protocolVersion,
+          tools: result.tools,
+        }, null, 2) + "\n");
+      } else {
+        process.stdout.write(c.green("  ✓ connected\n"));
+        process.stdout.write(`  id:            ${result.resolved.id}\n`);
+        process.stdout.write(`  transport:     ${result.resolved.transport}\n`);
+        process.stdout.write(`  serverInfo:    ${result.serverInfo.name} ${result.serverInfo.version}\n`);
+        process.stdout.write(`  protocol:      ${result.protocolVersion}\n`);
+        process.stdout.write(`  tools (${result.tools.length}):\n`);
+        for (const t of result.tools) {
+          process.stdout.write(`    - ${t.name}` + (t.description ? ` — ${t.description.slice(0, 80)}` : "") + "\n");
+        }
+      }
+      return 0;
+    } finally {
+      await result.close();
+    }
+  } catch (e) {
+    process.stderr.write(c.red("  ✗ ") + (e as Error).message + "\n");
+    return 1;
+  }
+}
+
+// ---------- ch mcp add ----------
+//
+// Resolve, connect, handshake, list tools, persist an entry to
+// `~/.codingharness/mcp.json`. Prints the same shape as `mcp get`
+// on success so the user can confirm the install. Errors are
+// surfaced verbatim — a bad handshake means the package isn't an
+// MCP server (or has a version mismatch with our protocol).
+
+async function runMcpAdd(ctx: SubcommandContext, args: string[]): Promise<number> {
+  ensurePaths();
+  const target = args[0];
+  if (!target) {
+    process.stderr.write("error: `ch mcp add` requires a package name or URL\n");
+    return 2;
+  }
+  const { mcpAdd, validatePackageName } = await import("./agent/mcp-client.js");
+  if (!/^https?:\/\//.test(target)) {
+    try { validatePackageName(target); } catch (e) {
+      process.stderr.write(c.red("error: ") + (e as Error).message + "\n");
+      return 2;
+    }
+  }
+  const json = !!ctx.json;
+  process.stderr.write(c.dim("  installing " + target + "...\n"));
+  try {
+    const { entry, result } = await mcpAdd(target, { timeoutMs: 15_000 });
+    if (json) {
+      process.stdout.write(JSON.stringify({ entry, result: {
+        transport: result.resolved.transport,
+        id: result.resolved.id,
+        name: result.resolved.displayName,
+        serverInfo: result.serverInfo,
+        protocolVersion: result.protocolVersion,
+        tools: result.tools,
+      } }, null, 2) + "\n");
+    } else {
+      process.stdout.write(c.green("  ✓ installed\n"));
+      process.stdout.write(`  id:         ${entry.id}\n`);
+      process.stdout.write(`  transport:  ${entry.transport}\n`);
+      process.stdout.write(`  server:     ${result.serverInfo.name} ${result.serverInfo.version}\n`);
+      process.stdout.write(`  tools:      ${entry.tools.length}\n`);
+    }
+    return 0;
+  } catch (e) {
+    process.stderr.write(c.red("  ✗ ") + (e as Error).message + "\n");
+    return 1;
+  }
+}
+
+// ---------- ch mcp list ----------
+//
+// Print every installed server (one entry per server) and the
+// tools it provides. `--json` emits the same shape as `mcp get`
+// so scripts can pipe it. Reads from the on-disk config directly
+// (no need to spin up a runtime).
+
+async function runMcpList(ctx: SubcommandContext): Promise<number> {
+  ensurePaths();
+  const { loadMcpConfigSync } = await import("./agent/mcp-store.js");
+  const cfg = loadMcpConfigSync();
+  const servers = Object.values(cfg);
+  const json = !!ctx.json;
+  if (json) {
+    process.stdout.write(JSON.stringify(cfg, null, 2) + "\n");
+    return 0;
+  }
+  if (servers.length === 0) {
+    process.stdout.write(c.dim("  no MCP servers installed. Try `ch mcp add <package>`.\n"));
+    return 0;
+  }
+  process.stdout.write(c.cyan(`  ${servers.length} installed MCP server${servers.length === 1 ? "" : "s"}:\n\n`));
+  for (const s of servers) {
+    process.stdout.write(`  ${c.bold(s.id)}  (${s.transport})\n`);
+    process.stdout.write(`    name:      ${s.name}\n`);
+    process.stdout.write(`    version:   ${s.version}\n`);
+    if (s.transport === "stdio" && s.command) {
+      const args = s.args?.length ? " " + s.args.join(" ") : "";
+      process.stdout.write(`    command:   ${s.command}${args}\n`);
+    }
+    if (s.transport === "http" && s.url) {
+      process.stdout.write(`    url:       ${s.url}\n`);
+    }
+    process.stdout.write(`    installed: ${new Date(s.installedAt).toISOString()}\n`);
+    process.stdout.write(`    tools (${s.tools.length}):\n`);
+    for (const t of s.tools) {
+      process.stdout.write(`      - ${t.name}` + (t.description ? ` — ${t.description.slice(0, 70)}` : "") + "\n");
+    }
+    process.stdout.write("\n");
+  }
+  return 0;
+}
+
+// ---------- ch mcp remove ----------
+//
+// Remove an entry by id. The CLI's `mcp add` writes
+// ids derived from the package name (`@mcp/server-fs` →
+// `mcp_server-fs`); the user can also pass the raw package name
+// and we'll re-derive the id.
+
+async function runMcpRemove(ctx: SubcommandContext, args: string[]): Promise<number> {
+  ensurePaths();
+  const target = args[0];
+  if (!target) {
+    process.stderr.write("error: `ch mcp remove` requires a server id (or package name)\n");
+    return 2;
+  }
+  const { removeMcpServerEntry, loadMcpConfigSync } = await import("./agent/mcp-store.js");
+  const { deriveServerId } = await import("./agent/mcp-client.js");
+  const cfg = loadMcpConfigSync();
+  const id = (target in cfg) ? target : deriveServerId(target);
+  if (!(id in cfg)) {
+    process.stderr.write(`error: no such MCP server: ${id}\n`);
+    return 1;
+  }
+  await removeMcpServerEntry(id);
+  process.stdout.write(c.green("  ✓ removed ") + id + "\n");
+  return 0;
 }
 
 async function runMcpStdio(ctx: SubcommandContext, approveBash: boolean): Promise<number> {

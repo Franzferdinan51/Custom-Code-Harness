@@ -15,6 +15,8 @@ import type {
 import { ToolRegistry, type ToolContext } from "./tools/registry.js";
 import { log } from "../util/logger.js";
 import { ToolError } from "../util/errors.js";
+import { ExtensionRegistry } from "./extensions/registry.js";
+import { compact as compactMessages, roughTokenCount } from "./compaction.js";
 
 export interface AgentRunHooks {
   onTextDelta?: (text: string) => void;
@@ -45,6 +47,13 @@ export interface AgentRunInput {
    * same provider instance can appear with a different model.
    */
   failoverChain?: Array<{ provider: Provider; model: string }>;
+  /**
+   * Optional extension hook registry. When present, the loop fires
+   * the 4 extension hook points (preSystemPrompt, postToolResult,
+   * onError, onCompaction) at the natural seams. Handler errors
+   * are isolated by the registry — the loop never crashes because
+   * of a misbehaving extension. Phase 4 T2. */
+  extensionRegistry?: ExtensionRegistry;
 }
 
 export interface AgentRunResult {
@@ -77,6 +86,21 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
       }
       steps += 1;
 
+      // ---- Pre-system-prompt hook (Phase 4 T2) ----
+      // Extensions may transform the system prompt before the
+      // provider is called. The latest non-undefined return wins.
+      // The hook is a no-op when no registry is wired.
+      let effectiveSystem = input.system;
+      if (input.extensionRegistry && !input.extensionRegistry.isEmpty) {
+        const lastUser = [...input.messages].reverse().find((m) => m.role === "user");
+        const transformed = await input.extensionRegistry.dispatch("preSystemPrompt", {
+          system: effectiveSystem ?? "",
+          userTurn: lastUser?.content ?? "",
+          messageCount: currentMessages.length,
+        });
+        if (typeof transformed === "string") effectiveSystem = transformed;
+      }
+
       // ---- Call provider (with optional failover chain) ----
       let assistantMsg: ChatMessage = { role: "assistant", content: "" };
       let usage = { inputTokens: 0, outputTokens: 0 };
@@ -98,7 +122,7 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
           const turnSignal = timedSignal(input.signal, input.limits.requestTimeoutMs);
           const req: ProviderRequest = {
             model,
-            system: input.system,
+            system: effectiveSystem,
             messages: currentMessages,
             tools: input.tools.specs(),
             maxTokens: 8_192,
@@ -159,6 +183,23 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
           break;
         }
         onError(e);
+        // onError hook (Phase 4 T2) — fire-and-forget for extensions
+        // that want to track provider-side failures (e.g. log
+        // upstream rate-limits, increment a metric, send a
+        // Sentry event). Errors inside the hook are isolated by
+        // the registry; this catch is for the dispatch plumbing
+        // itself, which would be a bug.
+        if (input.extensionRegistry && !input.extensionRegistry.isEmpty) {
+          try {
+            await input.extensionRegistry.dispatch("onError", {
+              error: e,
+              context: "provider",
+              step: steps,
+            });
+          } catch (hookErr) {
+            log.error("onError dispatch failed", hookErr);
+          }
+        }
         // Surface a clear message to the model so it can adjust.
         assistantMsg = {
           role: "assistant",
@@ -202,6 +243,15 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
           const tc = toolCalls[i]!;
           const r = settled[i]!;
           hooks.onToolCallEnd?.(tc, r);
+          // postToolResult hook (Phase 4 T2) — side-effect only.
+          if (input.extensionRegistry && !input.extensionRegistry.isEmpty) {
+            await input.extensionRegistry.dispatch("postToolResult", {
+              tool: tc,
+              result: r,
+              isError: r.isError === true,
+              step: steps,
+            });
+          }
           toolResults.push(toResultMessage(tc, r, input.limits.maxToolResultBytes));
         }
       } else {
@@ -214,6 +264,28 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
             log: (m) => log.debug(`tool ${tc.name}: ${m}`),
           });
           hooks.onToolCallEnd?.(tc, result);
+          // postToolResult hook (Phase 4 T2) — side-effect only.
+          // Errors during a single hook dispatch are swallowed
+          // by the registry; we only catch errors that escape the
+          // dispatch wrapper (e.g. from the dispatch plumbing
+          // itself). Hook-handler errors are the registry's
+          // responsibility, not the loop's.
+          if (input.extensionRegistry && !input.extensionRegistry.isEmpty) {
+            try {
+              await input.extensionRegistry.dispatch("postToolResult", {
+                tool: tc,
+                result,
+                isError: result.isError === true,
+                step: steps,
+              });
+            } catch (e) {
+              // Belt-and-braces: the registry should swallow
+              // handler errors, but a thrown error from the
+              // dispatch plumbing itself is a bug we want to
+              // log without breaking the agent loop.
+              log.error("postToolResult dispatch failed", e);
+            }
+          }
           toolResults.push(toResultMessage(tc, result, input.limits.maxToolResultBytes));
         }
       }
@@ -231,6 +303,19 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
     }
   } catch (err) {
     onError(err as Error);
+    // onError hook for the outer try/catch — same contract as the
+    // provider path: extensions observe the failure, the loop
+    // continues to a clean final message.
+    if (input.extensionRegistry && !input.extensionRegistry.isEmpty) {
+      try {
+        await input.extensionRegistry.dispatch("onError", {
+          error: err as Error,
+          context: "internal",
+        });
+      } catch (hookErr) {
+        log.error("onError dispatch failed (outer catch)", hookErr);
+      }
+    }
     final = { role: "assistant", content: `internal error: ${(err as Error).message}` };
   }
 
@@ -339,6 +424,86 @@ function toResultMessage(tc: ToolCall, result: ToolResult, maxBytes: number): Ch
     content: capped,
     meta: { isError: result.isError, display: result.display },
   };
+}
+
+// ---------- Compaction hook (Phase 4 T2 — onCompaction) ----------
+//
+// The 4th hook point in the Phase 4 T2 spec. The agent loop does
+// not auto-compact (compaction is a runtime/CLI-level concern),
+// so we expose a `runCompactionWithHooks` helper that callers
+// (the runtime's `compact()`, the CLI's `/compact`, etc.) use
+// instead of `compaction.compact` directly. The helper fires
+// the `onCompaction` hook around the compaction step with both
+// `phase: "pre"` and `phase: "post"` payloads.
+//
+// This keeps the contract clean:
+//   - `runAgent` fires preSystemPrompt / postToolResult / onError
+//     inline (the 3 hooks the loop owns naturally).
+//   - `runCompactionWithHooks` fires onCompaction around the
+//     compaction call (the 1 hook tied to a runtime-level event).
+// Callers that don't care about hooks can still call
+// `compaction.compact` directly — the hook is opt-in.
+
+export interface CompactionWithHooksOptions {
+  cutoff?: number;
+  maxSummaryTokens?: number;
+  signal?: AbortSignal;
+  /** When present, the `onCompaction` hook is fired with the
+   *  payload before (phase: "pre") and after (phase: "post")
+   *  the compaction. Handler errors are isolated. */
+  extensionRegistry?: ExtensionRegistry;
+}
+
+/** Same shape as `CompactionResult` from `compaction.ts` —
+ *  re-exported here so callers can import the typed return
+ *  value alongside the helper. */
+export type CompactionWithHooksResult = import("./compaction.js").CompactionResult;
+
+/** Run a compaction step and fire the `onCompaction` extension
+ *  hook around it. The hook sees a `pre` payload (the messages
+ *  about to be summarized) and a `post` payload (the summary
+ *  that was produced). */
+export async function runCompactionWithHooks(
+  provider: Provider,
+  model: string,
+  messages: ChatMessage[],
+  opts: CompactionWithHooksOptions = {},
+): Promise<CompactionWithHooksResult> {
+  const signal = opts.signal ?? new AbortController().signal;
+  const reg = opts.extensionRegistry;
+  // pre-hook (fire-and-forget; we don't let handlers abort the
+  // compaction, but errors are still isolated).
+  if (reg && !reg.isEmpty) {
+    try {
+      await reg.dispatch("onCompaction", {
+        phase: "pre",
+        messageCount: messages.length,
+        tokens: roughTokenCount(messages),
+        messages,
+      });
+    } catch (e) {
+      log.error("onCompaction pre-hook dispatch failed", e);
+    }
+  }
+  const result = await compactMessages(provider, model, messages, {
+    cutoff: opts.cutoff,
+    maxSummaryTokens: opts.maxSummaryTokens,
+    signal,
+  });
+  if (reg && !reg.isEmpty) {
+    try {
+      await reg.dispatch("onCompaction", {
+        phase: "post",
+        messageCount: result.keepFromIndex,
+        tokens: roughTokenCount(messages.slice(0, result.keepFromIndex)),
+        messages: messages.slice(0, result.keepFromIndex),
+        summary: result.summary,
+      });
+    } catch (e) {
+      log.error("onCompaction post-hook dispatch failed", e);
+    }
+  }
+  return result;
 }
 
 // ---------- Re-exports (Phase 1 — p1-unify wireup) ----------

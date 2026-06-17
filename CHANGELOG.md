@@ -557,6 +557,45 @@ test suite:
   in, and HTTP entries still ignore the stdio-only fields.
 
 
+### Phase 4 T4 — D-INK-pre spike
+
+Spike result for the REPL scrollback-pain question deferred from
+`phase3.md` §D-INK and `phase2-decisions.md` §Q3. Measures
+`repl-v2.ts` against four realistic scenarios (9-voice council
+transcript, `/tree` on a 200-node session, 50-msg / 100k-token
+compaction preview, and a render-helpers micro-bench) and picks
+between (b) `ink` and (c) hand-rolled TS VDOM for a future
+`D-INK-IMPL` swap.
+
+- **`docs/ink-spike.md`** — the spike report. Headline numbers:
+  9-voice council = 28 lines / 21.5 KB; `/tree` on 200-node =
+  202 lines / 68.2 KB (the worst case); compaction preview = 54
+  lines / 5.2 KB; render helpers = 0.0175 ms/turn (perf is NOT
+  the pain point). Pain is bounded but real — missing folding,
+  in-place replacement, alt-screen isolation, and semantic
+  search. **Recommendation: (c) hand-rolled TS VDOM** when
+  `D-INK-IMPL` ships, because the project's zero-runtime-dep
+  contract is sacred and `ink` would add `react` +
+  `react-reconciler` (~1.68 MB) + `scheduler` + `yoga-layout` +
+  ~20 transitive deps (~3-5 MB total). **T4.5 itself is
+  deferred** until user-adoption signals land (re-trigger
+  criterion documented in `phase4.md` §T4.5 + `ink-spike.md`).
+- **`scripts/bench-repl-pain.mts`** — reproducible measurement
+  harness. Imports the actual `repl-v2.ts` render helpers (no
+  mocks), seeded RNG (mulberry32, seed `20260617`), 200 LOC.
+  Run any time with `npx tsx scripts/bench-repl-pain.mts` —
+  outputs JSON to stdout, human summary to stderr. Useful for
+  re-running against future REPL changes (Phase 5+ additions
+  to the transcript surface) to catch a pain spike before users
+  do.
+- **`docs/phase4.md`** — status line updated to "T1 + T2 + T3 +
+  T4 SHIPPED". T4.5 section updated with the (c) recommendation
+  and the re-trigger criterion.
+
+No production code changed. No new npm deps added. 785 tests
+across 53 files still pass; `npm run typecheck` clean.
+
+
 ## Unreleased — Phase 3 (T3: D-WORKFLOW source audit)
 
 Closes the Phase 1 spike's open research item

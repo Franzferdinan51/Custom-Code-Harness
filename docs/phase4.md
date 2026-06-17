@@ -3,7 +3,7 @@
 **Ratifies:** [`phase3.md`](./phase3.md) "Tracks explicitly deferred" (D-WORKFLOW-IMPL, D-INSIGHT, D-INK) and the [D-WORKFLOW source audit](./agnt-workflow-audit.md)
 **Source plan:** `plans/plan_phase1/notes/agnt-port-plan.md` §6.3–§6.4
 **Date:** 2026-06-15
-**Status:** T1 + T2 + T3 SHIPPED 2026-06-16
+**Status:** T1 + T2 + T3 + T4 SHIPPED 2026-06-16/17. T5 (closeout) next.
 
 Phase 3 closed out on 2026-06-10 with the 8-kind `Delegation` union's
 `workflow` kind still as a stub, the D-WORKFLOW audit shipped as
@@ -428,8 +428,20 @@ preconditions are not met.
 
 ### T4.5 — D-INK-IMPL (the actual swap, if T4 picks (b) or (c))
 
-L (ink) or M (hand-rolled TS VDOM). Shipped as a separate plan
-post-T4 spike.
+**T4 outcome (2026-06-17):** [`ink-spike.md`](./ink-spike.md) ships.
+**Recommended pick when T4.5 fires: (c) hand-rolled TS VDOM**
+(~1200 LOC, $0 new deps). **T4.5 itself is deferred** — the spike
+measured bounded but real pain (22-68 KB per event, perf is fine,
+missing folding/in-place-update affordances) and the original
+"gated on observed scrollback pain in the field" principle still
+applies. **Re-trigger for T4.5:** when 2+ user reports of
+"the council transcript pushed my prompt off-screen" /
+"I can't fold /tree output" / "I lost my place in /compact"
+land in issues.
+
+Sized M when it ships (≈ 1200 LOC for the VDOM + ~200 LOC
+`repl-v2.ts` → `repl-v3.ts` swap + ~20 tests). Shipped as a
+separate plan post-T4 spike.
 
 ---
 

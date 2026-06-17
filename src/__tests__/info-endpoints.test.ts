@@ -118,7 +118,7 @@ test("/v1/provider/catalog lists all built-in providers with auth modes", async 
       assert.equal(r.body.providers[0]?.id, "lmstudio");
       assert.equal(r.body.providers[0]?.tier, "primary");
       assert.deepEqual(r.body.groups.primary, ["lmstudio"]);
-      assert.deepEqual(r.body.groups.hosted, ["openai", "grok", "minimax", "codex", "anthropic", "xai", "openrouter"]);
+      assert.deepEqual(r.body.groups.hosted, ["minimax", "openai", "grok", "codex", "anthropic", "xai", "openrouter"]);
       assert.deepEqual(r.body.groups.local, ["vllm", "vllm-omni"]);
       const ids = r.body.providers.map((p) => p.id);
       for (const want of ["openai", "grok", "minimax", "anthropic", "xai", "lmstudio", "vllm", "vllm-omni", "codex", "openrouter"]) {

@@ -607,6 +607,56 @@ test("buildEntry: produces a persistable entry from an McpGetResult", () => {
   assert.equal(e.tools[0]!.name, "t");
 });
 
+test("buildEntry: persists stdio cwd and env from opts (regression for dropped-spawn-options bug)", () => {
+  // Bug: `buildEntry(result)` previously ignored `opts.cwd` and
+  // `opts.env`, so `mcpAdd` would write an entry without them. The
+  // handshake used the user's cwd/env correctly, but the next
+  // `LocalMcpRegistry.callTool` re-spawned the subprocess with the
+  // runtime's cwd + parent env — silently breaking any user-supplied
+  // `--cwd` / `--env`. The fix is to pass `opts` through and persist
+  // both fields on stdio entries.
+  const r = {
+    resolved: { command: "npx", args: ["-y", "foo"], transport: "stdio" as const, displayName: "foo", id: "foo" },
+    serverInfo: { name: "foo", version: "1.0.0" },
+    tools: [{ name: "t", description: "d", inputSchema: { type: "object", properties: {} } }] as ReadonlyArray<{ name: string; description: string; inputSchema: { type: "object"; properties?: Record<string, unknown>; required?: string[] } }>,
+    protocolVersion: "2025-06-18",
+    close: async () => {},
+  };
+  // Without opts: cwd / env are undefined (the legacy single-arg call
+  // site still works and stores no cwd/env).
+  const e0 = buildEntry(r);
+  assert.equal(e0.cwd, undefined);
+  assert.equal(e0.env, undefined);
+  // With opts: cwd + env are persisted on stdio entries.
+  const e1 = buildEntry(r, { cwd: "/tmp", env: ["FOO=bar", "BAZ=qux"] });
+  assert.equal(e1.cwd, "/tmp");
+  assert.deepEqual(e1.env, ["FOO=bar", "BAZ=qux"]);
+  // Empty env array is treated as "no env override" — no key written.
+  const e2 = buildEntry(r, { cwd: "/tmp", env: [] });
+  assert.equal(e2.cwd, "/tmp");
+  assert.equal(e2.env, undefined);
+  // Defensive copy: caller mutating the original opts array must not
+  // mutate the persisted entry.
+  const originalEnv = ["A=1"];
+  const e3 = buildEntry(r, { env: originalEnv });
+  originalEnv.push("B=2");
+  assert.deepEqual(e3.env, ["A=1"]);
+});
+
+test("buildEntry: http entries do NOT persist cwd / env (transport-specific fields)", () => {
+  const r = {
+    resolved: { url: "https://x.example/mcp", transport: "http" as const, displayName: "x", id: "x" },
+    serverInfo: { name: "x", version: "1.0.0" },
+    tools: [] as ReadonlyArray<{ name: string; description: string; inputSchema: { type: "object" } }>,
+    protocolVersion: "2025-06-18",
+    close: async () => {},
+  };
+  const e = buildEntry(r, { cwd: "/tmp", env: ["X=1"] });
+  assert.equal(e.cwd, undefined, "http entries must not carry stdio-only fields");
+  assert.equal(e.env, undefined);
+  assert.equal(e.url, "https://x.example/mcp");
+});
+
 // ---------- cleanup ----------
 
 test("ALL OK", () => {

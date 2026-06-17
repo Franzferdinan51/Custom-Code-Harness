@@ -682,14 +682,13 @@ const sseClients = new Set<SseClient>();
 
 function handleSse(
   req: IncomingMessage,
-  _res: ServerResponse,
+  res: ServerResponse,
   _tools: McpToolDefinition[],
   _opts: McpStartOpts,
 ): void {
   // For MCP over SSE, clients POST JSON-RPC to /mcp and listen on
   // /sse for events. We forward each /mcp response as an `event: message`
   // line. (One-way push so the client knows when replies land.)
-  const res = (req as unknown as { res: ServerResponse }).res;
   if (!res) {
     req.destroy();
     return;

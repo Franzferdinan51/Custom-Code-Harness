@@ -711,7 +711,7 @@ export async function mcpAdd(
 ): Promise<{ entry: McpServerEntry; result: McpGetResult }> {
   const result = await mcpGet(packageOrUrl, opts);
   try {
-    const entry = buildEntry(result);
+    const entry = buildEntry(result, opts);
     await upsertMcpServerEntry(entry);
     return { entry, result };
   } finally {
@@ -721,8 +721,15 @@ export async function mcpAdd(
 
 /** Build a persistence entry from an `McpGetResult`. The id and
  *  transport come from `result.resolved`; the version and tools
- *  come from the handshake. */
-export function buildEntry(result: McpGetResult): McpServerEntry {
+ *  come from the handshake. When `opts` is supplied, the stdio
+ *  `cwd` and `env` are persisted too — `LocalMcpRegistry.callTool`
+ *  re-spawns the subprocess on every call and needs them to find
+ *  the same working directory / env the original `mcpGet` used
+ *  during the handshake. (Bug fix: previously these were dropped
+ *  and the registry silently fell back to the runtime's cwd +
+ *  parent process env, breaking any user-supplied `--cwd` /
+ *  `--env` from `ch mcp add`.) */
+export function buildEntry(result: McpGetResult, opts?: McpGetOpts): McpServerEntry {
   const out: McpServerEntry = {
     id: result.resolved.id,
     name: result.resolved.displayName,
@@ -738,6 +745,8 @@ export function buildEntry(result: McpGetResult): McpServerEntry {
   if (result.resolved.transport === "stdio" && result.resolved.command) {
     out.command = result.resolved.command;
     if (result.resolved.args) out.args = result.resolved.args;
+    if (opts?.cwd) out.cwd = opts.cwd;
+    if (opts?.env && opts.env.length > 0) out.env = opts.env.slice();
   }
   if (result.resolved.transport === "http" && result.resolved.url) {
     out.url = result.resolved.url;

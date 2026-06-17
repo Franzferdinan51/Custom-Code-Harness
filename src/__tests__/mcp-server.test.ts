@@ -388,6 +388,45 @@ test("stdio: tools/call dispatches read", async () => {
   assert.match(text, /hello stdio/);
 });
 
+test("rpc: GET /sse opens an event-stream and emits a comment (regression for sse res-from-req bug)", async () => {
+  // Bug: `handleSse` in src/mcp-server.ts used to ignore the `res`
+  // argument and try to fish it back out of `req` via an unsafe cast
+  // (`(req as unknown as { res: ServerResponse }).res`). That cast
+  // returned `undefined`, the function then called `req.destroy()`,
+  // and the SSE stream never opened. This test pins the fixed
+  // behavior: a real `text/event-stream` response with the harness's
+  // identifying comment line.
+  const r = await startMcpServer({ port: 34580, host: "127.0.0.1", cwd: tmp });
+  try {
+    const got: { status: number; contentType: string; firstChunk: string } = await new Promise((resolve, reject) => {
+      const req = httpRequest({
+        hostname: "127.0.0.1", port: 34580, path: "/sse", method: "GET",
+      }, (res) => {
+        const ct = String(res.headers["content-type"] ?? "");
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => resolve({
+          status: res.statusCode ?? 0,
+          contentType: ct,
+          firstChunk: Buffer.concat(chunks).toString("utf-8"),
+        }));
+        // Force-close after a short window so the test terminates
+        // even if the server keeps the stream open.
+        setTimeout(() => { try { req.destroy(); } catch { /* ignore */ } }, 200);
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(got.status, 200, "sse must return 200");
+    assert.match(got.contentType, /text\/event-stream/, "sse must set text/event-stream content-type");
+    // The server writes a `: codingharness mcp stream\n\n` comment
+    // right after the headers. If the old `req.res` cast bug is
+    // back, the body would be empty (req was destroyed before any
+    // bytes were written).
+    assert.match(got.firstChunk, /codingharness mcp stream/);
+  } finally { await r.stop(); }
+});
+
 test("ALL OK", () => {
   // Cleanup the temp dir.
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }

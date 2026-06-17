@@ -507,6 +507,55 @@ the four most important gaps and adds a public liveness probe.
   a v2 goal with all the new fields, runs `ch goals show`, and
   asserts each one appears in stdout.
 
+### Phase 4 T2 / T3 (extension loader + MCP client) post-merge fixes
+
+Two real bugs found in the new Phase 4 T2 (TS extension loader)
+and T3 (real MCP client) merges, both uncovered by the existing
+test suite:
+
+- **`mcp-server.handleSse` ignored its `res` argument and
+  fished the response out of `req` via an unsafe cast**
+  (`src/mcp-server.ts`): the function signature is
+  `handleSse(req, res, tools, opts)`, but the body renamed `res`
+  to `_res` and then read it back from the request object via
+  `(req as unknown as { res: ServerResponse }).res`. That cast
+  returns `undefined` (Node's `IncomingMessage` has no such
+  property), so the next line took the `if (!res)` branch and
+  called `req.destroy()` — silently closing every SSE
+  connection. The fix is to use the `res` parameter directly.
+  The bug went uncaught because no existing test exercised
+  `GET /sse` end-to-end. New regression test in
+  `src/__tests__/mcp-server.test.ts` opens an SSE stream,
+  reads the `: codingharness mcp stream` comment line, and
+  confirms `text/event-stream` content-type. End-to-end
+  manual verification: `curl -N http://127.0.0.1:23456/sse`
+  now streams the harness's SSE events instead of dropping
+  the connection. (Pre-fix: `ECONNRESET` immediately.)
+
+- **`mcp-client.buildEntry` dropped the stdio `cwd` and
+  `env` from the persisted `McpServerEntry`**
+  (`src/agent/mcp-client.ts`): `mcpGet` accepts `cwd` and
+  `env` on `McpGetOpts` and uses them to spawn the
+  subprocess for the initial handshake + `tools/list`.
+  But `buildEntry(result)` (called by `mcpAdd`) only
+  serialized `command` / `args` / `url` and ignored `cwd` /
+  `env`. The `McpServerEntry` type already had `cwd?` and
+  `env?` fields, `parseEntry` already validated them, and
+  `LocalMcpRegistry.openClient` already used them on every
+  `callTool` — so the wiring was right, the persistence was
+  the gap. Effect: any stdio server added with non-default
+  cwd / env (e.g. `ch mcp add <pkg> --cwd /tmp --env
+  FOO=bar`, when the CLI gains those flags) would install
+  correctly but break on the very first tool call, because
+  the registry would re-spawn the subprocess with the
+  runtime's cwd + parent env. The fix is to thread `opts`
+  through `buildEntry(result, opts)` and persist `cwd` /
+  `env` when set. New tests in
+  `src/__tests__/mcp-client.test.ts` pin the round-trip:
+  `cwd` / `env` are written when supplied, omitted when
+  empty, defensive-copied so caller mutations don't bleed
+  in, and HTTP entries still ignore the stdio-only fields.
+
 
 ## Unreleased — Phase 3 (T3: D-WORKFLOW source audit)
 

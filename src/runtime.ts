@@ -203,9 +203,10 @@ export class HarnessRuntime implements SlashRuntime {
     // Phase 4 T3: MCP registry. Lazily spawns / connects to
     // servers on each `callTool`. Wired through to the
     // DelegationManager so `Delegation { kind: "mcp" }` works
-    // out of the box. Tests can pass a different
-    // `filePath` here by overriding `paths.mcpJson` via the
-    // `MCP_CONFIG_PATH` env var (read inside the registry).
+    // out of the box. The config path is resolved inside the
+    // registry via `resolveMcpConfigPath()`, which honors the
+    // `MCP_CONFIG_PATH` env var (tests set this before importing
+    // `LocalMcpRegistry` to point the registry at a tmp file).
     this.mcpRegistry = new LocalMcpRegistry();
     // Resolve the default provider / model for the
     // `generate-with-ai-llm` node. The `providerRegistry.default()`

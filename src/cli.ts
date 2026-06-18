@@ -1400,6 +1400,8 @@ async function runMcpGet(ctx: SubcommandContext, args: string[]): Promise<number
           serverInfo: result.serverInfo,
           protocolVersion: result.protocolVersion,
           tools: result.tools,
+          ...(result.resolved.cwd ? { cwd: result.resolved.cwd } : {}),
+          ...(result.resolved.env ? { env: result.resolved.env } : {}),
         }, null, 2) + "\n");
       } else {
         process.stdout.write(c.green("  ✓ connected\n"));
@@ -1456,6 +1458,8 @@ async function runMcpAdd(ctx: SubcommandContext, args: string[]): Promise<number
         serverInfo: result.serverInfo,
         protocolVersion: result.protocolVersion,
         tools: result.tools,
+        ...(result.resolved.cwd ? { cwd: result.resolved.cwd } : {}),
+        ...(result.resolved.env ? { env: result.resolved.env } : {}),
       } }, null, 2) + "\n");
     } else {
       process.stdout.write(c.green("  ✓ installed\n"));

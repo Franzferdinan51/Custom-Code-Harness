@@ -206,11 +206,12 @@ export class ExtensionRegistry {
       // Chain transformations: each handler sees the CURRENT
       // system (initially the input; updated if a previous
       // handler returned a string). If no handler transforms,
-      // return the input system unchanged. The agent loop
-      // (loop.ts) treats the dispatch return as a candidate
-      // replacement, falling back to its own `input.system`
-      // when the type isn't `string` — so the loop contract
-      // is preserved either way.
+      // the dispatch still returns a string — the input system
+      // is echoed back. The agent loop (loop.ts) handles the
+      // string as the candidate replacement for `input.system`.
+      // The `typeof === "string"` guard in the loop is a no-op
+      // for our return but is preserved so the loop doesn't
+      // crash if a future hook adds a non-string return.
       let current: string = (payload as PreSystemPromptPayload).system;
       for (const entry of snapshot) {
         try {

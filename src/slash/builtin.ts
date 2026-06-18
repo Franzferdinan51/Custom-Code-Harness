@@ -1555,17 +1555,46 @@ import { renderSessionTree } from "./tree-render.js";
 
 const treeCommand: SlashCommand = {
   name: "tree",
-  description: "Show the session tree (with branching).",
+  description: "Show the session tree (with branching). Flags: --depth=N, --limit=N.",
   group: "context",
-  async run(_a, ctx) {
+  async run(args, ctx) {
     const rt = ctx.runtime?.();
     const live = rt?.getSession?.() ?? null;
     const id = live?.id ?? rt?.sessionId();
     if (!id) return "no active session";
+    // Parse --depth=N and --limit=N. Both are optional. Bad input
+    // returns a usage hint rather than silently rendering the
+    // unfiltered tree (which is the scrollback-pain case the
+    // flag exists to prevent).
+    const trimmed = args.trim();
+    let depth: number | undefined;
+    let limit: number | undefined;
+    for (const tok of trimmed.length === 0 ? [] : trimmed.split(/\s+/)) {
+      const dm = /^--depth=(\d+)$/.exec(tok);
+      const lm = /^--limit=(\d+)$/.exec(tok);
+      if (dm) {
+        if (depth !== undefined) return "usage: /tree [--depth=N] [--limit=N]";
+        depth = parseInt(dm[1]!, 10);
+      } else if (lm) {
+        if (limit !== undefined) return "usage: /tree [--depth=N] [--limit=N]";
+        limit = parseInt(lm[1]!, 10);
+      } else {
+        return "usage: /tree [--depth=N] [--limit=N]";
+      }
+    }
+    if (depth !== undefined && (depth < 0 || depth > 1000)) {
+      return "error: --depth must be in 0..1000";
+    }
+    if (limit !== undefined && (limit < 1 || limit > 10_000)) {
+      return "error: --limit must be in 1..10000";
+    }
     const s = live ?? await Session.open(id);
     const entries = s.allEntries();
     if (entries.length === 0) return "(empty session)";
-    return renderSessionTree(entries, s.meta.head ?? "");
+    return renderSessionTree(entries, s.meta.head ?? "", {
+      ...(depth !== undefined ? { depth } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
   },
 };
 

@@ -272,7 +272,6 @@ export async function connectStdio(opts: StdioConnectOpts): Promise<McpClient> {
   const pending = new Map<string | number, {
     resolve: (r: McpJsonRpcResponse) => void;
     reject: (e: Error) => void;
-    onError?: (err: McpJsonRpcResponse) => void;
   }>();
   let lineBuf = "";
   const reader = child.stdout;
@@ -635,7 +634,10 @@ export interface McpGetOpts {
 
 export interface McpGetResult {
   /** Resolved package / URL — the `command` + `args` we'll spawn
-   *  for stdio, or the URL for http. */
+   *  for stdio, or the URL for http. Includes the spawn
+   *  `cwd` / `env` when the caller supplied them (stdio only)
+   *  so `mcpAdd` can persist them via `buildEntry` and so a
+   *  preview caller can see what would be installed. */
   resolved: {
     command?: string;
     args?: string[];
@@ -643,6 +645,10 @@ export interface McpGetResult {
     transport: "stdio" | "http";
     displayName: string;
     id: string;
+    /** stdio only — passed to `spawn` for the handshake. */
+    cwd?: string;
+    /** stdio only — passed to `spawn` for the handshake. */
+    env?: readonly string[];
   };
   /** The negotiated server info. */
   serverInfo: { name: string; version: string; title?: string };
@@ -690,6 +696,8 @@ export async function mcpGet(packageOrUrl: string, opts: McpGetOpts = {}): Promi
           transport: "stdio" as const,
           displayName: r.displayName,
           id: r.id,
+          ...(opts.cwd ? { cwd: opts.cwd } : {}),
+          ...(opts.env && opts.env.length > 0 ? { env: opts.env.slice() } : {}),
         };
       })();
   return {

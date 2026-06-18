@@ -595,6 +595,118 @@ between (b) `ink` and (c) hand-rolled TS VDOM for a future
 No production code changed. No new npm deps added. 785 tests
 across 53 files still pass; `npm run typecheck` clean.
 
+### `/tree --depth=N --limit=N` — the worst-case scrollback pain, tamed
+
+The T4 spike above identified `/tree` on a 200-node session
+(202 lines / 68.2 KB) as the worst scrollback case in the
+current REPL. The deferral to T4.5 was the "swap the renderer"
+track, but a 1-line flag on the slash command addresses the
+*user pain* without waiting on a VDOM rewrite:
+
+- **`renderSessionTree(entries, headId, opts?: { depth?; limit? })`**
+  (`src/slash/tree-render.ts`): both knobs default to
+  `undefined` (unlimited — preserves the v0.2.x output for
+  every existing call site and the existing 5-test suite). The
+  `walk` function:
+  - Stops recursing once `depth` is hit and emits a single
+    `(… N more below — pass --depth=K+1 to expand)` leaf so
+    the user sees the omission count + a one-keystroke fix.
+  - Stops emitting lines once `limit` is hit and appends a
+    one-line `(truncated at N lines — pass --depth=K or
+    --limit=K to expand)` footer so the user can tell
+    truncation happened and how to expand.
+  - The two compose: if the limit fires first, no depth leaf
+    is ever emitted; if the depth cap fires first, the
+    truncation footer is still appended when the cap is hit.
+- **`treeCommand.run(args, ctx)`** (`src/slash/builtin.ts`):
+  parses `--depth=N` and `--limit=N` from the args string in
+  any order, validates each as a positive int in a sane
+  range (`depth: 0..1000`, `limit: 1..10_000`), and threads
+  them through to `renderSessionTree`. Bad / unknown flags
+  return a one-line usage hint rather than silently rendering
+  the unfiltered tree (the exact scrollback-pain case the
+  flag exists to prevent).
+- **4 new tests in `src/__tests__/tree-render.test.ts`** pin
+  the behavior: `depth=0` emits only the root + leaf,
+  `limit=3` produces 3 lines + footer, `limit=100` on a
+  3-entry tree is a no-op (no footer), and `depth + limit`
+  compose (limit fires first → no depth leaf).
+
+**End-to-end verification** (4-entry linear session with
+`head = last`):
+
+```
+$ /tree                          # default — 4 lines
+└─ → r  10:11:53  message  root
+   └─ → a  10:11:53  message  L1
+      └─ → b  10:11:53  message  L2
+         └─ ● c  10:11:53  message  L3
+
+$ /tree --depth=0                # 1 line + 1 leaf
+└─ → r  10:11:53  message  root
+       (…3 more below — pass --depth=1 to expand)
+
+$ /tree --depth=1                # 2 lines + 1 leaf
+└─ → r  10:11:53  message  root
+   └─ → a  10:11:53  message  L1
+          (…2 more below — pass --depth=2 to expand)
+
+$ /tree --limit=2                # 2 lines + 1 footer
+└─ → r  10:11:53  message  root
+   └─ → a  10:11:53  message  L1
+(truncated at 2 lines — pass --depth=K or --limit=K to expand)
+```
+
+The flags don't paper over the deeper T4.5 problem
+(folding / in-place replacement / alt-screen) but they do
+make a 68 KB scrollback runnable in 2 lines + a footer.
+Recommended default for power users: alias `/tree` →
+`/tree --limit=50` in their REPL config.
+
+### MCP: `McpGetResult.resolved` now surfaces `cwd` / `env`
+
+`src/agent/mcp-client.ts`: the `McpGetResult.resolved` type
+gained optional `cwd?: string` and `env?: readonly string[]`
+fields, populated from the `McpGetOpts` the caller passed to
+`mcpGet`. The fields are also written into the persisted
+`McpServerEntry` by `buildEntry(result, opts)` (already fixed
+in the prior commit) and forwarded through the CLI's
+`ch mcp get --json` / `ch mcp add --json` outputs so a
+preview can see exactly what `ch mcp add` would persist.
+HTTP transports still ignore both fields (stdio-only). Dead
+`onError?` field on the stdio `pending` map removed.
+
+### Dead code + doc drift cleanup
+
+- **`ExtensionRegistry.dispatch('preSystemPrompt')` comment
+  was wrong** (`src/agent/extensions/registry.ts`): the
+  doc claimed the dispatch returns `string | undefined` and
+  the loop falls back to `input.system` on non-string. In
+  fact, the dispatch always returns a string (the input is
+  echoed back when no handler transforms). Updated the
+  comment to describe the actual contract.
+- **`LocalMcpRegistry.openClient` had a dead `signal`
+  parameter** (`src/agent/mcp-registry.ts`): the body
+  contained a no-op spread (`...{ /* signal forwarded via
+  timeoutMs below */ }`) that suggested the signal was
+  wired through. It wasn't — the stdio transport doesn't
+  honor an in-progress abort. Renamed the parameter to
+  `_signal` and added a doc comment explaining the
+  timeout-only contract.
+- **`HarnessRuntime` constructor comment was misleading**
+  (`src/runtime.ts`): the doc said "Tests can pass a
+  different `filePath` here by overriding `paths.mcpJson` via
+  the `MCP_CONFIG_PATH` env var". The env var doesn't
+  override `paths.mcpJson` — it overrides
+  `resolveMcpConfigPath()`, which is what
+  `LocalMcpRegistry` actually reads. Updated the comment
+  to point at the right surface.
+
+789 tests pass / 0 fail across 53 files; `npm run typecheck`
+clean. (The +4 from this commit: `--depth=0`,
+`--limit` truncates, `--limit` no-op, `--depth + --limit`
+compose.)
+
 
 ## Unreleased — Phase 3 (T3: D-WORKFLOW source audit)
 

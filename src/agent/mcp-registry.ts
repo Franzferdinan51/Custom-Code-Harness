@@ -142,8 +142,15 @@ export class LocalMcpRegistry implements McpRegistry {
     }
   }
 
-  /** Lazily open a connection to a server entry. */
-  private async openClient(entry: McpServerEntry, signal?: AbortSignal): Promise<McpClient> {
+  /** Lazily open a connection to a server entry.
+   *
+   * Note: the `signal` parameter is accepted to keep the
+   * `McpRegistry.callTool(opts)` contract, but the stdio transport
+   * doesn't honor an in-progress abort (the subprocess is already
+   * spawned by the time the signal fires; the connect handshake
+   * has its own `timeoutMs` cap). The signal still drives the
+   * `callTool`-side timeouts in `delegation.ts:1537-1539`. */
+  private async openClient(entry: McpServerEntry, _signal?: AbortSignal): Promise<McpClient> {
     if (entry.transport === "stdio") {
       if (!entry.command) throw new Error(`server "${entry.id}" missing command`);
       return await connectStdio({
@@ -151,7 +158,6 @@ export class LocalMcpRegistry implements McpRegistry {
         ...(entry.args ? { args: entry.args } : {}),
         ...(entry.cwd ? { cwd: entry.cwd } : {}),
         ...(entry.env ? { env: entry.env } : {}),
-        ...(signal ? { /* signal forwarded via timeoutMs below */ } : {}),
       });
     }
     if (entry.transport === "http") {

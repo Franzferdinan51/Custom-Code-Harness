@@ -53,14 +53,34 @@ export const readTool: Tool = {
       }
       const text = await readFile(abs, "utf-8");
       const cap = ctx.limits.readMaxBytes;
-      let body: string = text.length > cap ? text.slice(0, cap) + "\n\n... (truncated at " + cap + " bytes; " + (text.length - cap) + " bytes remain)" : text;
+      // If the caller asked for a specific line slice, do the slicing
+      // on the FULL text first so the line numbers in the output
+      // match the original file. Truncation is a last-resort byte cap
+      // applied to the already-sliced chunk. (Pre-fix: the slice was
+      // applied to the truncated body, so `offset=100000` on a 1 MB
+      // file would render lines from the first 200 KB and label
+      // them with the original line numbers — wildly wrong.)
+      let body: string;
       if (raw.offset || raw.limit) {
-        const lines = body.split("\n");
-        const start = (raw.offset ?? 1) - 1;
-        const end = raw.limit ? start + raw.limit : lines.length;
-        const slice = lines.slice(start, end);
-        const header = "lines " + (start + 1) + "-" + Math.min(end, lines.length) + " of " + lines.length + ":";
+        const allLines = text.split("\n");
+        const requestedStart = (raw.offset ?? 1) - 1;
+        // Clamp `start` into [0, allLines.length) so a past-the-end
+        // offset produces an empty slice + a clear "no more lines"
+        // header instead of the confusing "lines 5000-5003 of 1001:"
+        // the previous code emitted.
+        const start = Math.max(0, Math.min(requestedStart, allLines.length));
+        const end = raw.limit ? start + raw.limit : allLines.length;
+        const slice = allLines.slice(start, end);
+        const lastLine = Math.min(end, allLines.length);
+        const header = start >= allLines.length
+          ? "(offset " + (requestedStart + 1) + " is past the end of the file (" + allLines.length + " lines))"
+          : "lines " + (start + 1) + "-" + lastLine + " of " + allLines.length + ":";
         body = header + "\n" + slice.map((l, i) => String(start + i + 1).padStart(6) + "  " + l).join("\n");
+      } else {
+        body = text;
+      }
+      if (body.length > cap) {
+        body = body.slice(0, cap) + "\n\n... (truncated at " + cap + " bytes; " + (text.length - cap) + " bytes remain)";
       }
       return { toolCallId: "", display: "read " + abs, content: body, isError: false };
     } catch (e) {

@@ -51,8 +51,11 @@ export const bashTool: Tool = {
   },
   async run(rawArgs, ctx: ToolContext) {
     const raw = rawArgs as unknown as BashArgs & { __approval_bypass?: boolean };
-    // Approval flow. If the runtime has already decided this command
-    // is OK, `__approval_bypass` is set on the args.
+    // Approval flow. The runtime injects `__approval_bypass` on
+    // the args before re-running a previously-approved command
+    // (e.g. after a `deny → allow-once` loop where the model
+    // re-emits the same tool call). When set, the approval check
+    // is skipped.
     if (!raw.__approval_bypass) {
       const approval: ApprovalConfig = ctx.services?.getApproval
         ? ctx.services.getApproval()
@@ -75,8 +78,11 @@ export const bashTool: Tool = {
               isError: true,
             };
           }
-          // allow-once / allow-always: fall through with bypass set.
-          raw.__approval_bypass = true;
+          // allow-once / allow-always: fall through and run.
+          // (The harness's `allow-always` decision is also persisted
+          // to `settings.approval.allowlist` by the runtime, so
+          // re-emitted tool calls from the model pass the
+          // allowlist check on the next turn without a prompt.)
         } else {
           return {
             toolCallId: "",

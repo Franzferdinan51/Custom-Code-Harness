@@ -78,16 +78,52 @@ export const httpTool: Tool = {
           ...(hasBody ? { body: args.body } : {}),
           signal: ctrl.signal,
         });
-        const buf = await res.arrayBuffer();
+        // Stream-read up to `max_bytes + 1` so we can report a
+        // truncation flag WITHOUT loading the full response into
+        // memory. Pre-fix: `await res.arrayBuffer()` materialized
+        // the entire body before the cap was applied, so a 1 GB
+        // hostile / runaway response would OOM the harness.
+        const cap = args.max_bytes ?? MAX_DEFAULT;
+        const overread = 1; // one extra byte so we can detect overflow
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        let truncated = false;
+        if (res.body) {
+          const reader = res.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              if (received + value.byteLength > cap + overread) {
+                const allowed = Math.max(0, cap + overread - received);
+                if (allowed > 0) {
+                  chunks.push(value.subarray(0, allowed));
+                  received += allowed;
+                }
+                truncated = true;
+                try { await reader.cancel(); } catch { /* best-effort */ }
+                break;
+              }
+              chunks.push(value);
+              received += value.byteLength;
+              if (received >= cap) {
+                truncated = (await reader.read()).value !== undefined;
+                break;
+              }
+            }
+          }
+        }
         clearTimeout(t);
         ctx.signal.removeEventListener("abort", onAbort);
-        const bytes = new Uint8Array(buf).subarray(0, args.max_bytes ?? MAX_DEFAULT);
-        const text = new TextDecoder("utf-8").decode(bytes);
-        const truncated = buf.byteLength > bytes.byteLength;
+        const bytes = new Uint8Array(received);
+        let off = 0;
+        for (const c of chunks) { bytes.set(c, off); off += c.byteLength; }
+        const head = truncated ? bytes.subarray(0, cap) : bytes;
+        const text = new TextDecoder("utf-8").decode(head);
         return {
           toolCallId: "",
           display: "HTTP " + res.status,
-          content: "HTTP " + res.status + " " + res.statusText + "\ncontent-type: " + (res.headers.get("content-type") ?? "") + "\nbytes: " + buf.byteLength + (truncated ? " (truncated to " + bytes.byteLength + ")" : "") + "\n\n" + text,
+          content: "HTTP " + res.status + " " + res.statusText + "\ncontent-type: " + (res.headers.get("content-type") ?? "") + "\nbytes: " + received + (truncated ? " (truncated to " + cap + ")" : "") + "\n\n" + text,
           isError: res.status >= 400,
         };
       } finally {

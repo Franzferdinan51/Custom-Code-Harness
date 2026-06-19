@@ -713,8 +713,10 @@ export class HarnessRuntime implements SlashRuntime {
    *  the future `ch agents show <name>` CLI subcommand. */
   getAgent(name: string) { return this.subagents.get(name); }
   /** Read the current in-session todo list. Same data the `todo`
-   *  tool sees when the agent invokes it. */
-  readTodo(): string[] { return this.todoItems; }
+   *  tool sees when the agent invokes it. Returns a shallow copy
+   *  so callers can't mutate the runtime's internal state by
+   *  splicing the returned array. */
+  readTodo(): string[] { return this.todoItems.slice(); }
   /** Replace the in-session todo list. Persists to the session
    *  JSONL so reloads see it. */
   async writeTodo(items: string[]): Promise<void> {

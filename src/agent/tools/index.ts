@@ -33,10 +33,11 @@ export function defaultToolRegistry(): ToolRegistry {
   r.register(todoTool);
   // Always registered; returns a helpful error when the active provider lacks image output.
   r.register(generateImageTool);
-  // The two tool-of-tools (spawn_subagent, skill) are registered
-  // by the runtime after SubAgentManager / SkillRegistry are wired.
-  r._registerRaw(spawnSubagentTool);
-  r._registerRaw(skillTool);
-  r._registerRaw(memoryTool);
+  // The tool-of-tools (spawn_subagent, skill, memory) are
+  // registered by the runtime after SubAgentManager /
+  // SkillRegistry / MemoryStore are wired.
+  r.register(spawnSubagentTool);
+  r.register(skillTool);
+  r.register(memoryTool);
   return r;
 }

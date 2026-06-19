@@ -172,6 +172,43 @@ test("httpTool: validate rejects timeout_ms <= 0", () => {
   );
 });
 
+test("httpTool: streams response and truncates at max_bytes (regression for full-body-OOM bug)", async () => {
+  // Pre-fix bug: `await res.arrayBuffer()` materialized the entire
+  // body before the cap was applied, so a hostile / runaway
+  // 1 GB response would OOM the harness. The fix streams up to
+  // `max_bytes + 1` and cancels the stream instead of waiting
+  // for the producer to finish.
+  //
+  // The test sets a HARD timeout (3s) on `httpTool.run`. If the
+  // streaming path is broken (e.g. the pre-fix `arrayBuffer()`
+  // was reinstated), the run hangs until the server's keep-alive
+  // timer eventually closes the response — well past 3s — and
+  // the test fails with a timeout.
+  const big = "x".repeat(5_000);
+  const server = await startMockServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.write(big);
+    res.write(big);
+    res.write(big);
+    res.write(big);
+    res.end();
+  });
+  try {
+    const args = httpTool.validate({ url: `http://127.0.0.1:${server.port}/`, max_bytes: 200 });
+    const runPromise = httpTool.run(args, ctx);
+    const result = await Promise.race([
+      runPromise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout: httpTool.run hung past 3s — body was not streamed/capped")), 3_000)),
+    ]);
+    assert.equal(result.isError, false);
+    assert.match(result.content, /truncated to 200/);
+    // Total content size is bounded by the header block (≈100
+    // bytes) + the 200-byte cap. Far below the 20_000-byte
+    // server response.
+    assert.ok(result.content.length < 1_000, "truncated body must be small, got " + result.content.length);
+  } finally { server.close(); }
+});
+
 // After all tests, clean up the tmpdir. node:test runs tests in
 // registration order and `after()` is not in the standard test()
 // API; we register a trailing no-op test that does the cleanup so

@@ -3,7 +3,7 @@
 // files are the #1 source of "I ran the agent and now my code is
 // corrupted" pain.
 
-import { writeFile, rename, mkdir, stat } from "node:fs/promises";
+import { writeFile, rename, mkdir, stat, unlink } from "node:fs/promises";
 import { dirname, resolve, isAbsolute } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Tool, ToolContext } from "./registry.js";
@@ -44,13 +44,19 @@ export const writeTool: Tool = {
   async run(rawArgs, ctx: ToolContext) {
     const raw = rawArgs as unknown as WriteArgs;
     const abs = isAbsolute(raw.path) ? raw.path : resolve(ctx.cwd, raw.path);
+    // Track the tmp path so a mid-flight failure (write OK, rename
+    // failed) can still unlink the orphan. Pre-fix the rename
+    // failure leaked a `<path>.<rand>.tmp` next to the target —
+    // not corrupting, but visually noisy in the working tree.
+    let tmp: string | undefined;
     try {
       await mkdir(dirname(abs), { recursive: true });
       let existed = false;
       try { const s = await stat(abs); existed = s.isFile(); } catch {}
-      const tmp = abs + "." + randomBytes(6).toString("hex") + ".tmp";
+      tmp = abs + "." + randomBytes(6).toString("hex") + ".tmp";
       await writeFile(tmp, raw.content, "utf-8");
       await rename(tmp, abs);
+      tmp = undefined; // rename consumed it
       return {
         toolCallId: "",
         display: "wrote " + abs + " (" + raw.content.length + " bytes" + (existed ? ", replaced" : "") + ")",
@@ -58,6 +64,9 @@ export const writeTool: Tool = {
         isError: false,
       };
     } catch (e) {
+      if (tmp !== undefined) {
+        try { await unlink(tmp); } catch { /* best-effort cleanup */ }
+      }
       const msg = e instanceof Error ? e.message : String(e);
       return { toolCallId: "", display: "write failed: " + abs, content: "write failed: " + msg, isError: true };
     }

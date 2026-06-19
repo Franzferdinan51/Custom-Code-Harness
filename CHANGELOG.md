@@ -708,6 +708,107 @@ clean. (The +4 from this commit: `--depth=0`,
 compose.)
 
 
+### Tool correctness + perf pass
+
+Five real bugs found in tool code while reading the new Phase 4
+T2/T3 + localpi port merges. All have regression tests that fail
+without the fix.
+
+- **`read.ts` offset/limit sliced the truncated body, not the
+  original file** (`src/agent/tools/read.ts`): when a caller
+  asked for `offset=3000, limit=5` on a 1 MB file, the OLD
+  code first truncated to `readMaxBytes` (the first 200 KB),
+  then sliced the truncated body. The result was an EMPTY body
+  with a nonsensical header `lines 3000-644 of 644:` (the 644
+  was the truncated line count, not the original). Fix: slice
+  first on the full text, truncate as a last-resort byte cap on
+  the already-sliced chunk. Line numbers now always match the
+  original file. Same change also handles `offset=5000` on a
+  5-line file with a clear `(offset 5000 is past the end of
+  the file (6 lines))` header instead of the previous
+  `lines 5000-5004 of 6:` (start > end).
+- **`write.ts` / `edit.ts` leaked `<path>.<rand>.tmp` on
+  rename failure** (`src/agent/tools/write.ts`,
+  `src/agent/tools/edit.ts`): the atomic write creates a
+  `tmp` file, writes, renames. If `rename` failed (e.g. the
+  target is a directory, or the FS is full), the OLD code
+  returned an error but left the `tmp` orphan next to the
+  target — visually noisy in the working tree, harmless but
+  embarrassing. Fix: track `tmp` locally, unlink in the catch
+  block. New regression test pre-creates the destination as a
+  directory (forces rename to fail) and asserts no orphan
+  `.tmp` remains.
+- **`http.ts` materialized the full response body before
+  applying `max_bytes`** (`src/agent/tools/http.ts`):
+  `await res.arrayBuffer()` loaded the entire response into
+  memory, THEN the cap was applied. A hostile / runaway
+  1 GB response would OOM the harness. Fix: stream-read
+  `max_bytes + 1` via `res.body.getReader()` and cancel the
+  stream at the cap. New regression test races `httpTool.run`
+  with a 3-second timeout — pre-fix the run hung past the
+  server's keep-alive; post-fix it returns in ~30ms with the
+  truncation footer.
+- **`ls.ts` was O(n) sequential `stat()` calls on a 2000-entry
+  dir** (`src/agent/tools/ls.ts`): each `await stat(...)` was
+  a separate roundtrip, making `ls` on a maxed-out dir take
+  2-5 seconds on macOS. Fix: pre-stat every FILE entry with
+  `Promise.all`. Same time, same output. Also fixes a
+  follow-on bug where `raw.max_entries ?? MAX_ENTRIES` was
+  needed because the OLD `count >= raw.max_entries` check
+  treated `undefined` as no-cap, but the new
+  `slice(0, raw.max_entries + 1)` math turned undefined into
+  `NaN + 1 = NaN`, producing an empty list. New test exercises
+  the raw-call path (`tool.run` without `validate`) to pin
+  the fallback.
+- **`runAgent` leaked the `turnSignal` timer on the
+  successful-turn path** (`src/agent/loop.ts`): the
+  `timedSignal(parent, requestTimeoutMs)` was created per
+  attempt, disposed in the catch block (failover, user-abort)
+  but NOT in the success path — the `for await` completed
+  normally, `break outer` exited the loop, and the
+  `setTimeout(..., requestTimeoutMs)` kept the event loop
+  alive for up to `requestTimeoutMs` (default 5 min) after
+  every successful provider turn. Fix: wrap the per-attempt
+  block in `try / finally` so `turnSignal.dispose()` runs on
+  every exit path.
+
+### Dead code / doc cleanup
+
+- **`ToolRegistry._registerRaw` was identical to
+  `register()`** (`src/agent/tools/registry.ts`,
+  `src/agent/tools/index.ts`): both did
+  `this.tools.set(t.spec.name, t)`. The "internal" prefix
+  was a comment, not a constraint. Merged into one method.
+  Three call sites updated.
+- **`bash.ts` `__approval_bypass = true` was dead code**
+  (`src/agent/tools/bash.ts`): after the user approved via
+  the `askFn` callback, the OLD code set the bypass on the
+  local `raw` object, but the rest of the function runs the
+  command without re-checking the bypass (the check is at
+  the top of the function). The bypass is for SUBSEQUENT
+  invocations, but those get a new `raw` from `validate()`
+  which strips the field. Removed the no-op assignment and
+  rewrote the comment to describe the actual contract (the
+  bypass IS honored when the field is present, e.g. in
+  direct `tool.run` calls — the cost-approval test covers
+  that path). The runtime's `allow-always` decision is
+  already persisted to `settings.approval.allowlist` by
+  `runtime.ts:782`; the per-call bypass is only meaningful
+  for one-shot test / programmatic re-runs.
+- **`HarnessRuntime.readTodo()` returned the internal array
+  by reference** (`src/runtime.ts`): callers could mutate
+  `runtime.todoItems` by splicing the returned array. The
+  current call sites don't, but the surface was unsafe.
+  Returns `this.todoItems.slice()` now.
+
+797 pass / 0 fail across 53 files; `npm run typecheck` clean.
+(The +3 from this commit: read offset/limit on full text,
+read past-the-end header, write rename-failure orphan
+cleanup, http stream-cancel, ls parallel stat + undefined
+fallback. The -1 is the merge of `register` /
+`_registerRaw`.)
+
+
 ## Unreleased — Phase 3 (T3: D-WORKFLOW source audit)
 
 Closes the Phase 1 spike's open research item

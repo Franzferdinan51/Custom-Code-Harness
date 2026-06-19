@@ -3,7 +3,7 @@
 // to write if the old text isn't found or appears more than once —
 // silent "first match" replacements have corrupted too many files.
 
-import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename, unlink } from "node:fs/promises";
 import { dirname, resolve, isAbsolute } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Tool, ToolContext } from "./registry.js";
@@ -53,6 +53,10 @@ export const editTool: Tool = {
   async run(rawArgs, ctx: ToolContext) {
     const raw = rawArgs as unknown as EditArgs;
     const abs = isAbsolute(raw.path) ? raw.path : resolve(ctx.cwd, raw.path);
+    // Track the tmp path so a mid-flight failure (write OK, rename
+    // failed) can still unlink the orphan. Pre-fix the rename
+    // failure leaked a `<path>.<rand>.tmp` next to the target.
+    let tmp: string | undefined;
     try {
       const current = await readFile(abs, "utf-8");
       const occurrences = countOccurrences(current, raw.old);
@@ -76,9 +80,10 @@ export const editTool: Tool = {
       }
       const next = raw.replace_globally ? current.split(raw.old).join(raw.new) : current.replace(raw.old, raw.new);
       await mkdir(dirname(abs), { recursive: true });
-      const tmp = abs + "." + randomBytes(6).toString("hex") + ".tmp";
+      tmp = abs + "." + randomBytes(6).toString("hex") + ".tmp";
       await writeFile(tmp, next, "utf-8");
       await rename(tmp, abs);
+      tmp = undefined; // rename consumed it
       return {
         toolCallId: "",
         display: "edited " + abs + " (" + (raw.replace_globally ? occurrences : 1) + " replacement" + (occurrences === 1 && !raw.replace_globally ? "" : "s") + ")",
@@ -86,6 +91,9 @@ export const editTool: Tool = {
         isError: false,
       };
     } catch (e) {
+      if (tmp !== undefined) {
+        try { await unlink(tmp); } catch { /* best-effort cleanup */ }
+      }
       const msg = e instanceof Error ? e.message : String(e);
       return { toolCallId: "", display: "edit failed: " + abs, content: "edit failed: " + msg, isError: true };
     }

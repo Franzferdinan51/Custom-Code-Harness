@@ -55,12 +55,14 @@ export interface Tool {
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
+  /** Register a tool. The original `register()` exposed a
+   *  separate `_registerRaw` for "internal" tools like
+   *  spawn_subagent / skill / memory whose `run()` shape doesn't
+   *  match the standard tool contract. The two methods were
+   *  functionally identical (both called `tools.set(t.spec.name, t)`),
+   *  so the internal-vs-public distinction was a comment, not a
+   *  constraint. Merged into one entry point. */
   register(t: Tool): void {
-    this.tools.set(t.spec.name, t);
-  }
-  /** Internal: register a tool whose run() takes a different ctx shape.
-   *  Used by the runtime for spawn_subagent, skill, etc. */
-  _registerRaw(t: Tool): void {
     this.tools.set(t.spec.name, t);
   }
   get(name: string): Tool | undefined {

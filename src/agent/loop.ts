@@ -166,14 +166,22 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
             // User-initiated abort: do not failover, exit immediately.
             if (e.name === "AbortError" || input.signal.aborted) {
               onInfo("aborted during model turn");
-              turnSignal.dispose();
               break outer;
             }
             // Otherwise, on the last attempt we re-throw; on earlier
             // attempts we let the outer loop try the next provider.
-            turnSignal.dispose();
             if (attempt === chain.length - 1) throw e;
             hooks.onInfo?.(`primary ${provider.id}/${model} failed: ${e.message} — trying next in chain`);
+          } finally {
+            // Always release the timeout timer + parent-signal
+            // listener, even on the success / user-abort paths.
+            // Pre-fix: the success path (`break outer` from the
+            // `for await` completing normally) leaked the timer
+            // because there was no finally, so the
+            // `setTimeout(..., requestTimeoutMs)` kept the event
+            // loop alive for up to `requestTimeoutMs` after every
+            // successful provider turn.
+            turnSignal.dispose();
           }
         }
       } catch (err) {

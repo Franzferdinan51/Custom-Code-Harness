@@ -42,7 +42,7 @@
 // without a network call. A provider hook is exposed for callers
 // that want to wire a real embedding endpoint.
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, appendFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../config/paths.js";
 import { log } from "../util/logger.js";
@@ -554,16 +554,25 @@ export class MemoryLayerStore {
  */
 function atomicWrite(target: string, body: string): void {
   const tmp = target + ".tmp-" + process.pid;
-  writeFileSync(tmp, body, "utf-8");
   try {
+    writeFileSync(tmp, body, "utf-8");
     renameSync(tmp, target);
   } catch (e) {
     // Best-effort: if rename fails (e.g. cross-device on some
     // exotic filesystems), fall back to a direct write. The
     // caller still gets the same eventual consistency for
     // sequential reads.
-    try { writeFileSync(target, body, "utf-8"); }
-    catch (e2) { log.error("memory atomic write failed", e2); throw e; }
+    try {
+      writeFileSync(target, body, "utf-8");
+    } catch (e2) {
+      log.error("memory atomic write failed", e2);
+      throw e;
+    }
+    // Either the rename succeeded (no catch) or the direct
+    // write fallback succeeded. In both cases the tmp may
+    // exist on disk — best-effort unlink to keep the
+    // memory dir clean.
+    try { unlinkSync(tmp); } catch { /* best-effort */ }
   }
 }
 

@@ -809,6 +809,70 @@ fallback. The -1 is the merge of `register` /
 `_registerRaw`.)
 
 
+### Storage atomicity + tmp-orphan cleanup pass
+
+While reading the workflow / memory / session / store code I
+found four places that did "write to a sibling `.tmp` then
+rename" but had gaps in the failure path that could leave
+orphan `.tmp` files. Pattern is the same as the prior
+`writeTool` / `editTool` fix: a successful `writeFileSync`
+followed by a failed `renameSync` leaks the `.tmp` until the
+user cleans up manually. All four fixed; the regression test
+from the prior commit's pattern (force a rename failure by
+pre-creating the destination as a directory) is in
+`src/__tests__/workflow-e2e.test.ts` and pins the workflow
+case end-to-end. The other three are smaller, with the same
+orphan-cleanup shape.
+
+- **`WorkflowStore.createOrUpdate()` + `writeMeta()` leaked
+  `<id>.json.tmp` + `<id>.json.meta.json.tmp` on rename
+  failure** (`src/agent/workflow-store.ts`): the same
+  `writeFileSync(tmp, ...); renameSync(tmp, f);` pattern as
+  `write.ts` / `edit.ts`, with no try/catch. Fixed both
+  call sites — the main `createOrUpdate()` and the private
+  `writeMeta()` sidecar writer. New regression test in
+  `workflow-e2e.test.ts` pre-creates `<id>.json` as a
+  directory and asserts no `.tmp` remains after the throw.
+- **`GoalStore.writePersisted()` had the same pattern**
+  (`src/agent/goals.ts`): the `writeFileSync(tmp, ...);
+  renameSync(tmp, file);` was sync and uncaught. A failed
+  rename leaked the `.tmp` next to the goal state file. Fixed
+  with the same try/catch.
+- **`mcp-store.writeMcpConfigUnlocked()` had the same
+  pattern** (`src/agent/mcp-store.ts`): the `writeFileSync +
+  renameSync` is async and uncaught. Fixed.
+- **`Session.persistMeta()` wrote `<file>.meta.json`
+  non-atomically** (`src/agent/session.ts`): a pre-fix
+  `await writeFile(metaPath, ...)` could leave a half-written
+  meta on disk if the process died mid-write. `loadSession`
+  would then fail to parse the meta and fall back to
+  defaults — losing the user's `head` pointer and
+  parent-session id. Fixed with tmp + rename. Also removed
+  the dead `void tmp;` in `persistEntry()` (the variable
+  was assigned but never used — the O_APPEND write doesn't
+  need a tmp).
+- **`exportSession()` wrote the trajectory non-atomically**
+  (`src/agent/trajectory.ts`): `ch session export` would
+  leave a half-written `.jsonl` if the process died
+  mid-write. Fixed with tmp + rename.
+- **`memory-layers.atomicWrite()` had a partial cleanup**:
+  the `writeFileSync(tmp, ...)` was outside the try/catch, so
+  a `writeFileSync` failure (disk full) left the `.tmp` on
+  disk. Moved inside the try; the existing rename-failure
+  direct-write fallback now also unlinks the `.tmp` in its
+  success path.
+
+### Dead import cleanup
+
+- `compaction.ts` had `import { withTimeout }` and
+  `ProviderStreamEvent` from previous iterations that no
+  longer had call sites. Removed.
+
+797 pass / 0 fail across 53 files; `npm run typecheck` clean.
+(The +1 from this commit: workflow store rename-failure
+orphan test.)
+
+
 ## Unreleased — Phase 3 (T3: D-WORKFLOW source audit)
 
 Closes the Phase 1 spike's open research item

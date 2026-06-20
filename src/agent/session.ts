@@ -225,7 +225,6 @@ export class Session {
   /** Persist an entry to disk. Atomic via temp file + rename. */
   private async persistEntry(entry: SessionEntry): Promise<void> {
     const line = JSON.stringify(entry) + "\n";
-    const tmp = `${this.filePath}.${randomBytes(4).toString("hex")}.tmp`;
     await mkdir(paths.sessions, { recursive: true });
     // Append via a single open(O_APPEND) write to avoid racing our own reads.
     const handle = await open(this.filePath, "a");
@@ -234,15 +233,25 @@ export class Session {
     } finally {
       await handle.close();
     }
-    void tmp; // (we don't actually need a tmp here; we're appending)
   }
 
   private async persistMeta(): Promise<void> {
-    // Meta lives in the first line, prefixed with a sentinel.
-    // We rewrite the file as: <meta line>\n<entries...>. On load we read the first line and check.
-    // For simplicity in this version, we just keep meta in a sidecar .meta.json file.
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(`${this.filePath}.meta.json`, JSON.stringify(this.meta, null, 2), "utf-8");
+    // Meta lives in a sidecar .meta.json file. Atomic write
+    // (tmp + rename) so a crash mid-write can't corrupt the
+    // meta — pre-fix, a partial `writeFile` left the meta
+    // unparseable, and `loadSession` fell back to defaults
+    // losing the user's `head` pointer + parent-session id.
+    const { writeFile, rename, unlink } = await import("node:fs/promises");
+    const { randomBytes } = await import("node:crypto");
+    const metaPath = `${this.filePath}.meta.json`;
+    const tmp = `${metaPath}.${randomBytes(4).toString("hex")}.tmp`;
+    try {
+      await writeFile(tmp, JSON.stringify(this.meta, null, 2), "utf-8");
+      await rename(tmp, metaPath);
+    } catch (e) {
+      try { await unlink(tmp); } catch { /* best-effort */ }
+      throw e;
+    }
   }
 }
 

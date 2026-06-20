@@ -330,13 +330,21 @@ function upgradeRecord(g: GoalRecord): GoalRecord {
 }
 
 /** Atomic write: write to a sibling .tmp then rename. Always writes
- *  v2 envelopes. */
+ *  v2 envelopes. Cleans up the `.tmp` orphan if `rename` fails
+ *  (e.g. the target exists as a directory, the FS is full) — the
+ *  pre-fix version left `<file>.tmp` next to the goal state file
+ *  in `~/.codingharness/goals/`. */
 function writePersisted(file: string, goals: GoalRecord[]): void {
   mkdirSync(dirname(file), { recursive: true });
   const tmp = file + ".tmp";
   const payload: PersistedShapeV2 = { version: 2, goals };
-  writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf-8");
-  renameSync(tmp, file);
+  try {
+    writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf-8");
+    renameSync(tmp, file);
+  } catch (e) {
+    try { unlinkSync(tmp); } catch { /* best-effort */ }
+    throw e;
+  }
 }
 
 // ---------- The store ----------

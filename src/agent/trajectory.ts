@@ -73,7 +73,21 @@ export async function exportSession(session: Session, opts: ExportOptions): Prom
       break;
     }
   }
-  await fs.writeFile(path, lines.join("\n") + (lines.length > 0 ? "\n" : ""), "utf-8");
+  // Atomic write: write to a sibling `.tmp.<rand>`, then rename.
+  // Pre-fix: a direct `writeFile(path, ...)` could leave a
+  // half-written JSONL file if the process died mid-write (or
+  // disk-full), corrupting the export. The tmp+rename pair
+  // means the destination either has the full file or doesn't
+  // exist.
+  const tmp = path + ".tmp." + Math.random().toString(36).slice(2, 8);
+  const data = lines.join("\n") + (lines.length > 0 ? "\n" : "");
+  try {
+    await fs.writeFile(tmp, data, "utf-8");
+    await fs.rename(tmp, path);
+  } catch (e) {
+    try { await fs.unlink(tmp); } catch { /* best-effort */ }
+    throw e;
+  }
   return { path, lineCount: lines.length };
 }
 

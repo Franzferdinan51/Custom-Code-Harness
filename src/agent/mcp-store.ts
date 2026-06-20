@@ -38,7 +38,7 @@
 // snapshot at construction time — the CLI subcommands call
 // `loadMcpConfig()` to refresh it after every add / remove.
 
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { paths } from "../config/paths.js";
 import type { McpToolDefinition } from "../mcp-transport.js";
@@ -207,18 +207,26 @@ async function writeMcpConfigUnlocked(config: McpConfigFile, filePath: string): 
   mkdirSync(dirname(filePath), { recursive: true });
   const tmp = filePath + ".tmp." + process.pid + "." + Date.now().toString(36);
   const json = JSON.stringify(config, null, 2) + "\n";
-  writeFileSync(tmp, json, "utf-8");
-  // Best-effort fsync — Node's writeFileSync doesn't expose
-  // fsync(2), so we open + write + sync through fd for stronger
-  // durability. The fsync failure path leaves the tmp file
-  // around; rename failure below cleans it up.
   try {
-    const { openSync, fsyncSync, closeSync } = await import("node:fs");
-    const fd = openSync(tmp, "r+");
-    try { fsyncSync(fd); } catch { /* fsync not supported on some FS */ }
-    try { closeSync(fd); } catch { /* ignore */ }
-  } catch { /* ignore */ }
-  renameSync(tmp, filePath);
+    writeFileSync(tmp, json, "utf-8");
+    // Best-effort fsync — Node's writeFileSync doesn't expose
+    // fsync(2), so we open + write + sync through fd for stronger
+    // durability. The fsync failure path leaves the tmp file
+    // around; rename failure below cleans it up.
+    try {
+      const { openSync, fsyncSync, closeSync } = await import("node:fs");
+      const fd = openSync(tmp, "r+");
+      try { fsyncSync(fd); } catch { /* fsync not supported on some FS */ }
+      try { closeSync(fd); } catch { /* ignore */ }
+    } catch { /* ignore */ }
+    renameSync(tmp, filePath);
+  } catch (e) {
+    // Pre-fix: a failed `rename` (e.g. target exists as a directory)
+    // leaked the `.<pid>.<ts>.tmp` orphan next to `mcp.json`. The
+    // best-effort unlink keeps the on-disk state clean.
+    try { unlinkSync(tmp); } catch { /* best-effort */ }
+    throw e;
+  }
 }
 
 // ---------- Read ----------

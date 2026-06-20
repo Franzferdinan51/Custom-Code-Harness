@@ -2,8 +2,7 @@
 // we summarize older messages and replace them with a single
 // `compaction` entry. The recent messages are kept verbatim.
 
-import type { ChatMessage, Provider, ProviderRequest, ProviderStreamEvent } from "../types.js";
-import { withTimeout } from "../util/errors.js";
+import type { ChatMessage, Provider, ProviderRequest } from "../types.js";
 
 export interface CompactionResult {
   summary: string;

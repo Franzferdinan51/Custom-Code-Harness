@@ -432,3 +432,32 @@ test("workflow E2E: DelegationManager.runWorkflowKind returns { status: \"comple
     // runtime path (not the direct engine path).
     assert.equal(sendEmailCalls.length, 2, `expected 2 send-email calls via runWorkflowKind, got ${sendEmailCalls.length}`);
 });
+
+test("WorkflowStore: cleans up the tmp file when the rename step fails (regression for orphan-.tmp bug)", async () => {
+  // Pre-fix: `createOrUpdate()` did `writeFile(tmp, ...); rename(tmp, f)`
+  // with no try/catch — a `rename` failure (e.g. the target is
+  // a directory) left the `<id>.json.tmp` orphan next to the
+  // workflow file in `~/.codingharness/workflows/`. The fix
+  // tracks `tmp` and unlinks it in the catch. We assert no
+  // orphan `.tmp` remains after a forced rename failure.
+  const storeRoot = join(tmp, "workflows-orphan-test");
+  mkdirSync(storeRoot, { recursive: true });
+  const store = new WorkflowStore({ root: storeRoot });
+  // Pre-create the destination path as a DIRECTORY so the
+  // rename onto it fails on POSIX.
+  const wid = "wf-orphan";
+  mkdirSync(join(storeRoot, wid + ".json"), { recursive: true });
+  let threw = false;
+  try {
+    await store.createOrUpdate({
+      record: { id: wid, name: "orphan-test", nodes: [], edges: [] },
+    });
+  } catch (e) {
+    threw = true;
+  }
+  assert.ok(threw, "createOrUpdate() should have thrown when the target is a directory");
+  // No orphan .tmp should remain in the store root.
+  const fs = await import("node:fs/promises");
+  const siblings = (await fs.readdir(storeRoot)).filter((f) => f.endsWith(".tmp"));
+  assert.equal(siblings.length, 0, "no orphan .tmp should remain after a failed save, got: " + siblings.join(", "));
+});

@@ -202,9 +202,19 @@ export class WorkflowStore {
     }
 
     private async writeMeta(id: string, createdAt: number, updatedAt: number): Promise<void> {
-        const tmp = this.metaFileFor(id) + ".tmp";
-        await writeFile(tmp, JSON.stringify({ createdAt, updatedAt }), "utf-8");
-        await rename(tmp, this.metaFileFor(id));
+        // Track the tmp path so a mid-flight failure can unlink
+        // the orphan. (Same pattern as the main `save()` below.)
+        let tmp: string | undefined = this.metaFileFor(id) + ".tmp";
+        try {
+            await writeFile(tmp, JSON.stringify({ createdAt, updatedAt }), "utf-8");
+            await rename(tmp, this.metaFileFor(id));
+            tmp = undefined;
+        } catch (e) {
+            if (tmp !== undefined) {
+                try { await unlink(tmp); } catch { /* best-effort */ }
+            }
+            throw e;
+        }
     }
 
     // ---------- CRUD ----------
@@ -284,14 +294,26 @@ export class WorkflowStore {
         const work = async (): Promise<void> => {
             await this.ensureRoot();
             const f = this.fileFor(id);
-            const tmp = f + ".tmp";
-            const data = JSON.stringify(stored, null, 2);
-            await writeFile(tmp, data, "utf-8");
-            await rename(tmp, f);
-            // Update meta sidecar.
-            const prevMeta = isNew ? null : await this.readMeta(id).catch(() => null);
-            const createdAt = prevMeta?.createdAt ?? now;
-            await this.writeMeta(id, createdAt, now);
+            let tmp: string | undefined = f + ".tmp";
+            try {
+                const data = JSON.stringify(stored, null, 2);
+                await writeFile(tmp, data, "utf-8");
+                await rename(tmp, f);
+                tmp = undefined; // rename consumed it
+                // Update meta sidecar.
+                const prevMeta = isNew ? null : await this.readMeta(id).catch(() => null);
+                const createdAt = prevMeta?.createdAt ?? now;
+                await this.writeMeta(id, createdAt, now);
+            } catch (e) {
+                // Pre-fix: a failed `rename` (e.g. target exists
+                // as a directory, FS full) leaked the `.tmp`
+                // orphan next to the workflow file — visually
+                // noisy in `~/.codingharness/workflows/`.
+                if (tmp !== undefined) {
+                    try { await unlink(tmp); } catch { /* best-effort */ }
+                }
+                throw e;
+            }
         };
         this.writeChain = this.writeChain.then(work, work);
         await this.writeChain;

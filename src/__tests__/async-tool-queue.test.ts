@@ -24,7 +24,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -379,4 +379,35 @@ test("async-tool-queue: replay is best-effort and survives a single failure", as
   assert.equal(after.length, 1);
   assert.equal(after[0]!.status, "failed");
   assert.equal(after[0]!.error, "replay failure");
+});
+
+// ---------- Tmp-orphan resilience ----------
+
+test("async-tool-queue: failed write does not leave a .tmp next to the file", () => {
+  // Regression for the same tmp-orphan pattern that bit the
+  // workflow / goal / mcp / session / trajectory stores: a
+  // `writeFileSync(tmp); renameSync(tmp, file);` that didn't
+  // unlink the tmp on rename failure would leak
+  // `<file>.<rand>.tmp` next to the queue file forever.
+  //
+  // We trigger the failure by pre-creating the target path AS
+  // A DIRECTORY — `renameSync` across a directory on POSIX
+  // fails with EISDIR. The store's writePersisted() should
+  // catch the throw and unlink the tmp.
+  const fileDir = join(tmp, "tmp-orphan");
+  mkdirSync(fileDir, { recursive: true });
+  const file = join(fileDir, "queue.json");
+  // Pre-create `file` as a directory so renameSync fails.
+  mkdirSync(file);
+
+  const s = new AsyncToolQueueStore({ file });
+  // add() triggers writePersisted(); should throw EISDIR.
+  assert.throws(
+    () => s.add({ id: "x", toolName: "t", args: {} }),
+    /EISDIR|directory/i,
+  );
+
+  // The .tmp must NOT be left in fileDir.
+  const leftover = readdirSync(fileDir).filter((n) => n.endsWith(".tmp"));
+  assert.deepEqual(leftover, [], "no .tmp files should remain after a failed write");
 });

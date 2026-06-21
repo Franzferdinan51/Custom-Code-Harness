@@ -30,7 +30,10 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^claude-3-haiku/,        price: { input: 0.25,  output: 1.25,  provider: "anthropic", label: "Claude 3 Haiku" } },
   { match: /^claude-3-sonnet/,       price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude 3 Sonnet" } },
   { match: /^claude-sonnet-4-5/,     price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude Sonnet 4.5" } },
-  { match: /^claude-opus-4/,         price: { input: 15.00, output: 75.00, provider: "anthropic", label: "Claude Opus 4" } },
+  { match: /^claude-opus-4-/,       price: { input: 5.00,  output: 25.00, provider: "anthropic", label: "Claude Opus 4.x" } },
+  // Legacy Claude 3 Opus (3.0) — keep for users still on the original
+  // Opus model. The Anthropic 4.x line dropped the price to $5/$25.
+  { match: /^claude-3-opus/,        price: { input: 15.00, output: 75.00, provider: "anthropic", label: "Claude 3 Opus" } },
   // DeepSeek (OpenRouter-style)
   { match: /^deepseek-chat/,         price: { input: 0.27,  output: 1.10,  provider: "deepseek", label: "DeepSeek Chat" } },
   { match: /^deepseek-reasoner/,     price: { input: 0.55,  output: 2.19,  provider: "deepseek", label: "DeepSeek Reasoner" } },

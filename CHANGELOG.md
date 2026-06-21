@@ -2230,6 +2230,40 @@ Two related changes to the goal lifecycle land in the same release:
   (`--stdio`). `--approve-bash`, `--allow-remote`, and the
   existing auth / loopback guards all work in both modes.
 
+### Tmp-orphan pattern pass (2026-06-21)
+
+Same `writeFileSync(tmp); renameSync(tmp, file);` audit we did
+on the workflow / goal / mcp / session / trajectory stores
+last week — caught one more site:
+
+- **`AsyncToolQueueStore.writePersisted` leaked `<file>.<rand>.tmp`
+  on rename failure** (`src/agent/delegation.ts:701`): the new
+  persistence layer for the `Delegation { kind: "async_tool" }`
+  kind had the same `writeFileSync(tmp); renameSync(tmp, file);`
+  shape as the others, and the same gap — a failed `renameSync`
+  (e.g. the target is a directory, or the FS is full) left the
+  `.tmp` on disk next to the queue file. Wrapped the pair in
+  `try { write; rename } catch { unlinkSync(tmp); throw }`,
+  matching the other stores' shape. 1 new test pre-creates
+  the queue path AS A DIRECTORY (forces `renameSync` to fail
+  with `EISDIR`) and asserts that `readdirSync(queueDir)` has
+  no `.tmp` files after the throw. 799 pass.
+
+### Cost: Claude Opus 4.x was charged at the 3.0 price ($15/$75) (2026-06-21)
+
+`src/agent/cost.ts`'s `^claude-opus-4` regex matched the entire
+4.x line (`claude-opus-4-1`, `claude-opus-4-5`, `claude-opus-4-7`,
+`claude-opus-4-8`, ...) but priced them all at the original
+Claude 3 Opus rate ($15/$75 per 1M tokens) — a 3x overcharge
+on input and output. Real Anthropic 4.x prices are $5/$25.
+
+Split into two patterns:
+- `^claude-opus-4-` → $5/$25 (4.x line)
+- `^claude-3-opus` → $15/$75 (legacy 3.0, kept for users still
+  on the original Opus model)
+
+1 new test pins both halves of the contract.
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

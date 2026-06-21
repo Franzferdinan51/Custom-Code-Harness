@@ -29,6 +29,22 @@ test("priceFor: returns fallback for unknown model", () => {
   assert.equal(p.label, "totally-unknown-model-9000");
 });
 
+test("priceFor: matches Claude Opus 4.x (was wrongly $15/$75 for Claude 3 Opus)", () => {
+  // Regression: the original `^claude-opus-4` pattern used the
+  // Claude 3 Opus price ($15/$75), which was wrong for the 4.x
+  // line ($5/$25 as of 2025-2026). The fix is `^claude-opus-4-`
+  // with the 4.x price; the 3.0 price is kept under `^claude-3-opus`.
+  const opus4 = priceFor("claude-opus-4-5");
+  assert.equal(opus4.input, 5);
+  assert.equal(opus4.output, 25);
+  assert.equal(opus4.provider, "anthropic");
+
+  // The legacy 3.0 model is preserved at its old price.
+  const opus3 = priceFor("claude-3-opus-20240229");
+  assert.equal(opus3.input, 15);
+  assert.equal(opus3.output, 75);
+});
+
 test("callCost: GPT-4o 1M in / 1M out is $12.50", () => {
   const c = callCost("gpt-4o", 1_000_000, 1_000_000);
   assert.ok(Math.abs(c - 12.50) < 0.01, "expected $12.50, got " + c);

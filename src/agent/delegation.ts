@@ -26,7 +26,7 @@
 // runtime.
 
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
@@ -702,8 +702,17 @@ export class AsyncToolQueueStore {
     mkdirSync(dirname(this.file), { recursive: true });
     const tmp = this.file + ".tmp";
     const payload = JSON.stringify({ version: 1, entries: this.entries }, null, 2);
-    writeFileSync(tmp, payload, "utf-8");
-    renameSync(tmp, this.file);
+    try {
+      writeFileSync(tmp, payload, "utf-8");
+      renameSync(tmp, this.file);
+    } catch (e) {
+      // Pre-fix: a failed `renameSync` (e.g. the target is a
+      // directory, or the FS is full) leaked the `.tmp` next
+      // to the queue file. Same pattern as the workflow /
+      // goal / mcp / session / trajectory stores.
+      try { unlinkSync(tmp); } catch { /* best-effort */ }
+      throw e;
+    }
   }
 }
 

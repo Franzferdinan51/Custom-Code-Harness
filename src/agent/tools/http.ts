@@ -113,8 +113,13 @@ export const httpTool: Tool = {
             }
           }
         }
-        clearTimeout(t);
-        ctx.signal.removeEventListener("abort", onAbort);
+        // Note: timer + abort listener are cleaned up in the
+        // outer `finally` block. Pre-fix the same clearTimeout /
+        // removeEventListener calls ran in the success path AND
+        // in the finally block — `clearTimeout` is a no-op on a
+        // fired timer and `removeEventListener` is a no-op on
+        // a non-listening event, so this was harmless but
+        // duplicative.
         const bytes = new Uint8Array(received);
         let off = 0;
         for (const c of chunks) { bytes.set(c, off); off += c.byteLength; }

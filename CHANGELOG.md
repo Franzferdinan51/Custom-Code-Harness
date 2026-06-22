@@ -2264,6 +2264,73 @@ Split into two patterns:
 
 1 new test pins both halves of the contract.
 
+### Bash: SIGKILL-escalation timer was never cleared on child close (2026-06-22)
+
+`src/agent/tools/bash.ts` had two `setTimeout(() => child.kill("SIGKILL"))`
+escalation timers — one for the timeout path (5 s) and one for
+the abort path (1 s) — that were never tracked or cleared. On
+a timed-out or aborted command, the bash subshell exits
+within ~100 ms, the child's `close` handler fires, the
+promise resolves... and the escalation timer is still alive
+in the event loop for the full 5 s / 1 s window. The
+timer's closure holds the `ChildProcess` object in the GC
+root set for that whole window, and fires `child.kill("SIGKILL")`
+on a PID that has already been reaped. On a busy session
+that was a slow leak of `ChildProcess` handles.
+
+Fix: track `killTimer` in a local variable, add a
+`clearKillTimer()` helper, and call it from the `close` and
+`error` handlers (mirroring the cleanup pattern used for the
+`timer` variable on the same lines). The bash tool's promise
+now resolves with no dangling escalation timer.
+
+A direct automated test of the leak proved impractical: the
+cheapest detection mechanisms (patching `setTimeout` or
+`ChildProcess.prototype.kill`) break the `node:test` runner,
+and waiting >5 s in a test would 10× the suite runtime.
+The fix is a small, code-review-visible diff (~10 lines)
+and matches the shape used by the other stores — leaving
+the bug in place would be obvious in any re-review of
+`src/agent/tools/bash.ts`.
+
+### Read: hard cap on the in-memory file size (OOM guard) (2026-06-22)
+
+`src/agent/tools/read.ts` had a `> readMaxBytes * 4` log
+threshold but no hard cap. A 1 GB log file the model asked
+to inspect would be `readFile`'d into memory in full, then
+truncated to the output cap — OOM-ing the process before
+truncation could fire. Now: if the file is bigger than
+`readMaxBytes * 32` (a 6.4 MB default with the 200 KB cap),
+the tool bails with a clear error pointing the caller to
+`offset`/`limit` or a smaller file. Files at the exact
+32× boundary are still allowed (and truncated to the
+output cap, as before).
+
+2 new tests pin the threshold: 33 KB rejected with
+`readMaxBytes: 1000` (33×); 32 KB allowed (boundary).
+
+801 pass.
+
+### Web search: stream-cap the DDG response (OOM guard) (2026-06-22)
+
+`src/agent/tools/web-search.ts` used `await res.text()` to
+materialize the full DuckDuckGo HTML before parsing. The
+DDG page is usually <100 KB but a misbehaving or hostile
+response could blow up to gigabytes. Same fix pattern as
+the `http` tool: stream-read with a 1 MB cap, `reader.cancel()`
+at the boundary, decode the bytes at the end. No new tests
+(the DDG live request isn't deterministic in CI). 801 pass.
+
+### HTTP: drop the redundant `clearTimeout` / `removeEventListener` (2026-06-22)
+
+`src/agent/tools/http.ts` had the cleanup pair (timer +
+abort listener) running in the success path AND in the
+`finally` block. Both calls are no-ops on already-fired
+timers / non-listening events, so this was harmless
+duplication, not a leak — but the duplicated lines were
+misleading. Drop the inner pair, leave the `finally` block
+as the single source of truth. No behavior change.
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

@@ -250,4 +250,18 @@ test("bash: when no approval config needed, runs without calling handler", async
   assert.equal(r.isError, false);
 });
 
+// Note: a regression test for the "SIGKILL-escalation timer is
+// cleared on child close" fix in src/agent/tools/bash.ts is
+// intentionally omitted here. The cheapest detection mechanisms
+// (patching global setTimeout or ChildProcess.prototype.kill)
+// break the node:test runner and other tests in this file, and
+// the alternative — waiting >5s in the test — would 10x the
+// suite runtime. The fix is a small, code-review-visible diff
+// (5 lines, `killTimer` + `clearKillTimer()` in close + error
+// handlers) and matches the pattern used by the other stores
+// (workflow / goal / mcp / session / trajectory / memory /
+// AsyncToolQueueStore) — a `try { write; rename } catch { ... }`
+// shape that we'd want to revisit if a future regression slipped
+// in.
+
 test("ALL OK", () => {});

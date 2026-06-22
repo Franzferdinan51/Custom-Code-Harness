@@ -152,6 +152,36 @@ test("readTool: full file (no offset/limit) still gets truncated by readMaxBytes
   assert.ok(r.content.length < 500, "truncated body should be small");
 });
 
+test("readTool: refuses files larger than 32x the readMaxBytes cap (OOM guard)", async () => {
+  // Regression: a 1 GB log file used to be `readFile`'d into
+  // memory in full, then truncated to the output cap. The
+  // in-memory buffer would OOM the process before truncation.
+  // Now: if the file is bigger than 32x the output cap, we
+  // bail with a clear error pointing the caller to
+  // offset/limit or a smaller file.
+  //
+  // We test with a 1 KB readMaxBytes cap (so the hard limit
+  // is 32 KB) and a file just over that. We do NOT create a
+  // real 32 MB file — a 33 KB file proves the threshold check
+  // works without OOM-ing the test process.
+  writeFileSync(join(tmp, "too-big.txt"), "x".repeat(33_000));
+  const tinyCtx = { ...ctx, limits: { ...ctx.limits, readMaxBytes: 1_000 } };
+  const r = await readTool.run({ path: "too-big.txt" }, tinyCtx);
+  assert.equal(r.isError, true, "oversize file should be rejected as an error");
+  assert.match(r.content, /exceeds the 32x output cap/);
+  assert.match(r.content, /Use offset\/limit/);
+});
+
+test("readTool: file at exactly 32x the cap is allowed (boundary)", async () => {
+  // 32 * 1000 = 32000 bytes is the boundary. A file of 32000
+  // bytes should NOT be rejected.
+  writeFileSync(join(tmp, "boundary.txt"), "x".repeat(32_000));
+  const tinyCtx = { ...ctx, limits: { ...ctx.limits, readMaxBytes: 1_000 } };
+  const r = await readTool.run({ path: "boundary.txt" }, tinyCtx);
+  assert.equal(r.isError, false, "32x cap should be allowed");
+  assert.match(r.content, /\(truncated at 1000 bytes/);
+});
+
 test("grepTool: finds matches", async () => {
   writeFileSync(join(tmp, "g.ts"), "const x = 1;\nconst y = 2;\n");
   writeFileSync(join(tmp, "g.js"), "var z = 3;\n");

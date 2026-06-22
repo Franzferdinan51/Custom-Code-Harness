@@ -133,22 +133,43 @@ export const bashTool: Tool = {
       child.stderr.on("data", onData("err"));
 
       let killed = false;
+      // Pre-fix: each kill path (timeout, abort) scheduled a
+      // SIGKILL-escalation timer but never cleared it. The
+      // closure held by that timer kept `child` alive in the
+      // GC root set even after `close` fired, which on a busy
+      // session leaked ChildProcess objects for the full
+      // 5-second (timeout) / 1-second (abort) window. Track
+      // both escalation timers and clear them on `close`.
+      let killTimer: NodeJS.Timeout | undefined;
+      const clearKillTimer = () => {
+        if (killTimer !== undefined) {
+          clearTimeout(killTimer);
+          killTimer = undefined;
+        }
+      };
       const timer: NodeJS.Timeout = setTimeout(() => {
         killed = true;
         try { child.kill("SIGTERM"); } catch {}
-        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5_000);
+        killTimer = setTimeout(() => {
+          killTimer = undefined;
+          try { child.kill("SIGKILL"); } catch {}
+        }, 5_000);
       }, timeoutMs);
 
       const onAbort = () => {
         killed = true;
         try { child.kill("SIGTERM"); } catch {}
-        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 1_000);
+        killTimer = setTimeout(() => {
+          killTimer = undefined;
+          try { child.kill("SIGKILL"); } catch {}
+        }, 1_000);
       };
       if (ctx.signal.aborted) onAbort();
       else ctx.signal.addEventListener("abort", onAbort, { once: true });
 
       child.on("error", (err: Error) => {
         clearTimeout(timer);
+        clearKillTimer();
         ctx.signal.removeEventListener("abort", onAbort);
         resolveP({
           toolCallId: "",
@@ -160,6 +181,7 @@ export const bashTool: Tool = {
 
       child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
         clearTimeout(timer);
+        clearKillTimer();
         ctx.signal.removeEventListener("abort", onAbort);
         let stdout = "";
         let stderr = "";

@@ -48,11 +48,32 @@ export const readTool: Tool = {
       if (!st.isFile()) {
         return { toolCallId: "", display: "not a file: " + abs, content: "not a file: " + abs, isError: true };
       }
-      if (st.size > ctx.limits.readMaxBytes * 4) {
-        ctx.log("read: " + abs + " is large (" + st.size + " bytes), will truncate to " + ctx.limits.readMaxBytes);
+      // Hard cap on the size we'll actually read into memory. The
+      // output cap is `readMaxBytes` (default 200 KB). Reading a
+      // file 32x that size into memory just to throw 6.4 MB away
+      // is an OOM trap on a hostile / accidental input (e.g. a
+      // 1 GB log file the model asked to inspect). Pre-fix we
+      // would `readFile` the entire file regardless of size and
+      // only truncate the OUTPUT — so a 1 GB request would
+      // OOM the process before we got a chance to truncate.
+      // Now: if the file is bigger than 32x the output cap, we
+      // bail with a clear error telling the caller to use
+      // offset/limit or a smaller file.
+      const cap = ctx.limits.readMaxBytes;
+      const HARD_INFLIGHT_LIMIT = cap * 32;
+      if (st.size > HARD_INFLIGHT_LIMIT) {
+        return {
+          toolCallId: "",
+          display: "read too large: " + abs,
+          content: "read: " + abs + " is " + st.size + " bytes; exceeds the 32x output cap (" + HARD_INFLIGHT_LIMIT + " bytes). " +
+            "Use offset/limit to read a slice, or read a smaller file.",
+          isError: true,
+        };
+      }
+      if (st.size > cap * 4) {
+        ctx.log("read: " + abs + " is large (" + st.size + " bytes), will truncate to " + cap);
       }
       const text = await readFile(abs, "utf-8");
-      const cap = ctx.limits.readMaxBytes;
       // If the caller asked for a specific line slice, do the slicing
       // on the FULL text first so the line numbers in the output
       // match the original file. Truncation is a last-resort byte cap

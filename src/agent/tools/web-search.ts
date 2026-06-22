@@ -5,6 +5,13 @@ import type { Tool, ToolContext } from "./registry.js";
 import { asNumber, asString, parseToolArgs } from "./registry.js";
 import type { ToolSpec } from "../../types.js";
 
+/** Cap on the response body we read from DDG. The HTML page is
+ *  usually <100 KB, but in the worst case a misbehaving / hostile
+ *  response could blow up to gigabytes. Pre-fix: `await res.text()`
+ *  materialized the full body before parsing. Now: stream-read
+ *  with the same shape as the `http` tool. */
+const MAX_WEB_BYTES = 1_000_000;
+
 interface SearchArgs {
   query: string;
   max_results?: number;
@@ -50,7 +57,34 @@ export const webSearchTool: Tool = {
           body: "q=" + encodeURIComponent(args.query),
           signal: ctrl.signal,
         });
-        const html = await res.text();
+        // Stream-read with a cap so a hostile / runaway DDG response
+        // can't OOM the harness. Same pattern as the `http` tool.
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        if (res.body) {
+          const reader = res.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              if (received + value.byteLength > MAX_WEB_BYTES) {
+                const allowed = Math.max(0, MAX_WEB_BYTES - received);
+                if (allowed > 0) {
+                  chunks.push(value.subarray(0, allowed));
+                  received += allowed;
+                }
+                try { await reader.cancel(); } catch { /* best-effort */ }
+                break;
+              }
+              chunks.push(value);
+              received += value.byteLength;
+            }
+          }
+        }
+        const bytes = new Uint8Array(received);
+        let off = 0;
+        for (const c of chunks) { bytes.set(c, off); off += c.byteLength; }
+        const html = new TextDecoder("utf-8").decode(bytes);
         const results = parseDuckDuckGo(html, args.max_results ?? 8);
         const body = results.length === 0
           ? "(no results)"

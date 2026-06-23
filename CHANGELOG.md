@@ -2331,6 +2331,83 @@ duplication, not a leak — but the duplicated lines were
 misleading. Drop the inner pair, leave the `finally` block
 as the single source of truth. No behavior change.
 
+### Cost table: 4 model families were silently reported as $0/$0 (2026-06-23)
+
+The `src/agent/cost.ts` table is a prefix-regex lookup;
+`priceFor(model)` returns the first match's price and
+falls through to `FALLBACK` ($0/$0) on no match. Four
+families of real, currently-shipping models were missing:
+
+1. **Claude Haiku 4.x** (`claude-haiku-4-5`,
+   `claude-haiku-4-5-20251001`, ...). Pre-fix: real $1/$5
+   per 1M calls were reported as free. Now: $1/$5
+   via `^claude-haiku-4-`.
+2. **GPT-5 / GPT-5.1 / GPT-5.4 / GPT-5.5 / GPT-5-mini**.
+   Pre-fix: real $30/$60 (and $0.25/$2 mini, $1.25/$0.25
+   5.4, $5/$0.50 5.5) calls were reported as free. The
+   `presets.ts` default for OpenAI was `gpt-5.1` — the
+   most-common shipping model in the OpenAI preset —
+   so the cost tracker was the noisiest it could be.
+   Now: 4 separate entries, ordered so the prefix-only
+   `^gpt-5` (no `$`) doesn't steal `gpt-5-mini`.
+3. **GPT-4.1 / GPT-4.1-mini / GPT-3.5 Turbo**. Pre-fix:
+   the only GPT-4 entries were `^gpt-4o`, `^gpt-4o-mini`,
+   `^gpt-4-turbo` — anything `gpt-4.1*` or `gpt-3.5-turbo`
+   fell through to $0/$0. Now: 3 entries.
+4. **o3 (full)** and **Grok 4.x**. The o3 (full) was
+   missing; only `o3-mini` was listed. Grok 4.3 (the
+   default for the xAI preset in `presets.ts`) was
+   missing entirely.
+
+Also caught an order-of-precedence bug: `^o1` was listed
+BEFORE `^o1-mini`, so `o1-mini` (real $3/$12) was being
+charged at the o1 (full) rate ($15/$60) — a 5x overcharge.
+Same shape as o3 / o3-mini. Fix: list the more specific
+pattern first.
+
+5 new tests pin the new entries and the precedence
+fix. 807 pass.
+
+### Stream-cap the error body in 4 provider call sites (2026-06-23)
+
+The Anthropic / openai-compat / codex / omni providers all
+had the same shape on the HTTP-error path:
+```ts
+if (!res.ok) {
+  const text = await res.text().catch(() => "");
+  throw new Error(`... HTTP ${res.status}: ${text.slice(0, 500)}`);
+}
+```
+`res.text()` materializes the FULL body before slicing to
+500 chars. A hostile or runaway error response (1 GB of
+`AAAA...`) would OOM the process before the slice fired.
+
+Same fix as the `http` / `web_search` tools:
+stream-read with a 1 MB cap, `reader.cancel()` at the
+boundary, `TextDecoder` decode at the end. No behavior
+change for normal errors; protects against OOM on the
+hostile path.
+
+Also fixed the same `await res.text()` OOM in
+`DelegationManager.runApiKind` (`src/agent/delegation.ts`)
+on the success path, with a 5 MB cap and `reader.cancel()`
+at the boundary.
+
+### http tool: validate the HTTP method against the standard set (2026-06-23)
+
+`src/agent/tools/http.ts` accepted any string for `method`
+and passed it to `fetch()`. A typo (`POSTT`) or
+non-standard method (`PROPFIND`, `TRACE`) would fail
+deep in the fetch stack with an opaque "TypeError: fetch
+failed". Now: `validate()` uppercases the method (Node
+fetch uppercases on the wire anyway) and rejects anything
+not in the standard set (`GET / POST / PUT / PATCH /
+DELETE / HEAD / OPTIONS`) with a clear "method: 'X' not
+allowed; must be one of ..." message.
+
+1 new test pins the validation for 4 invalid methods and
+7 valid methods (lowercase + uppercase). 807 pass.
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

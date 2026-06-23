@@ -18,25 +18,51 @@ export interface ModelPrice {
 
 const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // OpenAI
+  { match: /^gpt-5\.5/,              price: { input: 5.00,  output: 0.50,  provider: "openai", label: "GPT-5.5" } },
+  { match: /^gpt-5\.4/,              price: { input: 1.25,  output: 0.25,  provider: "openai", label: "GPT-5.4" } },
+  { match: /^gpt-5-mini/,            price: { input: 0.25,  output: 2.00,  provider: "openai", label: "GPT-5 mini" } },
+  { match: /^gpt-5/,                 price: { input: 30.00, output: 60.00, provider: "openai", label: "GPT-5" } },
+  { match: /^gpt-4\.1-mini/,         price: { input: 0.40,  output: 1.60,  provider: "openai", label: "GPT-4.1 mini" } },
+  { match: /^gpt-4\.1/,              price: { input: 2.00,  output: 8.00,  provider: "openai", label: "GPT-4.1" } },
   { match: /^gpt-4o-mini/,           price: { input: 0.15,  output: 0.60,  provider: "openai", label: "GPT-4o mini" } },
   { match: /^gpt-4o/,                price: { input: 2.50,  output: 10.00, provider: "openai", label: "GPT-4o" } },
-  { match: /^gpt-4-turbo/,            price: { input: 10,    output: 30,    provider: "openai", label: "GPT-4 Turbo" } },
-  { match: /^o1/,                    price: { input: 15,    output: 60,    provider: "openai", label: "o1" } },
+  { match: /^gpt-4-turbo/,           price: { input: 10,    output: 30,    provider: "openai", label: "GPT-4 Turbo" } },
+  { match: /^gpt-3\.5-turbo/,        price: { input: 0.50,  output: 1.50,  provider: "openai", label: "GPT-3.5 Turbo" } },
+  // o1 (full) must come AFTER o1-mini because `^o1` is a
+  // prefix match without `$` and would otherwise steal the
+  // o1-mini match. Pre-fix o1-mini was being charged at the
+  // o1 (full) rate ($15/$60) — a 5x overcharge on the
+  // cheaper mini model. Same fix shape as o3 / o3-mini.
   { match: /^o1-mini/,               price: { input: 3,     output: 12,    provider: "openai", label: "o1 mini" } },
+  { match: /^o1/,                    price: { input: 15,    output: 60,    provider: "openai", label: "o1" } },
   { match: /^o3-mini/,               price: { input: 1.10,  output: 4.40,  provider: "openai", label: "o3 mini" } },
+  // o3 (full) must come AFTER o3-mini because `^o3` would
+  // otherwise steal the o3-mini match. Pre-fix this entry
+  // was missing entirely and o3 fell through to $0/$0.
+  { match: /^o3/,                    price: { input: 10,    output: 40,    provider: "openai", label: "o3" } },
   // Anthropic
   { match: /^claude-3-5-haiku/,      price: { input: 0.80,  output: 4.00,  provider: "anthropic", label: "Claude 3.5 Haiku" } },
   { match: /^claude-3-5-sonnet/,     price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude 3.5 Sonnet" } },
   { match: /^claude-3-haiku/,        price: { input: 0.25,  output: 1.25,  provider: "anthropic", label: "Claude 3 Haiku" } },
   { match: /^claude-3-sonnet/,       price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude 3 Sonnet" } },
-  { match: /^claude-sonnet-4-5/,     price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude Sonnet 4.5" } },
-  { match: /^claude-opus-4-/,       price: { input: 5.00,  output: 25.00, provider: "anthropic", label: "Claude Opus 4.x" } },
+  // Claude 4.x line. Sonnet and Opus 4.x are at the prices
+  // quoted on Anthropic's pricing page as of 2026; if Anthropic
+  // introduces a 4.x model at a different price, add a more
+  // specific pattern ABOVE these. Haiku 4.5 was missing before
+  // (it fell through to the unknown-model fallback of $0/$0,
+  // so a real $1/$5 call was reported as free — a 100% off-by-
+  // infinity bug in the cost tracker).
+  { match: /^claude-haiku-4-/,       price: { input: 1.00,  output: 5.00,  provider: "anthropic", label: "Claude Haiku 4.x" } },
+  { match: /^claude-sonnet-4-/,      price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude Sonnet 4.x" } },
+  { match: /^claude-opus-4-/,        price: { input: 5.00,  output: 25.00, provider: "anthropic", label: "Claude Opus 4.x" } },
   // Legacy Claude 3 Opus (3.0) — keep for users still on the original
   // Opus model. The Anthropic 4.x line dropped the price to $5/$25.
-  { match: /^claude-3-opus/,        price: { input: 15.00, output: 75.00, provider: "anthropic", label: "Claude 3 Opus" } },
+  { match: /^claude-3-opus/,         price: { input: 15.00, output: 75.00, provider: "anthropic", label: "Claude 3 Opus" } },
   // DeepSeek (OpenRouter-style)
   { match: /^deepseek-chat/,         price: { input: 0.27,  output: 1.10,  provider: "deepseek", label: "DeepSeek Chat" } },
   { match: /^deepseek-reasoner/,     price: { input: 0.55,  output: 2.19,  provider: "deepseek", label: "DeepSeek Reasoner" } },
+  // xAI Grok — missing before; presets.ts default to grok-4.3.
+  { match: /^grok-4/,                price: { input: 1.25,  output: 2.50,  provider: "xai", label: "Grok 4.x" } },
   // OpenRouter passthrough prices (rough)
   { match: /llama-3\.1-405b/,         price: { input: 3.50,  output: 3.50,  provider: "openrouter", label: "Llama 3.1 405B" } },
   { match: /llama-3\.1-70b/,          price: { input: 0.88,  output: 0.88,  provider: "openrouter", label: "Llama 3.1 70B" } },

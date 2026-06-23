@@ -172,6 +172,30 @@ test("httpTool: validate rejects timeout_ms <= 0", () => {
   );
 });
 
+test("httpTool: validate rejects unknown HTTP methods (was: passed straight to fetch)", () => {
+  // Regression: pre-fix, `method: "POSTT"` (typo) or
+  // `method: "PROPFIND"` (webdav) would be passed to
+  // `fetch()` which would then throw an opaque
+  // "TypeError: fetch failed" deep in the stack. Now:
+  // validate() rejects with a clear "method X not allowed"
+  // message. The valid set is the standard 7 (GET, POST,
+  // PUT, PATCH, DELETE, HEAD, OPTIONS).
+  for (const m of ["POSTT", "FOO", "propfind", "TRACE"]) {
+    assert.throws(
+      () => httpTool.validate({ url: "http://x", method: m }),
+      new RegExp("method: '" + m + "' not allowed", "i"),
+      "method '" + m + "' should be rejected at validate()",
+    );
+  }
+  // Case-insensitive: spec says uppercase, but tolerate lowercase
+  // by uppercasing before the lookup. (Node's fetch uppercases
+  // internally; this matches its behavior.)
+  for (const m of ["get", "post", "put", "patch", "delete", "head", "options"]) {
+    const args = httpTool.validate({ url: "http://x", method: m });
+    assert.equal(typeof args.method, "string");
+  }
+});
+
 test("httpTool: streams response and truncates at max_bytes (regression for full-body-OOM bug)", async () => {
   // Pre-fix bug: `await res.arrayBuffer()` materialized the entire
   // body before the cap was applied, so a hostile / runaway

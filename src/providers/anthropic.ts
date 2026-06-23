@@ -63,7 +63,40 @@ export class AnthropicProvider implements Provider {
       )
     );
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
+      // Stream-read with a cap so a hostile / runaway Anthropic
+      // error response can't OOM the harness. Pre-fix:
+      // `await res.text()` materialized the full error body
+      // before slicing to 500 chars. Now: stream-read up to
+      // 1 MB (well past what a real Anthropic error looks like)
+      // and slice at the end. Same pattern as the `http` /
+      // `web_search` / `runApiKind` tools.
+      const ERROR_BODY_CAP = 1_000_000;
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      if (res.body) {
+        const reader = res.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            if (received + value.byteLength > ERROR_BODY_CAP) {
+              const allowed = Math.max(0, ERROR_BODY_CAP - received);
+              if (allowed > 0) {
+                chunks.push(value.subarray(0, allowed));
+                received += allowed;
+              }
+              try { await reader.cancel(); } catch { /* best-effort */ }
+              break;
+            }
+            chunks.push(value);
+            received += value.byteLength;
+          }
+        }
+      }
+      const bytes = new Uint8Array(received);
+      let off = 0;
+      for (const c of chunks) { bytes.set(c, off); off += c.byteLength; }
+      const text = new TextDecoder("utf-8").decode(bytes);
       throw new Error(`provider anthropic HTTP ${res.status}: ${text.slice(0, 500)}`);
     }
     if (!res.body) throw new Error("provider anthropic: empty body");

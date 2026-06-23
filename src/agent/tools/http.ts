@@ -18,6 +18,9 @@ interface HttpArgs {
 const MAX_DEFAULT = 500_000;
 const MAX_TIMEOUT_MS = 300_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
+const VALID_METHODS: ReadonlySet<string> = new Set([
+  "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+]);
 
 const spec: ToolSpec = {
   name: "http",
@@ -43,9 +46,21 @@ export const httpTool: Tool = {
   spec,
   validate(rawArgs) {
     const a = parseToolArgs("http", JSON.stringify(rawArgs));
+    // Uppercase the method before validation. The HTTP spec
+    // mandates uppercase, and Node's fetch uppercases internally
+    // on the wire anyway — so accepting lowercase from the model
+    // is harmless and matches user expectation. Pre-fix the
+    // validate() accepted any string, so a typo like "POSTT"
+    // sailed through to fetch and surfaced as a deep
+    // "TypeError: fetch failed". Now: validate against the
+    // standard set, fail fast with a clear message.
+    const method = (a.method !== undefined ? asString(a.method, "method", { maxLen: 16 }) : "GET").toUpperCase();
+    if (!VALID_METHODS.has(method)) {
+      throw new Error("method: '" + method + "' not allowed; must be one of " + Array.from(VALID_METHODS).join(", "));
+    }
     return {
       url: asString(a.url, "url", { allowEmpty: false, maxLen: 4_096 }),
-      method: a.method !== undefined ? asString(a.method, "method", { maxLen: 16 }) : "GET",
+      method,
       headers_json: a.headers_json !== undefined ? asString(a.headers_json, "headers_json", { maxLen: 8_000 }) : undefined,
       body: a.body !== undefined ? asString(a.body, "body", { maxLen: 5_000_000 }) : undefined,
       max_bytes: a.max_bytes !== undefined ? asNumber(a.max_bytes, "max_bytes", { integer: true, min: 1, max: 5_000_000 }) : MAX_DEFAULT,

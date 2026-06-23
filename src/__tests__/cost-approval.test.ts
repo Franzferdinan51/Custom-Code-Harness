@@ -45,6 +45,106 @@ test("priceFor: matches Claude Opus 4.x (was wrongly $15/$75 for Claude 3 Opus)"
   assert.equal(opus3.output, 75);
 });
 
+test("priceFor: matches Claude Haiku 4.x (was missing — fell through to $0/$0)", () => {
+  // Regression: there was no `claude-haiku-4-*` entry, so any
+  // Haiku 4.5 call was reported by `callCost` as $0.00 — a real
+  // $1/$5 per 1M charge was silently dropped from the cost
+  // tracker. Now: `^claude-haiku-4-` matches the whole 4.x
+  // line at $1/$5 (per Anthropic's pricing page).
+  const haiku4 = priceFor("claude-haiku-4-5");
+  assert.equal(haiku4.input, 1);
+  assert.equal(haiku4.output, 5);
+  assert.equal(haiku4.provider, "anthropic");
+  assert.equal(haiku4.label, "Claude Haiku 4.x");
+});
+
+test("priceFor: Claude Sonnet 4.x matches at $3/$15 (was only matching 4-5 specifically)", () => {
+  // but not `claude-sonnet-4-6`, `claude-sonnet-4-7`, etc. —
+  // those fell through to $0/$0, same Haiku-style "free call"
+  // bug. Generalized to `^claude-sonnet-4-` at $3/$15 (Anthropic
+  // holds the price flat across the 4.x line per their docs).
+  const sonnet46 = priceFor("claude-sonnet-4-6");
+  assert.equal(sonnet46.input, 3);
+  assert.equal(sonnet46.output, 15);
+  // 4.5 still matches the new pattern (regression).
+  const sonnet45 = priceFor("claude-sonnet-4-5");
+  assert.equal(sonnet45.input, 3);
+  assert.equal(sonnet45.output, 15);
+});
+
+test("priceFor: GPT-5 / GPT-5-mini / GPT-5.4 / GPT-5.5 all match (regression: were $0/$0)", () => {
+  // OpenAI released the GPT-5 family. Pre-fix: `^gpt-4o`,
+  // `^gpt-4-turbo`, `^o1`, `^o1-mini`, `^o3-mini` were the
+  // only GPT entries; anything GPT-5 (and `^o3` full, and
+  // `^gpt-4.1`, and `^gpt-3.5-turbo`) fell through to the
+  // $0/$0 fallback — a real $30/$60 per 1M call was silently
+  // reported as free.
+  //
+  // The TABLE is iterated in order; `^gpt-5\.5`, `^gpt-5\.4`,
+  // `^gpt-5-mini` MUST come before `^gpt-5` (which is a
+  // prefix-only match without `$`) or the prefix pattern
+  // would steal the more specific ones.
+  const gpt5 = priceFor("gpt-5");
+  assert.equal(gpt5.input, 30);
+  assert.equal(gpt5.output, 60);
+  assert.equal(gpt5.label, "GPT-5");
+
+  const gpt5mini = priceFor("gpt-5-mini");
+  assert.equal(gpt5mini.input, 0.25);
+  assert.equal(gpt5mini.output, 2);
+  assert.equal(gpt5mini.label, "GPT-5 mini");
+
+  const gpt54 = priceFor("gpt-5.4");
+  assert.equal(gpt54.input, 1.25);
+  assert.equal(gpt54.output, 0.25);
+
+  const gpt55 = priceFor("gpt-5.5");
+  assert.equal(gpt55.input, 5);
+  assert.equal(gpt55.output, 0.50);
+});
+
+test("priceFor: GPT-4.1 and GPT-3.5 Turbo match (regression: were $0/$0)", () => {
+  // Pre-fix: only `^gpt-4o`, `^gpt-4o-mini`, and `^gpt-4-turbo`
+  // were listed. `^gpt-4.1*` and `^gpt-3.5-turbo` both fell
+  // through to $0/$0 — the o3 / o3-mini pair was also
+  // missing the o3 (full) entry.
+  const gpt41 = priceFor("gpt-4.1");
+  assert.equal(gpt41.input, 2);
+  assert.equal(gpt41.output, 8);
+  const gpt41mini = priceFor("gpt-4.1-mini");
+  assert.equal(gpt41mini.input, 0.40);
+  assert.equal(gpt41mini.output, 1.60);
+  const gpt35 = priceFor("gpt-3.5-turbo");
+  assert.equal(gpt35.input, 0.50);
+  assert.equal(gpt35.output, 1.50);
+  // o3 (full) was missing — only o3-mini was listed.
+  const o3 = priceFor("o3");
+  assert.equal(o3.input, 10);
+  assert.equal(o3.output, 40);
+  // o3-mini still matches the o3-mini pattern (regression).
+  const o3mini = priceFor("o3-mini");
+  assert.equal(o3mini.input, 1.10);
+  assert.equal(o3mini.output, 4.40);
+});
+
+test("priceFor: o1-mini is charged at the o1-mini rate, NOT the o1 (full) rate (regression for prefix-stealing)", () => {
+  // Pre-fix: the TABLE listed `^o1` BEFORE `^o1-mini`. Because
+  // `^o1` is a prefix match (no `$`), the first-match-wins
+  // iteration would hit `^o1` first and return $15/$60 for
+  // any `o1-mini-*` call. The actual o1-mini rate is $3/$12 —
+  // a 5x overcharge on every o1-mini call. Fix: swap the
+  // order so the more specific `^o1-mini` pattern is
+  // checked first. Same shape as the o3 / o3-mini fix.
+  const o1mini = priceFor("o1-mini");
+  assert.equal(o1mini.input, 3, "o1-mini should be $3 in (was $15 pre-fix)");
+  assert.equal(o1mini.output, 12, "o1-mini should be $12 out (was $60 pre-fix)");
+  assert.equal(o1mini.label, "o1 mini");
+  // o1 (full) still matches its own pattern.
+  const o1 = priceFor("o1");
+  assert.equal(o1.input, 15);
+  assert.equal(o1.output, 60);
+});
+
 test("callCost: GPT-4o 1M in / 1M out is $12.50", () => {
   const c = callCost("gpt-4o", 1_000_000, 1_000_000);
   assert.ok(Math.abs(c - 12.50) < 0.01, "expected $12.50, got " + c);

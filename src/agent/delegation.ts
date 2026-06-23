@@ -1662,13 +1662,52 @@ export class DelegationManager {
     if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort, { once: true });
     const t = setTimeout(() => ac.abort(new Error("api timeout after " + work.timeoutSeconds + "s")), timeoutMs);
     try {
+      // GET and DELETE are body-less by spec. POST / PUT / PATCH
+      // get a JSON-encoded body. Pre-fix the same guard was
+      // already in place, but the type for `work.method` only
+      // covers POST / PUT / PATCH (GET / DELETE would already
+      // arrive from the caller as the explicitly-allowed values),
+      // so this comparison is correct for the supported set.
+      const bodyless = method === "GET" || method === "DELETE";
       const res = await fetch(work.url, {
         method,
         headers,
-        body: method === "GET" || method === "DELETE" ? undefined : JSON.stringify(body),
+        body: bodyless ? undefined : JSON.stringify(body),
         signal: ac.signal,
       });
-      const text = await res.text();
+      // Stream-read with a cap so a hostile / runaway response
+      // can't OOM the harness. Pre-fix: `await res.text()`
+      // materialized the full body before parsing. Same fix
+      // pattern as the `http` / `web_search` tools.
+      const API_MAX_BYTES = 5_000_000;
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      let truncated = false;
+      if (res.body) {
+        const reader = res.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            if (received + value.byteLength > API_MAX_BYTES) {
+              const allowed = Math.max(0, API_MAX_BYTES - received);
+              if (allowed > 0) {
+                chunks.push(value.subarray(0, allowed));
+                received += allowed;
+              }
+              truncated = true;
+              try { await reader.cancel(); } catch { /* best-effort */ }
+              break;
+            }
+            chunks.push(value);
+            received += value.byteLength;
+          }
+        }
+      }
+      const bytes = new Uint8Array(received);
+      let off = 0;
+      for (const c of chunks) { bytes.set(c, off); off += c.byteLength; }
+      const text = new TextDecoder("utf-8").decode(bytes);
       if (signal.aborted) {
         return { value: { kind: "api", url: work.url, method, status: "failed", error: "cancelled" }, cancelled: true };
       }

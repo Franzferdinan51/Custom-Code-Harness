@@ -341,6 +341,17 @@ export async function runCouncil(
         .join("\n\n");
     }
     for (const councilor of roster) {
+      // Check the abort signal between councilors. The signal
+      // is threaded to each `deps.spawn` (which should honor it
+      // via its provider chain), but a buggy / hung spawn that
+      // ignores the signal would otherwise let the loop keep
+      // running and call every subsequent councilor in the
+      // roster. Throw up front if the caller has already
+      // cancelled, so the caller sees a structured
+      // AbortError rather than a silent partial result.
+      if (signal.aborted) {
+        throw makeAbortError();
+      }
       const prompt = COUNCILOR_PROMPT_TEMPLATE(input, priorText || undefined);
       const spawned = await deps.spawn({
         system: councilor.systemPrompt,
@@ -371,6 +382,14 @@ export async function runCouncil(
     BUILTIN_COUNCILORS.synthesizer.systemPrompt +
       "\n\nCouncil size: " + roster.length + " councilors, " + maxRounds + " round(s). " +
       "\nVoice weights: " + roster.map((c) => c.role + "=" + (c.weight ?? 1.0)).join(", ");
+  // Same abort check before the synthesizer call. Without
+  // this, a caller-cancel between the last councilor and the
+  // synthesizer would still let the synthesizer run to
+  // completion, wasting tokens and time on a result the
+  // caller has already discarded.
+  if (signal.aborted) {
+    throw makeAbortError();
+  }
   const synth = await deps.spawn({
     system: synthesizerSystem,
     prompt: synthesizerPrompt,
@@ -462,11 +481,28 @@ export function renderCouncilResult(r: CouncilResult): string {
   );
   lines.push("");
   for (const t of r.transcript) {
-    lines.push("── " + t.role + " (round " + t.round + ") " + "─".repeat(Math.max(0, 60 - t.role.length - 12)));
+    // Pad to a target line width. Pre-fix the math was
+    // `60 - role.length - 12` which assumed a single-digit
+    // round number; for round 10+ the column drifted right
+    // by 1 char. Compute the actual length of the prefix
+    // (`── ` (3) + role + ` (round ` (8) + round + `)` (1))
+    // and use that as the base. Same fix shape as
+    // `60 - 12 = 48` for the final-answer rule.
+    const prefix = "── " + t.role + " (round " + t.round + ") ";
+    lines.push(prefix + "─".repeat(Math.max(0, 60 - prefix.length)));
     lines.push(t.content);
     lines.push("");
   }
   lines.push("── final answer " + "─".repeat(48));
   lines.push(r.final);
   return lines.join("\n");
+}
+
+/** Local helper — same shape as `openai-compat.ts`'s
+ *  `makeAbortError`, kept private (not exported) so the
+ *  council doesn't depend on a provider-internal API. */
+function makeAbortError(): Error {
+  const e = new Error("aborted");
+  e.name = "AbortError";
+  return e;
 }

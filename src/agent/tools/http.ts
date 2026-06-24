@@ -75,13 +75,16 @@ export const httpTool: Tool = {
         try { Object.assign(headers, JSON.parse(args.headers_json)); }
         catch (e) { throw new ToolError("http", "headers_json: " + (e as Error).message); }
       }
-      // GET/DELETE/HEAD are body-less by spec. Without this guard
-      // fetch will happily send the body, and many servers (incl.
-      // strict REST APIs and several CDNs) reject the request or
-      // return a 411 Length Required. Matches the behavior of
+      // GET / DELETE / HEAD / OPTIONS are body-less by spec.
+      // Without this guard fetch will happily send the body,
+      // and many servers (incl. strict REST APIs and several
+      // CDNs) reject the request or return a 411 Length
+      // Required. OPTIONS in particular is used for CORS
+      // preflight — sending a body is uncommon and can trip
+      // up the preflight cache. Matches the behavior of
       // `DelegationManager.runApiKind` in src/agent/delegation.ts.
       const method = (args.method ?? "GET").toUpperCase();
-      const hasBody = args.body !== undefined && method !== "GET" && method !== "DELETE" && method !== "HEAD";
+      const hasBody = args.body !== undefined && method !== "GET" && method !== "DELETE" && method !== "HEAD" && method !== "OPTIONS";
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), args.timeout_ms ?? DEFAULT_TIMEOUT_MS);
       const onAbort = () => ctrl.abort(ctx.signal.reason);

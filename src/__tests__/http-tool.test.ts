@@ -110,6 +110,36 @@ test("httpTool: DELETE request does NOT send a body either", async () => {
   } finally { server.close(); }
 });
 
+test("httpTool: OPTIONS request does NOT send a body (CORS preflight uses OPTIONS)", async () => {
+  // Regression: pre-fix, only GET / DELETE / HEAD were excluded
+  // from body transmission. OPTIONS was allowed to send a body,
+  // which is uncommon for CORS preflight and can trip up
+  // preflight caches / strict servers. Now OPTIONS is
+  // treated the same as GET / DELETE / HEAD.
+  let observedMethod = "";
+  let observedBodyLength = -1;
+  const server = await startMockServer((req, res) => {
+    observedMethod = req.method ?? "";
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      observedBodyLength = chunks.reduce((a, b) => a + b.length, 0);
+      res.writeHead(204);
+      res.end();
+    });
+  });
+  try {
+    const args = httpTool.validate({
+      url: `http://127.0.0.1:${server.port}/`,
+      method: "OPTIONS",
+      body: "should not be sent",
+    });
+    await httpTool.run(args, ctx);
+    assert.equal(observedMethod, "OPTIONS");
+    assert.equal(observedBodyLength, 0, "OPTIONS must not transmit a body even when the caller passed one");
+  } finally { server.close(); }
+});
+
 test("httpTool: POST DOES send a body (positive control for the GET/DELETE guard)", async () => {
   let observedMethod = "";
   let observedBody = "";

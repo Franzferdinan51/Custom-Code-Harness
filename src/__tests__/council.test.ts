@@ -333,3 +333,57 @@ test("council: throws when the caller supplies more than one synthesizer in the 
     /at most one synthesizer/i,
   );
 });
+
+test("council: pre-aborted signal throws AbortError before any councilor is called", async () => {
+  // Regression: pre-fix, the council loop didn't check
+  // `signal.aborted` between councilors. A caller that pre-
+  // aborts the signal would still pay for every councilor
+  // (the signal was threaded to each `deps.spawn` but a
+  // hung / buggy spawn that ignored the signal would let
+  // the loop run to completion). Now: throw AbortError on
+  // the first pre-loop check, before the first spawn.
+  const ac = new AbortController();
+  ac.abort();
+  let spawnCalls = 0;
+  const deps: CouncilDeps = {
+    spawn: async () => { spawnCalls++; return { text: "ok", usage: { inputTokens: 0, outputTokens: 0 } }; },
+  };
+  const roster: Councilor[] = [
+    BUILTIN_COUNCILORS.skeptic,
+    BUILTIN_COUNCILORS.builder,
+  ];
+  await assert.rejects(
+    () => runCouncil("Q", { mode: "consensus", councilors: roster, cwd: process.cwd(), signal: ac.signal }, deps),
+    (err: Error) => err.name === "AbortError",
+    "pre-aborted signal should throw AbortError",
+  );
+  assert.equal(spawnCalls, 0, "no councilor should have been spawned when the signal is pre-aborted");
+});
+
+test("council: signal abort between councilors throws AbortError, not silent partial result", async () => {
+  // Regression: a councilor that "succeeds" but the caller
+  // cancels between councilors would previously still call
+  // every remaining councilor. Now: check the signal between
+  // each councilor and bail.
+  const ac = new AbortController();
+  let spawnCalls = 0;
+  const deps: CouncilDeps = {
+    spawn: async () => {
+      spawnCalls++;
+      if (spawnCalls === 1) ac.abort();
+      return { text: "ok", usage: { inputTokens: 0, outputTokens: 0 } };
+    },
+  };
+  const roster: Councilor[] = [
+    BUILTIN_COUNCILORS.skeptic,
+    BUILTIN_COUNCILORS.builder,
+    BUILTIN_COUNCILORS.researcher,
+  ];
+  await assert.rejects(
+    () => runCouncil("Q", { mode: "consensus", councilors: roster, cwd: process.cwd(), signal: ac.signal }, deps),
+    (err: Error) => err.name === "AbortError",
+  );
+  // The first councilor ran, the abort fired, the second
+  // councilor should NOT have been called.
+  assert.equal(spawnCalls, 1, "second and third councilors must not be called after abort");
+});

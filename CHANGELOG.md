@@ -2408,6 +2408,66 @@ allowed; must be one of ..." message.
 1 new test pins the validation for 4 invalid methods and
 7 valid methods (lowercase + uppercase). 807 pass.
 
+### http tool: also exclude OPTIONS from body transmission (2026-06-24)
+
+`src/agent/tools/http.ts` had `hasBody` excluding GET / DELETE
+/ HEAD but not OPTIONS. OPTIONS is most commonly used for
+CORS preflight, where a body is uncommon and can trip up
+preflight caches / strict servers. Now: OPTIONS is in the
+body-less set, matching the comment about the GET/DELETE
+body-guard. 1 new test pins this. 810 pass.
+
+### Council: honor abort signal between councilors and before the synthesizer (2026-06-24)
+
+`src/agent/council.ts`'s `runCouncil` threaded the abort
+signal to each `deps.spawn` but did NOT check `signal.aborted`
+between councilors or before the synthesizer call. If the
+caller cancelled mid-deliberation, the loop would still
+call every remaining councilor in the roster (any spawn
+that ignored the signal would let the loop run to
+completion) and would still fire the synthesizer even
+after the caller had already discarded the result.
+
+Now: throw `AbortError` (with a local `makeAbortError`
+helper, kept private to avoid a provider-internal
+dependency) at the top of each councilor iteration and
+again before the synthesizer spawn. Caller's existing
+try/catch on `runCouncil` sees a structured `AbortError`
+and exits cleanly with the partial transcript already
+built.
+
+2 new tests pin both paths: pre-aborted signal (zero
+spawns), and mid-deliberation abort (first councilor
+runs, abort fires, second and third do NOT). 810 pass.
+
+### Council: renderCouncilResult round header was off-by-one for double-digit rounds (2026-06-24)
+
+`src/agent/council.ts`'s `renderCouncilResult` rendered
+each per-councilor line as
+```
+── <role> (round N) ──────...
+```
+with the dash count computed as
+`Math.max(0, 60 - role.length - 12)`. The `12` constant
+assumed a single-digit round number; for `round 10+`
+the column drifted right by 1-2 characters. Now: the
+prefix length is computed from the actual round string,
+so the dash count is right for any round number. Same
+fix shape as the council's `60 - 12 = 48` rule for the
+final-answer line. No new test (visual-only).
+
+### mcp-client (HTTP): stream-cap the error body (2026-06-24)
+
+`src/agent/mcp-client.ts`'s `McpHttpClient` did
+`await res.text()` on the error path of an MCP HTTP call,
+materializing the full body before slicing to 200 chars.
+A hostile / runaway MCP server could OOM the harness
+with a 1 GB error response. Same fix as the four
+provider call sites (anthropic / openai-compat / codex /
+omni) got last week: stream-read with a 1 MB cap +
+`reader.cancel()` at the boundary + `TextDecoder` at
+the end. 810 pass.
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

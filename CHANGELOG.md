@@ -2468,6 +2468,77 @@ omni) got last week: stream-read with a 1 MB cap +
 `reader.cancel()` at the boundary + `TextDecoder` at
 the end. 810 pass.
 
+### Test infrastructure: `npm test` now depends on `npm run build` (2026-07-06)
+
+`package.json`'s `test` script was
+`bun test src/__tests__/*.test.ts` — but the MCP `stdio`
+test suite in `src/__tests__/mcp-server.test.ts` spawns
+`process.execPath` running `dist/cli.js mcp --stdio`.
+The `dist/` directory is built by `npm run build`
+(`tsc -p tsconfig.json && node scripts/copy-web.mjs`).
+Without `dist/`, every stdio test fails with a
+5-second timeout ("spawn ENOENT"). Result: a fresh
+clone of the repo fails the stdio tests on `npm test`
+even though the source code is correct. Add a
+`"pretest": "bun run build"` script and make `test`
+explicitly chain after `build`. The test cost is
+~5s of `tsc` once per run; CI gets the same figure.
+MCP HTTP tests + all unit tests are unaffected.
+
+### Cost table: GPT-5 prices were stale / partially wrong (2026-07-06)
+
+The June-2026 entries for the GPT-5 family were
+back-of-the-envelope guesses rather than OpenAI's
+official API pricing. Several were factually wrong:
+
+- `gpt-5.5` was listed at `$5/$0.50` (those are the
+  cached-input + GPT-5-original-output prices in the
+  wrong slots). Real: **`$5/$30`** (April 2026).
+- `gpt-5.4` was listed at `$1.25/$0.25`. Real:
+  **`$2.50/$15`**.
+- `gpt-5` (the August-2025 original) was listed at
+  `$30/$60` (which is actually GPT-5.4-pro). Real:
+  **`$1.25/$10`** (August 2025 launch).
+- Missing entries that fell through to `$0/$0`:
+  `gpt-5.5-pro` ($30/$180), `gpt-5.4-mini` ($0.75/$4.50),
+  `gpt-5.4-nano` ($0.20/$1.25), `gpt-5.4-pro` ($30/$180),
+  `gpt-5.3-codex` ($1.75/$14, used by Codex), and
+  `gpt-5-nano` ($0.05/$0.40).
+
+Rewrite the GPT-5 block with the verified OpenAI API
+prices. The bare-`gpt-5` regex still acts as the
+catch-all for any GPT-5.x model that doesn't have a
+more-specific match (e.g. `gpt-5.1`, `gpt-5.6`,
+future `gpt-5.7`…) — all currently priced at the same
+rate, so `$1.25/$10` is a safe default. The
+`/codex/` fallback catches any Codex-flavored model
+id (e.g. `gpt-5.1-codex`) at the known Codex rate
+of `$1.75/$14`.
+
+Same shape as the Anthropic fix last month:
+order matters, more-specific patterns first.
+
+The existing `gpt-5 / gpt-5-mini / gpt-5.4 / gpt-5.5`
+test was rewritten to also pin gpt-5-nano, gpt-5.4-mini,
+gpt-5.4-nano, gpt-5.3-codex, and gpt-5.5-pro against
+their published rates. 810 pass.
+
+### bash: output-cap truncation now escalates to SIGKILL (2026-07-06)
+
+Pre-fix, when the bash tool's output exceeded
+`MAX_OUTPUT_BYTES` (200 KB), the child received
+SIGTERM and further output was dropped, but there
+was no SIGKILL escalation. A runaway like `yes` /
+`tail -f` / `cat /dev/zero` ignores SIGTERM (bash
+subshells often do for their child processes) and
+would burn CPU + memory until the parent process
+exited. Now: the truncation path reuses the same
+`killTimer` slot the timeout / abort paths use,
+scheduling a 5-second SIGKILL escalation. The
+timer is cleared in `close` + `error`, matching
+the cleanup pattern already used for the outer
+`setTimeout`. 810 pass.
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

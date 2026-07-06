@@ -72,21 +72,27 @@ test("priceFor: Claude Sonnet 4.x matches at $3/$15 (was only matching 4-5 speci
   assert.equal(sonnet45.output, 15);
 });
 
-test("priceFor: GPT-5 / GPT-5-mini / GPT-5.4 / GPT-5.5 all match (regression: were $0/$0)", () => {
-  // OpenAI released the GPT-5 family. Pre-fix: `^gpt-4o`,
-  // `^gpt-4-turbo`, `^o1`, `^o1-mini`, `^o3-mini` were the
-  // only GPT entries; anything GPT-5 (and `^o3` full, and
-  // `^gpt-4.1`, and `^gpt-3.5-turbo`) fell through to the
-  // $0/$0 fallback — a real $30/$60 per 1M call was silently
-  // reported as free.
+test("priceFor: GPT-5 / GPT-5-mini / GPT-5-nano / GPT-5.4 / GPT-5.5 / GPT-5.5-pro match (regression: were $0/$0 or stale prices)", () => {
+  // OpenAI shipped GPT-5.5 / GPT-5.5-pro / GPT-5.4-mini /
+  // GPT-5.4-nano / GPT-5.3-codex after my June entries.
+  // Pre-fix (mid-2026): the table listed `^gpt-5\.5` at
+  // $5/$0.50 (a typo — those are the GPT-5.5 *cached-input*
+  // / *5.5* output prices mis-pasted into the in/out fields),
+  // `^gpt-5\.4` at $1.25/$0.25 (those are 5.4 cached /
+  // GPT-5 original output), `^gpt-5` at $30/$60 (which is
+  // actually the GPT-5.4-pro rate), and there was no entry
+  // for the original August-2025 GPT-5 at all. Real
+  // numbers per OpenAI's official API pricing page as of
+  // July 2026 below; the test pins all of them.
   //
-  // The TABLE is iterated in order; `^gpt-5\.5`, `^gpt-5\.4`,
-  // `^gpt-5-mini` MUST come before `^gpt-5` (which is a
-  // prefix-only match without `$`) or the prefix pattern
-  // would steal the more specific ones.
+  // The TABLE is iterated in order; the 5.5-pro, 5.5,
+  // 5.4-pro, 5.4-nano, 5.4-mini, 5.4, 5.3-codex, 5-nano,
+  // 5-mini patterns MUST come before the bare-`gpt-5`
+  // (which is a prefix-only match without `$`) or the
+  // prefix pattern would steal the more specific ones.
   const gpt5 = priceFor("gpt-5");
-  assert.equal(gpt5.input, 30);
-  assert.equal(gpt5.output, 60);
+  assert.equal(gpt5.input, 1.25, "GPT-5 (Aug 2025) input $1.25");
+  assert.equal(gpt5.output, 10);
   assert.equal(gpt5.label, "GPT-5");
 
   const gpt5mini = priceFor("gpt-5-mini");
@@ -94,13 +100,33 @@ test("priceFor: GPT-5 / GPT-5-mini / GPT-5.4 / GPT-5.5 all match (regression: we
   assert.equal(gpt5mini.output, 2);
   assert.equal(gpt5mini.label, "GPT-5 mini");
 
+  const gpt5nano = priceFor("gpt-5-nano");
+  assert.equal(gpt5nano.input, 0.05);
+  assert.equal(gpt5nano.output, 0.40);
+
   const gpt54 = priceFor("gpt-5.4");
-  assert.equal(gpt54.input, 1.25);
-  assert.equal(gpt54.output, 0.25);
+  assert.equal(gpt54.input, 2.50);
+  assert.equal(gpt54.output, 15);
+
+  const gpt54mini = priceFor("gpt-5.4-mini");
+  assert.equal(gpt54mini.input, 0.75);
+  assert.equal(gpt54mini.output, 4.50);
+
+  const gpt54nano = priceFor("gpt-5.4-nano");
+  assert.equal(gpt54nano.input, 0.20);
+  assert.equal(gpt54nano.output, 1.25);
+
+  const gpt53codex = priceFor("gpt-5.3-codex");
+  assert.equal(gpt53codex.input, 1.75);
+  assert.equal(gpt53codex.output, 14);
 
   const gpt55 = priceFor("gpt-5.5");
   assert.equal(gpt55.input, 5);
-  assert.equal(gpt55.output, 0.50);
+  assert.equal(gpt55.output, 30);
+
+  const gpt55pro = priceFor("gpt-5.5-pro");
+  assert.equal(gpt55pro.input, 30);
+  assert.equal(gpt55pro.output, 180);
 });
 
 test("priceFor: GPT-4.1 and GPT-3.5 Turbo match (regression: were $0/$0)", () => {

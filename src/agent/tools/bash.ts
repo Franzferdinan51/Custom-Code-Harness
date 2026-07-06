@@ -124,6 +124,19 @@ export const bashTool: Tool = {
             data: Buffer.from("\n... (truncated at " + MAX_OUTPUT_BYTES + " bytes total; command still running) ...\n"),
           });
           try { child.kill("SIGTERM"); } catch {}
+          // SIGKILL escalation — same shape as the timeout /
+          // abort paths above. Pre-fix: this path only sent
+          // SIGTERM and dropped further output, but never
+          // escalated to SIGKILL. A `yes` / `tail -f` /
+          // runaway `cat /dev/zero` ignored SIGTERM (bash
+          // subshells often do for their children) and
+          // would burn CPU + memory until the parent process
+          // exited. The SIGKILL kicks in 5s later, matching
+          // the timeout-path escalation.
+          killTimer = setTimeout(() => {
+            killTimer = undefined;
+            try { child.kill("SIGKILL"); } catch {}
+          }, 5_000);
           return;
         }
         chunks.push({ stream, data: chunk });

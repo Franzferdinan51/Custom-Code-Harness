@@ -17,11 +17,30 @@ export interface ModelPrice {
 }
 
 const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
-  // OpenAI
-  { match: /^gpt-5\.5/,              price: { input: 5.00,  output: 0.50,  provider: "openai", label: "GPT-5.5" } },
-  { match: /^gpt-5\.4/,              price: { input: 1.25,  output: 0.25,  provider: "openai", label: "GPT-5.4" } },
+  // OpenAI — order matters; more-specific patterns (5.5, 5.4,
+  // 5-mini, 5-nano) must precede the bare-`gpt-5` prefix.
+  // Pre-fix (June 2026) the GPT-5.5, GPT-5.4-mini, GPT-5.4-nano,
+  // GPT-5.3-codex, and GPT-5 (original, August 2025) entries were
+  // all WRONG — the cost tracker was using numbers from
+  // uncertain web searches rather than OpenAI's official
+  // pricing page. Real numbers per OpenAI's API pricing
+  // page as of July 2026:
+  { match: /^gpt-5\.5-pro/,          price: { input: 30.00, output: 180.00, provider: "openai", label: "GPT-5.5 pro" } },
+  { match: /^gpt-5\.5/,              price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.5" } },
+  { match: /^gpt-5\.4-pro/,          price: { input: 30.00, output: 180.00, provider: "openai", label: "GPT-5.4 pro" } },
+  { match: /^gpt-5\.4-nano/,         price: { input: 0.20,  output: 1.25,  provider: "openai", label: "GPT-5.4 nano" } },
+  { match: /^gpt-5\.4-mini/,         price: { input: 0.75,  output: 4.50,  provider: "openai", label: "GPT-5.4 mini" } },
+  { match: /^gpt-5\.4/,              price: { input: 2.50,  output: 15.00, provider: "openai", label: "GPT-5.4" } },
+  { match: /^gpt-5\.3-codex/,        price: { input: 1.75,  output: 14.00, provider: "openai", label: "GPT-5.3 Codex" } },
+  // Generic Codex entry. `gpt-5.3-codex` matched above at
+  // $1.75/$14 (the official Codex rate). Older or newer
+  // Codex-flavored model ids (`gpt-5.1-codex`, future
+  // `gpt-5.4-codex`, ...) fall through to this entry.
+  { match: /codex/,                  price: { input: 1.75,  output: 14.00, provider: "openai", label: "Codex variant" } },
+  // bare GPT-5 (August 2025): $1.25/$10.
+  { match: /^gpt-5-nano/,            price: { input: 0.05,  output: 0.40,  provider: "openai", label: "GPT-5 nano" } },
   { match: /^gpt-5-mini/,            price: { input: 0.25,  output: 2.00,  provider: "openai", label: "GPT-5 mini" } },
-  { match: /^gpt-5/,                 price: { input: 30.00, output: 60.00, provider: "openai", label: "GPT-5" } },
+  { match: /^gpt-5/,                 price: { input: 1.25,  output: 10.00, provider: "openai", label: "GPT-5" } },
   { match: /^gpt-4\.1-mini/,         price: { input: 0.40,  output: 1.60,  provider: "openai", label: "GPT-4.1 mini" } },
   { match: /^gpt-4\.1/,              price: { input: 2.00,  output: 8.00,  provider: "openai", label: "GPT-4.1" } },
   { match: /^gpt-4o-mini/,           price: { input: 0.15,  output: 0.60,  provider: "openai", label: "GPT-4o mini" } },

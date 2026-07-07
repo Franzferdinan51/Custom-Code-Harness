@@ -20,6 +20,22 @@ import { BUILTIN_REGISTRY } from "./slash/builtin.js";
 import { runTui, isTuiCapable } from "./ui/tui-app.js";
 import { formatUSD } from "./agent/cost.js";
 
+// ---------- Helpers ----------
+
+/** Build a structured AbortError matching the shape used by
+ *  `openai-compat.ts` and `council.ts`. The CLI's council bridge
+ *  uses this so a sub-agent that comes back with status
+ *  `cancelled` (the caller's signal aborted mid-spawn) throws a
+ *  proper AbortError instead of a generic `Error("cancelled")` —
+ *  the council loop has its own `signal.aborted` checks between
+ *  councilors and would re-throw AbortError anyway; we want the
+ *  bridge's exception to look the same. */
+function makeAbortError(): Error {
+  const e = new Error("aborted");
+  e.name = "AbortError";
+  return e;
+}
+
 // ---------- Subcommand registry ----------
 
 type SubcommandHandler = (ctx: SubcommandContext) => Promise<number>;
@@ -2192,6 +2208,18 @@ async function runCouncilCmd(ctx: SubcommandContext): Promise<number> {
                 ephemeral: true,
               });
               if (r.status === "ok") return { text: r.text, usage: r.usage };
+              // `cancelled` is the signal-aborted path: the caller
+              // asked us to stop, and the council's abort check
+              // (signal.aborted) is what should handle it. Don't
+              // throw a generic Error here — that would mask the
+              // structured AbortError the council is supposed to
+              // surface. Return a placeholder text instead; the
+              // next loop iteration's abort check (or the
+              // synthesizer's pre-call abort check) will throw
+              // the proper AbortError.
+              if (r.status === "cancelled") {
+                throw makeAbortError();
+              }
               throw new Error(r.error ?? "councilor failed: " + r.status);
             },
           });

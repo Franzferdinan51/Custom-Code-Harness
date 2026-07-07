@@ -51,11 +51,19 @@ export const bashTool: Tool = {
   },
   async run(rawArgs, ctx: ToolContext) {
     const raw = rawArgs as unknown as BashArgs & { __approval_bypass?: boolean };
-    // Approval flow. The runtime injects `__approval_bypass` on
-    // the args before re-running a previously-approved command
-    // (e.g. after a `deny → allow-once` loop where the model
-    // re-emits the same tool call). When set, the approval check
-    // is skipped.
+    // Approval flow. The runtime normally persists the user's
+    // `allow-always` decision to settings.approval.allowlist
+    // (see `runtime.ts` → `askApprovalHandler`), so a
+    // previously-approved command passes `needsApproval()` on
+    // the next re-emission. The `__approval_bypass` field is
+    // a reserved escape hatch for the runtime to short-circuit
+    // the approval check on a single tool call (e.g. a future
+    // `deny → allow-once` retry path that re-emits the same
+    // bash invocation with the bypass flag set). Currently
+    // unused by the runtime itself but checked here as
+    // defensive plumbing in case the MCP server or a test
+    // injects it (see `src/mcp-server.ts:632` for the
+    // sibling strip).
     if (!raw.__approval_bypass) {
       const approval: ApprovalConfig = ctx.services?.getApproval
         ? ctx.services.getApproval()

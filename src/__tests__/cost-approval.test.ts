@@ -72,6 +72,24 @@ test("priceFor: Claude Sonnet 4.x matches at $3/$15 (was only matching 4-5 speci
   assert.equal(sonnet45.output, 15);
 });
 
+test("priceFor: Claude Sonnet 5 matches at $3/$15 (was $0/$0 — completely missing)", () => {
+  // Anthropic launched `claude-sonnet-5` (note the dash-less
+  // jump from `claude-sonnet-4-*` to `claude-sonnet-5`) on
+  // July 2026 at $2/$10 introductory pricing through
+  // August 31, 2026, then $3/$15 standard. Pre-fix the
+  // `^claude-sonnet-4-` regex did NOT match `claude-sonnet-5`
+  // (no dash) and there was no `^claude-sonnet-5` entry,
+  // so every Sonnet 5 call fell through to the $0/$0
+  // unknown-model fallback — a real $3/$15 charge silently
+  // reported as free. The standard rate is what we track;
+  // Anthropic applies the discounted $2/$10 at billing time.
+  const sonnet5 = priceFor("claude-sonnet-5");
+  assert.equal(sonnet5.input, 3);
+  assert.equal(sonnet5.output, 15);
+  assert.equal(sonnet5.provider, "anthropic");
+  assert.equal(sonnet5.label, "Claude Sonnet 5");
+});
+
 test("priceFor: GPT-5 / GPT-5-mini / GPT-5-nano / GPT-5.4 / GPT-5.5 / GPT-5.5-pro match (regression: were $0/$0 or stale prices)", () => {
   // OpenAI shipped GPT-5.5 / GPT-5.5-pro / GPT-5.4-mini /
   // GPT-5.4-nano / GPT-5.3-codex after my June entries.

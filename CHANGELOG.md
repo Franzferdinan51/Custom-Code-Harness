@@ -2539,6 +2539,58 @@ timer is cleared in `close` + `error`, matching
 the cleanup pattern already used for the outer
 `setTimeout`. 810 pass.
 
+### Cost table: Claude Sonnet 5 was silently reported as $0/$0 (2026-07-07)
+
+Anthropic launched `claude-sonnet-5` (note the
+dash-less jump from `claude-sonnet-4-*` to
+`claude-sonnet-5`) in July 2026. Pre-fix: the
+`^claude-sonnet-4-` regex did NOT match
+`claude-sonnet-5` (no dash, no `-` after the
+version), and there was no `^claude-sonnet-5` entry,
+so every Sonnet 5 call fell through to the $0/$0
+unknown-model fallback — a real $3/$15 per 1M
+charge silently reported as free. Introductory
+pricing $2/$10 through August 31, 2026; we track
+the standard $3/$15 rate (Anthropic applies the
+discount at billing time). 1 new test pins
+`claude-sonnet-5` at $3/$15. 811 pass.
+
+### CLI council bridge: `cancelled` sub-agent throws `AbortError`, not generic `Error` (2026-07-07)
+
+`src/cli.ts`'s `ch council` bridge spawns each
+councilor via `SubAgentManager.spawn`. Pre-fix,
+when the caller's signal aborted the spawn
+mid-flight, the sub-agent returned `status:
+"cancelled"` and the bridge threw
+`new Error("cancelled")` — masking the structured
+AbortError that `runCouncil`'s own `signal.aborted`
+checks expect to surface. The caller would see a
+generic Error instead of an AbortError, breaking
+any downstream `err.name === "AbortError"` checks.
+
+Now: the bridge detects `r.status === "cancelled"`
+and throws a proper `AbortError` (via a local
+`makeAbortError` helper kept private to `cli.ts`,
+matching the same shape in `openai-compat.ts` and
+`council.ts`). All other non-ok statuses still
+throw a generic Error with the reason included. No
+new test (the existing abort tests in
+`src/__tests__/council.test.ts` cover the council-
+side throw path; the bridge is a thin wrapper).
+
+### Bash tool: `__approval_bypass` branch doc-only (2026-07-07)
+
+`src/agent/tools/bash.ts` had a comment claiming
+the runtime injects `__approval_bypass` on
+re-emitted `deny → allow-once` tool calls. The
+runtime does not do this (it persists the decision
+to `settings.approval.allowlist` instead, and the
+next re-emission passes the check via the allowlist).
+The branch was defensive plumbing only. Updated
+the comment to document the actual flow + flag the
+reserved escape hatch for future use. No behavior
+change.
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

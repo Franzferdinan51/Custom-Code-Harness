@@ -74,6 +74,13 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^claude-haiku-4-/,       price: { input: 1.00,  output: 5.00,  provider: "anthropic", label: "Claude Haiku 4.x" } },
   { match: /^claude-sonnet-4-/,      price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude Sonnet 4.x" } },
   { match: /^claude-opus-4-/,        price: { input: 5.00,  output: 25.00, provider: "anthropic", label: "Claude Opus 4.x" } },
+  // Claude Sonnet 5 (launched July 2026). Introductory
+  // pricing $2/$10 through August 31, 2026; standard $3/$15
+  // thereafter. We track the standard rate; the model itself
+  // applies the discounted rate at billing time. Must
+  // come BEFORE the ^claude-sonnet-4- entry if Anthropic
+  // ever ships a "claude-sonnet-5-*" variant.
+  { match: /^claude-sonnet-5/,       price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude Sonnet 5" } },
   // Legacy Claude 3 Opus (3.0) — keep for users still on the original
   // Opus model. The Anthropic 4.x line dropped the price to $5/$25.
   { match: /^claude-3-opus/,         price: { input: 15.00, output: 75.00, provider: "anthropic", label: "Claude 3 Opus" } },

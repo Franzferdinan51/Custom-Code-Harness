@@ -284,6 +284,19 @@ async function* parseSSE(body: ReadableStream<Uint8Array>, signal: AbortSignal):
     }
   } catch (err) {
     if ((err as Error).name === "AbortError") throw err;
+    // Pre-fix: a mid-stream throw (e.g. malformed SSE chunk, broken pipe)
+    // returned without flushing `partialToolCalls`, so the caller saw
+    // every delta vanish. Emit any in-progress tool calls with the
+    // accumulated args (use "{}" if the args never reached a parseable
+    // JSON shape) before reporting the error, matching the post-loop
+    // flush below.
+    for (const [, entry] of partialToolCalls) {
+      yield {
+        type: "tool_call",
+        toolCall: { id: entry.id, name: entry.name, argsJson: entry.args || "{}" },
+      };
+    }
+    partialToolCalls.clear();
     yield { type: "error", error: { message: (err as Error).message } };
     return;
   } finally {

@@ -8,6 +8,7 @@ import {
   supportsImageOutput,
 } from "../providers/omni.js";
 import { CodexProvider } from "../providers/codex.js";
+import { OpenAICompatProvider } from "../providers/openai-compat.js";
 import {
   buildCodexBrowserAuthUrl,
   exchangeCodexAuthorizationCode,
@@ -265,4 +266,69 @@ test("CodexProvider parses responses SSE text and reasoning deltas", async () =>
   assert.ok(events.some((e) => e.startsWith("reasoning:rthink")));
   assert.ok(events.includes("usage"));
   assert.ok(events.includes("done"));
+});
+
+// Regression: OpenAICompatProvider.stream() must flush in-progress tool
+// calls when the SSE stream dies mid-flight. Pre-fix, the error catch
+// path returned without emitting partialToolCalls, so any deltas seen
+// before the break vanished — the caller observed only the {type:"error"}
+// event and lost the call entirely.
+test("OpenAICompatProvider flushes partial tool calls on stream error", async () => {
+  const encoder = new TextEncoder();
+  // First chunk starts a tool-call delta with deliberately unclosed
+  // args JSON so `looksCompleteJson()` returns false (i.e. no normal
+  // `tool_call` event would be emitted by the happy path). The second
+  // chunk throws, which propagates into parseSSE's outer catch.
+  const stream = new ReadableStream<Uint8Array>({
+    // Pull-based: the first read returns the chunk; the second read
+    // errors the stream. Using `start()` + `queueMicrotask(error)` would
+    // error the stream *before* the consumer's first await resolved,
+    // because `await fetch(...)` inside the provider suspends a tick
+    // and lets the microtask fire — so the body would already be in
+    // an errored state when parseSSE picks it up. Pull is the only
+    // way to interleave success → error on separate reads deterministically.
+    pull(controller) {
+      const first = !stream_first;
+      stream_first = true;
+      if (first) {
+        controller.enqueue(encoder.encode(
+          'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","function":{"name":"lookup","arguments":"{\\"q\\":\\"o"}}]}}]}\n\n',
+        ));
+      } else {
+        controller.error(new Error("connection reset"));
+      }
+    },
+  });
+  let stream_first = false;
+  const provider = new OpenAICompatProvider({
+    id: "openai",
+    baseUrl: "http://127.0.0.1:0/v1",
+    apiKey: "sk-test",
+    defaultModel: "gpt-5.1",
+  });
+  const events: Array<{ type: string; toolCall?: unknown }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })) as typeof fetch;
+  try {
+    for await (const ev of provider.stream({
+      model: "gpt-5.1",
+      messages: [{ role: "user", content: "ping" }],
+      signal: new AbortController().signal,
+    })) {
+      events.push({ type: ev.type, toolCall: ev.toolCall });
+    }
+  } catch {
+    // The provider swallows errors into a {type:"error"} event; if it
+    // re-throws here we still want to inspect the partial events below.
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const toolCallIdx = events.findIndex((e) => e.type === "tool_call");
+  const errorIdx = events.findIndex((e) => e.type === "error");
+  assert.notEqual(toolCallIdx, -1, "expected the partial tool call to be flushed before the error event");
+  assert.notEqual(errorIdx, -1, "expected the stream to surface an error event");
+  assert.ok(toolCallIdx < errorIdx, `tool_call (idx ${toolCallIdx}) must come before error (idx ${errorIdx})`);
+  // No final "done" event — the stream died, so consumers must rely on
+  // the error event to learn the call aborted.
+  assert.equal(events.some((e) => e.type === "done"), false);
 });

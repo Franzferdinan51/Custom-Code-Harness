@@ -868,9 +868,34 @@ orphan-cleanup shape.
   `ProviderStreamEvent` from previous iterations that no
   longer had call sites. Removed.
 
-797 pass / 0 fail across 53 files; `npm run typecheck` clean.
-(The +1 from this commit: workflow store rename-failure
-orphan test.)
+### Provider: `parseSSE` flushes partial tool calls on stream error
+
+`src/providers/openai-compat.ts`'s `parseSSE` had a tidy happy
+path and a tidy `[DONE]` path, but the *error* path — the
+catch block around the inner `await reader.read()` loop —
+returned without emitting any of the accumulated
+`partialToolCalls`. Result: when an upstream provider died
+mid-stream (broken pipe, malformed SSE chunk, host reset)
+between a `tool_calls` delta and the final `finish_reason`,
+the consumer saw *only* the `{type:"error"}` event and lost
+the call entirely. The downstream loop in `src/agent/loop.ts`
+also couldn't dispatch a tool call it never received, so the
+model's intent (e.g. "please run `bash` to …") silently
+vanished. The fix mirrors the post-loop flush at the end of
+`parseSSE` (gated on `finishReason` there, but unconditional
+on the error path because we have no reason to think the
+in-progress call is invalid — just incomplete). Args that
+never reached a parseable JSON shape are emitted with the
+literal `"{}"` fallback, matching the existing convention.
+New regression test in `src/__tests__/omni-providers.test.ts`
+constructs a pull-based `ReadableStream` that delivers one
+SSE event with unclosed tool-call args, then errors on the
+next read, and asserts that the consumer receives a
+`tool_call` event *before* the `error` event and that no
+`done` event ever lands.
+
+812 pass / 0 fail across 53 files; `npm run typecheck` clean.
+(The +1 from this commit: parseSSE partial-tool-call-flush test.)
 
 
 ## Unreleased — Phase 3 (T3: D-WORKFLOW source audit)

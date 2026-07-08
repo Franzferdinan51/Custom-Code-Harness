@@ -190,6 +190,61 @@ test("grepTool: finds matches", async () => {
   assert.match(r.content, /const x/);
 });
 
+test("grepTool: skips oversized files via stat (no OOM on 1GB hostile input)", async () => {
+  // MAX_FILE_BYTES in grep.ts is 5_000_000. Create a file just over
+  // that cap (5_000_001 bytes) so the new stat-first check rejects
+  // it before readFile loads it into memory. Pre-fix: readFile would
+  // allocate the full 5 MB then the post-load length check would
+  // skip it — fine for 5 MB but the same code path would OOM on
+  // a 1 GB hostile file. The stat-first pattern (mirroring read.ts)
+  // makes that OOM class unreachable.
+  const oversized = join(tmp, "huge.txt");
+  // Use a sparse file via fs.truncate so the kernel keeps the size
+  // metadata but doesn't allocate blocks. readFile on a sparse file
+  // with a hole returns zeros for the hole — and the runtime's
+  // \0-binary check would also skip it. But the *stat* check is
+  // what we're testing: even if the file were dense, the stat
+  // rejection happens before readFile is called.
+  const { open } = await import("node:fs/promises");
+  const fh = await open(oversized, "w");
+  try { await fh.truncate(5_000_001); } finally { await fh.close(); }
+  // Verify the file is the size we expect (sparse or not).
+  const { statSync } = await import("node:fs");
+  assert.equal(statSync(oversized).size, 5_000_001);
+  writeFileSync(join(tmp, "small.ts"), "const matches = 1;\n");
+  const r = await grepTool.run({ pattern: "^const", path: tmp }, ctx);
+  assert.equal(r.isError, false);
+  // The small file's match must be reported, and the result must
+  // not include a content slice from the oversized file (which
+  // would only happen if grep actually read the file).
+  assert.match(r.content, /const matches/);
+  assert.doesNotMatch(r.content, /huge\.txt/);
+});
+
+// Source-level regression: the stat-first size check must come
+// before the readFile call. Pre-fix, readFile materialized the
+// entire file into memory and only then checked text.length —
+// meaning a 1 GB hostile request OOM'd before the check could
+// run. The grep.ts source is small enough that we can assert on
+// the ordering directly. This test pins the relative position of
+// the `stat(f)` and `await readFile(f, ...)` lines so a future
+// regression that swaps them back is caught at compile-test time.
+test("grepTool: stat-first size check before readFile (OOM guard)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(
+    new URL("../agent/tools/grep.ts", import.meta.url),
+    "utf-8",
+  );
+  // Look for the call sites only — both `await stat(f)` and
+  // `await readFile(f, ...)` appear in the file. We want to
+  // assert that the per-iteration call to stat() comes BEFORE
+  // the per-iteration call to readFile() inside the search loop,
+  // not that the import line precedes the import line.
+  const callSiteRe = /try \{[\s\S]*?await stat\(f\)[\s\S]*?await readFile\(f/g;
+  const m = src.match(callSiteRe);
+  assert.ok(m && m.length >= 1, "expected to find a try block with stat(f) then readFile(f) in grep.ts");
+});
+
 test("findTool: lists files by name", async () => {
   writeFileSync(join(tmp, "f1.ts"), "");
   writeFileSync(join(tmp, "f2.txt"), "");

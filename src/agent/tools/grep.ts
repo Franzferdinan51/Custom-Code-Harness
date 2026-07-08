@@ -2,7 +2,7 @@
 // on ripgrep. For very large codebases this is slower than rg, but it
 // has no external dependency and never crashes on weird file types.
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve, isAbsolute } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -87,9 +87,18 @@ export const grepTool: Tool = {
         if (!includeRe.test(base)) continue;
       }
       try {
+        // Stat first so a 1 GB hostile / runaway file does not get
+        // read into memory just to be skipped. Pre-fix: we
+        // `await readFile(f, "utf-8")` and only then checked
+        // `text.length > MAX_FILE_BYTES` — meaning a single 1 GB
+        // request would OOM the harness before the check ran.
+        // Same pattern as `read.ts` (32x output cap, hard error).
+        let st;
+        try { st = await stat(f); } catch { continue; }
+        if (!st.isFile()) continue;
+        if (st.size > MAX_FILE_BYTES) continue;
         const text = await readFile(f, { encoding: "utf-8" });
         if (text.includes("\0")) continue; // binary
-        if (text.length > MAX_FILE_BYTES) continue;
         scanned++;
         const lines = text.split("\n");
         for (let i = 0; i < lines.length; i++) {

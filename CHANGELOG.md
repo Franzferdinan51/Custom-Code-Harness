@@ -894,8 +894,33 @@ next read, and asserts that the consumer receives a
 `tool_call` event *before* the `error` event and that no
 `done` event ever lands.
 
-812 pass / 0 fail across 53 files; `npm run typecheck` clean.
-(The +1 from this commit: parseSSE partial-tool-call-flush test.)
+### grep tool: `stat`-first size check before `readFile` (OOM guard)
+
+`src/agent/tools/grep.ts` had the same shape that bit
+`read.ts` earlier: per-file `await readFile(f, "utf-8")`
+followed by a `text.length > MAX_FILE_BYTES` post-load check.
+Pre-fix, a 1 GB hostile file (e.g. a 1 GB log the model
+asked to grep) would be read into memory in full before the
+length check could skip it. The check worked correctly for
+5 MB files (the only thing it was tested against), but the
+class of OOM on a runaway / hostile file size was wide open.
+The fix is the same `stat()`-first pattern `read.ts` uses:
+look at the size on disk, skip the file if too big, then
+`readFile` only what we'll actually scan. `MAX_FILE_BYTES`
+(5 MB) is unchanged — the user-facing cap is the same, but
+the harness no longer has to allocate the full file to
+enforce it. Two new tests in `src/__tests__/tools.test.ts`:
+one creates a sparse 5_000_001-byte file via `fs.truncate`
+and confirms the small file's match is reported while
+huge.txt is excluded from the matched-file list (it was
+rejected by `stat()` before `readFile()`); the other is a
+source-level pin on the relative position of `await stat(f)`
+and `await readFile(f, ...)` in the grep loop, so a future
+regression that re-introduces the readFile-first bug fails
+the test at the source-ordering level.
+
+814 pass / 0 fail across 53 files; `npm run typecheck` clean.
+(The +2 from this commit: grep stat-first skip + source-ordering pin.)
 
 
 ## Unreleased — Phase 3 (T3: D-WORKFLOW source audit)

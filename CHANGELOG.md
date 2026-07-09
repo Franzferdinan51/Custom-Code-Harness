@@ -922,6 +922,78 @@ the test at the source-ordering level.
 814 pass / 0 fail across 53 files; `npm run typecheck` clean.
 (The +2 from this commit: grep stat-first skip + source-ordering pin.)
 
+### Providers: Anthropic + Codex SSE parsers now flush in-progress tool calls on stream error
+
+After the 2026-07-08 `parseSSE` fix in `openai-compat.ts`
+caught the same bug for OpenAI-format SSE, the audit found
+two more providers with the identical shape:
+
+- **`AnthropicProvider.parseAnthropicSSE` (`src/providers/anthropic.ts:290`)**:
+  the catch block around the inner `await reader.read()`
+  loop returned without emitting `currentTool`. When an
+  Anthropic stream died mid-tool-call (broken pipe after
+  `content_block_start` but before `content_block_stop`),
+  the consumer saw only the `{type:"error"}` event and lost
+  the call. Fix: mirror the `content_block_stop` flush in
+  the catch — emit `currentTool` as a `tool_call` event with
+  `argsJson: currentTool.args || "{}"`, then null it, then
+  yield error. Same shape as the openai-compat fix.
+- **`CodexProvider.parseCodexSSE` (`src/providers/codex.ts:330`)**:
+  same shape — the catch block returned without flushing
+  `partialToolCalls`. Same fix: iterate the map, yield each
+  entry as `tool_call`, clear, then yield error.
+
+New regression tests in `src/__tests__/omni-providers.test.ts`
+construct pull-based `ReadableStream`s that deliver one
+mid-tool-call event then error, and assert that the consumer
+sees a `tool_call` event *before* the `error` event and no
+`done` event ever lands — same shape as the OpenAICompat test.
+
+### MCP server: `dispatchTool` honors HTTP client disconnect (request abort)
+
+`src/mcp-server.ts` `dispatchTool` (line 604) was creating
+a fresh `AbortController` for every tool call and never
+aborting it: `signal: new AbortController().signal`. Result:
+an MCP client that disconnected after sending the JSON-RPC
+request left the tool running until its internal timeout —
+30 s for bash, unbounded for tools without one. The fix
+plumbs the caller's `AbortSignal` through
+`computeRpcResponse` → `dispatchTool`, where it's wired
+to the tool's `ToolContext.signal`. The HTTP POST handler
+now creates a controller and wires `req.once("close",
+() => ac.abort(...))` so client disconnects abort the
+in-flight tool. `dispatchTool` still falls back to a fresh
+controller for callers that don't pass one (tests, the
+SSE path). Two new pieces: (a) the source-level pin test in
+`src/__tests__/mcp-server.test.ts` verifies (i) the POST
+handler declares `const ac = new AbortController()` and
+wires `req.once("close", () => ac.abort(...))`, (ii)
+`handleRpc`'s signature includes `signal?: AbortSignal`,
+and (iii) `dispatchTool` uses `signal ?? new AbortController().signal`
+(the literal as fallback only). The end-to-end variant
+(spawn a real MCP server, send a `sleep 30` request, destroy
+the socket, assert abort fired) is timing-sensitive so the
+source-level pin is the canonical test.
+
+### MCP stdio test: replace 200 ms wait with 5 s poll (flake fix)
+
+`src/__tests__/mcp-server.test.ts:285` (`stdio: ready banner
+appears on stderr before any request`) used a fixed
+`setTimeout(200 ms)` to wait for the child's banner. On
+busy CI / parallel test runs the child could take longer
+than 200 ms to spawn and print, and the assertion would
+fail — which then cascaded into a Bun runner bug that
+errored every subsequent test file with `ERR_NOT_IMPLEMENTED:
+test() inside another test() is not yet implemented in Bun`.
+Fix: poll stderr every 10 ms up to a 5 s deadline for
+`/MCP stdio server ready/`, then assert. Test runs are now
+reliably 5/5 in this environment (vs 2/5 with the 200 ms
+race). No behavior change — the banner itself is unchanged.
+
+817 pass / 0 fail across 53 files; `npm run typecheck` clean.
+(The +3 from this commit: Anthropic SSE flush, Codex SSE flush,
+MCP request-abort source pin.)
+
 
 ## Unreleased — Phase 3 (T3: D-WORKFLOW source audit)
 

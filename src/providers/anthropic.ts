@@ -289,6 +289,20 @@ async function* parseAnthropicSSE(body: ReadableStream<Uint8Array>, signal: Abor
     }
   } catch (err) {
     if ((err as Error).name === "AbortError") throw err;
+    // Pre-fix: a mid-stream throw (broken pipe, malformed SSE,
+    // upstream reset) returned without flushing `currentTool`,
+    // so the consumer (agent/loop.ts) saw no `tool_call` event
+    // and the model's intent vanished. Mirror the
+    // `content_block_stop` flush in the catch path: emit the
+    // in-progress tool call with its accumulated args (using
+    // "{}" if the args never reached a parseable shape) before
+    // reporting the error. Same pattern as the parseSSE fix
+    // in openai-compat.ts (2026-07-08).
+    if (currentTool) {
+      const call: ToolCall = { id: currentTool.id, name: currentTool.name, argsJson: currentTool.args || "{}" };
+      currentTool = null;
+      yield { type: "tool_call", toolCall: call };
+    }
     yield { type: "error", error: { message: (err as Error).message } };
     return;
   } finally {

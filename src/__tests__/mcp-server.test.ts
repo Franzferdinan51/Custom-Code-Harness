@@ -284,10 +284,20 @@ function spawnStdio(extraEnv: Record<string, string> = {}) {
 
 test("stdio: ready banner appears on stderr before any request", async () => {
   const h = spawnStdio();
-  // Give the child ~200ms to print the banner.
-  await new Promise((r) => setTimeout(r, 200));
+  // Poll stderr up to 5 s for the banner instead of a fixed
+  // 200 ms wait. Pre-fix: a busy CI / parallel-test run could
+  // exceed 200 ms between the child spawning and the banner
+  // landing, and the flake then cascaded into Bun's "test()
+  // inside another test()" error for every subsequent test
+  // file (a Bun runner bug). Now: poll fast (10 ms) until the
+  // banner arrives, with a 5 s cap so a truly broken spawn
+  // surfaces as a clear timeout.
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (/MCP stdio server ready/.test(h.getStderr())) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
   h.stop();
-  await new Promise((r) => setTimeout(r, 100));
   assert.match(h.getStderr(), /MCP stdio server ready/);
 });
 
@@ -425,6 +435,49 @@ test("rpc: GET /sse opens an event-stream and emits a comment (regression for ss
     // bytes were written).
     assert.match(got.firstChunk, /codingharness mcp stream/);
   } finally { await r.stop(); }
+});
+
+test("rpc: tools/call aborts in-flight tool when the HTTP client disconnects", async () => {
+  // Regression: pre-fix the MCP server passed a fresh
+  // `new AbortController().signal` to every tool call — never
+  // aborted — so a client that disconnected mid-tool-call left
+  // the tool running until its internal timeout (30 s for bash;
+  // unbounded for tools without one). The fix wires the tool's
+  // context.signal to a controller that's aborted when the
+  // underlying IncomingMessage emits `close`.
+  //
+  // The end-to-end version of this test (spawn a real MCP
+  // server, send a tools/call with `sleep 30`, destroy the
+  // socket, assert the bash tool saw the abort) is
+  // timing-sensitive and slow. We pin the fix at two cheaper
+  // levels instead:
+  //
+  //   1. Source-level: the POST handler must (a) create an
+  //      AbortController, (b) wire it to `req.once("close", ...)`,
+  //      (c) pass `ac.signal` to handleRpc/computeRpcResponse/
+  //      dispatchTool, and (d) NOT pass a fresh
+  //      `new AbortController().signal` directly to dispatchTool.
+  //   2. Plumbing: dispatchTool's signature must accept an
+  //      optional AbortSignal and forward it into the tool's
+  //      ToolContext.signal (so tools that check signal.aborted
+  //      get the right value).
+  const src = await import("node:fs").then((fs) => fs.readFileSync(
+    new URL("../mcp-server.ts", import.meta.url),
+    "utf-8",
+  ));
+  // (a)+(b): the POST handler must create a controller and
+  // wire its `close` listener to abort.
+  const acDeclRe = /const ac = new AbortController\(\);[\s\S]{0,200}?req\.once\("close"[\s\S]{0,80}?ac\.abort\(/;
+  assert.ok(acDeclRe.test(src), "expected POST handler to create an AbortController and wire req.close → ac.abort()");
+  // (c): handleRpc must accept an optional signal parameter
+  // and forward it to computeRpcResponse.
+  const handleRpcSig = /async function handleRpc\(\s*\n?\s*res: ServerResponse,\s*\n?\s*request: McpParsedRpc,\s*\n?\s*runtime: HarnessRuntime,\s*\n?\s*tools: McpToolDefinition\[\],\s*\n?\s*opts: McpStartOpts,\s*\n?\s*signal\?: AbortSignal,/;
+  assert.ok(handleRpcSig.test(src), "expected handleRpc to accept an optional AbortSignal");
+  // (d): dispatchTool must NOT use `new AbortController().signal`
+  // as a literal — it must use the caller's signal when provided.
+  // We allow the literal only as a fallback (signal ?? new ...).
+  assert.ok(/signal \?\? new AbortController\(\)\.signal/.test(src),
+    "expected dispatchTool to fall back to a fresh AbortController only when no signal was passed");
 });
 
 test("ALL OK", () => {

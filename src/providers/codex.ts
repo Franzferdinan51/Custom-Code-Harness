@@ -329,6 +329,22 @@ async function* parseResponsesSSE(
     }
   } catch (err) {
     if ((err as Error).name === "AbortError") throw err;
+    // Pre-fix: a mid-stream throw (broken pipe, malformed SSE,
+    // upstream reset) returned without flushing
+    // `partialToolCalls`, so the consumer saw no `tool_call`
+    // event and the model's intent vanished. Emit any
+    // in-progress tool calls with their accumulated args
+    // (using "{}" if they never reached a parseable JSON
+    // shape) before reporting the error. Same pattern as the
+    // parseSSE fix in openai-compat.ts (2026-07-08) and the
+    // currentTool flush in anthropic.ts (2026-07-09).
+    for (const [, entry] of partialToolCalls) {
+      yield {
+        type: "tool_call",
+        toolCall: { id: entry.id, name: entry.name, argsJson: entry.args || "{}" },
+      };
+    }
+    partialToolCalls.clear();
     yield { type: "error", error: { message: (err as Error).message } };
     return;
   } finally {

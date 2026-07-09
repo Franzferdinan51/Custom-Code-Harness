@@ -332,3 +332,103 @@ test("OpenAICompatProvider flushes partial tool calls on stream error", async ()
   // the error event to learn the call aborted.
   assert.equal(events.some((e) => e.type === "done"), false);
 });
+
+// Same regression as the OpenAICompat test above, but for the
+// Anthropic SSE parser. Anthropic uses `content_block_start`
+// (with type:"tool_use") to open a partial tool call and
+// `content_block_stop` to flush it. Pre-fix, a stream that
+// died mid-tool-call (broken pipe after content_block_start,
+// before content_block_stop) silently dropped currentTool —
+// the consumer saw only the error event and lost the call.
+test("AnthropicProvider flushes in-progress tool calls on stream error", async () => {
+  const encoder = new TextEncoder();
+  // First read delivers a content_block_start + partial delta.
+  // Second read errors the stream — no content_block_stop ever lands.
+  let pulled = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulled++ === 0) {
+        controller.enqueue(encoder.encode(
+          'event: content_block_start\n' +
+          'data: {"index":0,"content_block":{"type":"tool_use","id":"toolu_test","name":"lookup","input":{}}}\n\n' +
+          'event: content_block_delta\n' +
+          'data: {"index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"q\\":\\"o"}}\n\n',
+        ));
+      } else {
+        controller.error(new Error("connection reset"));
+      }
+    },
+  });
+  const { AnthropicProvider } = await import("../providers/anthropic.js");
+  const provider = new AnthropicProvider({ apiKey: "sk-test", defaultModel: "claude-sonnet-4-5" });
+  const events: Array<{ type: string; toolCall?: unknown }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })) as typeof fetch;
+  try {
+    for await (const ev of provider.stream({
+      model: "claude-sonnet-4-5",
+      messages: [{ role: "user", content: "ping" }],
+      signal: new AbortController().signal,
+    })) {
+      events.push({ type: ev.type, toolCall: ev.toolCall });
+    }
+  } catch {
+    // Provider swallows errors into {type:"error"}; tolerate throws too.
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const toolCallIdx = events.findIndex((e) => e.type === "tool_call");
+  const errorIdx = events.findIndex((e) => e.type === "error");
+  assert.notEqual(toolCallIdx, -1, "expected the partial tool call to be flushed before the error event");
+  assert.notEqual(errorIdx, -1, "expected the stream to surface an error event");
+  assert.ok(toolCallIdx < errorIdx, `tool_call (idx ${toolCallIdx}) must come before error (idx ${errorIdx})`);
+  assert.equal(events.some((e) => e.type === "done"), false);
+});
+
+// Same regression for the Codex Responses-API SSE parser.
+test("CodexProvider flushes partial tool calls on stream error", async () => {
+  const encoder = new TextEncoder();
+  let pulled = 0;
+  // Codex streams function_call deltas. We open a partial call
+  // (name + partial args) and then error the stream before the
+  // deltas complete into parseable JSON.
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulled++ === 0) {
+        controller.enqueue(encoder.encode(
+          'event: response.function_call_arguments.delta\n' +
+          'data: {"item":{"call_id":"call_abc","name":"lookup","arguments":"{\\"q\\":\\"o"}}\n\n',
+        ));
+      } else {
+        controller.error(new Error("connection reset"));
+      }
+    },
+  });
+  const provider = new CodexProvider({
+    id: "codex",
+    accessToken: "token",
+    defaultModel: "gpt-5.1",
+  });
+  const events: Array<{ type: string; toolCall?: unknown }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })) as typeof fetch;
+  try {
+    for await (const ev of provider.stream({
+      model: "gpt-5.1",
+      messages: [{ role: "user", content: "ping" }],
+      signal: new AbortController().signal,
+    })) {
+      events.push({ type: ev.type, toolCall: ev.toolCall });
+    }
+  } catch {
+    // Provider swallows errors; tolerate throws too.
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const toolCallIdx = events.findIndex((e) => e.type === "tool_call");
+  const errorIdx = events.findIndex((e) => e.type === "error");
+  assert.notEqual(toolCallIdx, -1, "expected the partial tool call to be flushed before the error event");
+  assert.notEqual(errorIdx, -1, "expected the stream to surface an error event");
+  assert.ok(toolCallIdx < errorIdx, `tool_call (idx ${toolCallIdx}) must come before error (idx ${errorIdx})`);
+  assert.equal(events.some((e) => e.type === "done"), false);
+});

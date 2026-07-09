@@ -418,7 +418,19 @@ async function handleHttp(
       });
       return;
     }
-    await handleRpc(res, request, runtime, tools, opts);
+    // Wire the tool's abort signal to the HTTP request's close
+    // event so a client disconnect mid-tool-call cancels the
+    // in-flight run. Pre-fix: `dispatchTool` passed a fresh
+    // `new AbortController().signal` to the tool — never
+    // aborted — so an MCP client that died after sending the
+    // JSON-RPC request left the tool running until its
+    // internal timeout (30 s for bash; unbounded for tools
+    // without one). The `close` listener also fires when
+    // the response is fully written, so the controller is
+    // single-use per request — we don't reuse it across calls.
+    const ac = new AbortController();
+    req.once("close", () => ac.abort(new Error("mcp: client disconnected")));
+    await handleRpc(res, request, runtime, tools, opts, ac.signal);
     return;
   }
 
@@ -498,6 +510,7 @@ async function computeRpcResponse(
   runtime: HarnessRuntime,
   tools: McpToolDefinition[],
   opts: Pick<McpStartOpts, "approveBash" | "cwd">,
+  signal?: AbortSignal,
 ): Promise<{ response: McpJsonRpcResponse | null; statusCode: number }> {
   // Distinguish three cases:
   //   1. id === "__invalid__" → explicit `id: null` in the request;
@@ -558,7 +571,7 @@ async function computeRpcResponse(
             },
           };
         }
-        const result = await dispatchTool(runtime, name, args, opts);
+        const result = await dispatchTool(runtime, name, args, opts, signal);
         return { statusCode: 200, response: { jsonrpc: "2.0", id, result } };
       }
       default:
@@ -590,8 +603,9 @@ async function handleRpc(
   runtime: HarnessRuntime,
   tools: McpToolDefinition[],
   opts: McpStartOpts,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const { response, statusCode } = await computeRpcResponse(request, runtime, tools, opts);
+  const { response, statusCode } = await computeRpcResponse(request, runtime, tools, opts, signal);
   if (response === null) {
     res.writeHead(statusCode);
     res.end();
@@ -606,6 +620,15 @@ async function dispatchTool(
   name: string,
   args: Record<string, unknown>,
   opts: Pick<McpStartOpts, "approveBash" | "cwd">,
+  /** Caller's abort signal. When this signal aborts (e.g. the HTTP
+   *  client disconnects mid-tool-call), the in-flight tool run is
+   *  canceled so the harness doesn't keep burning CPU on a request
+   *  whose reply will never be read. Pre-fix: the tool got a fresh
+   *  `AbortController().signal` that was NEVER aborted, so an MCP
+   *  client that died after sending the request left the tool
+   *  running until its internal timeout (30 s for bash; unbounded
+   *  for tools without one). */
+  signal?: AbortSignal,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const tool = runtime.tools.get(name);
   if (!tool) {
@@ -625,15 +648,18 @@ async function dispatchTool(
     };
   }
   // Build a minimal ToolContext. The MCP server runs ephemeral;
-  // cwd is the cwd at startup (or the override), and the signal
-  // is wired to a fresh AbortController. (MCP tool calls share the
-  // process lifetime of the MCP server, not the request lifetime —
-  // most tools have their own internal timeouts that cap them.)
-  // We also strip `__approval_bypass` and any other reserved keys
-  // a tool's validate() may not catch.
+  // cwd is the cwd at startup (or the override). The signal is
+  // wired to the caller's abort signal (when provided), with a
+  // fresh fallback for callers that don't pass one (e.g. tests).
+  // Pre-fix: the signal was always a fresh AbortController that
+  // was NEVER aborted, so a client disconnect mid-tool-call left
+  // the tool running until its internal timeout — 30 s for bash,
+  // unbounded for tools without one. We also strip
+  // `__approval_bypass` and any other reserved keys a tool's
+  // validate() may not catch.
   const ctx: ToolContext = {
     cwd: opts.cwd ?? process.cwd(),
-    signal: new AbortController().signal,
+    signal: signal ?? new AbortController().signal,
     limits: {
       bashTimeoutMs: DEFAULT_LIMITS.bashTimeoutMs,
       readMaxBytes: DEFAULT_LIMITS.readMaxBytes,

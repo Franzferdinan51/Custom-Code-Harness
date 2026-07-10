@@ -2713,6 +2713,37 @@ the comment to document the actual flow + flag the
 reserved escape hatch for future use. No behavior
 change.
 
+### Cost table: GPT-5.6 Sol/Terra/Luna + Claude Fable 5 + Claude Mythos 5 (2026-07-10)
+
+Five new model lines were added to `src/agent/cost.ts`
+that fell through to the unknown-model $0/$0 fallback
+otherwise:
+
+- **GPT-5.6 Sol / Terra / Luna** — OpenAI launched
+  GPT-5.6 on July 9, 2026 with three tiers. Sol is
+  the flagship at $5/$30 (input/output per 1M), Terra
+  the balanced tier at $2.50/$15, Luna the cheap tier
+  at $1/$6. Pre-fix, every `gpt-5.6-*` model id
+  matched the bare `/^gpt-5/` prefix (which is GPT-5
+  Aug 2025 at $1.25/$10) — a 2-4x under-charge on
+  Sol. The new entries must come BEFORE the bare
+  `/^gpt-5/` prefix in the table to avoid the
+  prefix-stealing bug (same class as o1-mini vs o1).
+- **Claude Fable 5** — Anthropic's first public
+  Mythos-class model, $10/$50. Launched June 9, 2026
+  on the Claude API and Bedrock/Vertex. Pre-fix:
+  every `claude-fable-5` call was reported as $0/$0.
+- **Claude Mythos 5** — the restricted Glasswing
+  version with cyber safeguards lifted, also
+  $10/$50. Same underlying model as Fable 5;
+  Anthropic charges no premium for the safety-
+  classifier wrapper. Pre-fix: $0/$0.
+
+Two new tests in `src/__tests__/cost-approval.test.ts`
+pin all five entries. 819 pass / 0 fail across 53
+files; `npm run typecheck` clean. (The +2 from this
+commit: GPT-5.6 trio + Claude Fable/Mythos tests.)
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

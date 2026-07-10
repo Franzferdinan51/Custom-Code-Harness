@@ -26,6 +26,14 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // pricing page. Real numbers per OpenAI's API pricing
   // page as of July 2026:
   { match: /^gpt-5\.5-pro/,          price: { input: 30.00, output: 180.00, provider: "openai", label: "GPT-5.5 pro" } },
+  // GPT-5.6 (Sol/Terra/Luna) — launched July 9, 2026.
+  // Must precede the bare /^gpt-5/ prefix (which would
+  // otherwise match at the GPT-5 (Aug 2025) $1.25/$10 rate
+  // — same prefix-stealing class as o1-mini vs o1).
+  { match: /^gpt-5\.6-sol/,          price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.6 Sol" } },
+  { match: /^gpt-5\.6-terra/,        price: { input: 2.50,  output: 15.00, provider: "openai", label: "GPT-5.6 Terra" } },
+  { match: /^gpt-5\.6-luna/,         price: { input: 1.00,  output: 6.00,  provider: "openai", label: "GPT-5.6 Luna" } },
+  { match: /^gpt-5\.6/,              price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.6" } },
   { match: /^gpt-5\.5/,              price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.5" } },
   { match: /^gpt-5\.4-pro/,          price: { input: 30.00, output: 180.00, provider: "openai", label: "GPT-5.4 pro" } },
   { match: /^gpt-5\.4-nano/,         price: { input: 0.20,  output: 1.25,  provider: "openai", label: "GPT-5.4 nano" } },
@@ -81,6 +89,14 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // come BEFORE the ^claude-sonnet-4- entry if Anthropic
   // ever ships a "claude-sonnet-5-*" variant.
   { match: /^claude-sonnet-5/,       price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude Sonnet 5" } },
+  // Claude Fable 5 / Mythos 5 (Mythos-class, launched
+  // June 9, 2026). $10/$50 — 2x Opus 4.8. Fable is the
+  // public version with safety classifiers; Mythos 5 is the
+  // restricted Glasswing-partner version with cyber safeguards
+  // lifted. Same model, same pricing — Anthropic charges no
+  // premium for the safety-classifier wrapper.
+  { match: /^claude-fable-5/,        price: { input: 10.00, output: 50.00, provider: "anthropic", label: "Claude Fable 5" } },
+  { match: /^claude-mythos-5/,       price: { input: 10.00, output: 50.00, provider: "anthropic", label: "Claude Mythos 5" } },
   // Legacy Claude 3 Opus (3.0) — keep for users still on the original
   // Opus model. The Anthropic 4.x line dropped the price to $5/$25.
   { match: /^claude-3-opus/,         price: { input: 15.00, output: 75.00, provider: "anthropic", label: "Claude 3 Opus" } },

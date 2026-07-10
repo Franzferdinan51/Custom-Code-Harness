@@ -147,6 +147,48 @@ test("priceFor: GPT-5 / GPT-5-mini / GPT-5-nano / GPT-5.4 / GPT-5.5 / GPT-5.5-pr
   assert.equal(gpt55pro.output, 180);
 });
 
+test("priceFor: GPT-5.6 Sol/Terra/Luna match (2026-07-09 launch — were missing entirely)", () => {
+  // OpenAI launched GPT-5.6 (Sol/Terra/Luna) on July 9, 2026
+  // with three-tier pricing: Sol $5/$30 (flagship), Terra
+  // $2.50/$15 (balanced), Luna $1/$6 (cheapest). Pre-fix:
+  // every GPT-5.6 model id fell through the bare /^gpt-5/
+  // prefix (which is GPT-5 Aug 2025 at $1.25/$10) — a 2-4x
+  // under-charge on the flagship. Must come BEFORE the
+  // bare-`^gpt-5/` prefix in the TABLE.
+  const gpt56sol = priceFor("gpt-5.6-sol");
+  assert.equal(gpt56sol.input, 5);
+  assert.equal(gpt56sol.output, 30);
+  assert.equal(gpt56sol.label, "GPT-5.6 Sol");
+
+  const gpt56terra = priceFor("gpt-5.6-terra");
+  assert.equal(gpt56terra.input, 2.50);
+  assert.equal(gpt56terra.output, 15);
+  assert.equal(gpt56terra.label, "GPT-5.6 Terra");
+
+  const gpt56luna = priceFor("gpt-5.6-luna");
+  assert.equal(gpt56luna.input, 1);
+  assert.equal(gpt56luna.output, 6);
+  assert.equal(gpt56luna.label, "GPT-5.6 Luna");
+});
+
+test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $0/$0)", () => {
+  // Anthropic launched the Mythos-class models on June 9,
+  // 2026: claude-fable-5 (public, with safety classifiers)
+  // and claude-mythos-5 (restricted Glasswing partners).
+  // Same underlying model, same $10/$50 pricing. Pre-fix:
+  // both fell through to the unknown-model $0/$0 fallback,
+  // so a real $10/$50 per 1M call was reported as free.
+  const fable = priceFor("claude-fable-5");
+  assert.equal(fable.input, 10);
+  assert.equal(fable.output, 50);
+  assert.equal(fable.label, "Claude Fable 5");
+
+  const mythos = priceFor("claude-mythos-5");
+  assert.equal(mythos.input, 10);
+  assert.equal(mythos.output, 50);
+  assert.equal(mythos.label, "Claude Mythos 5");
+});
+
 test("priceFor: GPT-4.1 and GPT-3.5 Turbo match (regression: were $0/$0)", () => {
   // Pre-fix: only `^gpt-4o`, `^gpt-4o-mini`, and `^gpt-4-turbo`
   // were listed. `^gpt-4.1*` and `^gpt-3.5-turbo` both fell

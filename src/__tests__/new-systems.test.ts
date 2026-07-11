@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -195,6 +195,31 @@ test("CronStore add/list/remove", () => {
   assert.ok(list.find((x) => x.id === j.id));
   assert.ok(store.remove(j.id));
   assert.equal(store.list().find((x) => x.id === j.id), undefined);
+});
+
+test("CronStore.save: atomic write (no orphan .tmp on success)", () => {
+  // Regression: pre-fix CronStore.save() did a direct
+  // `writeFileSync(jobsFile(), ...)` — non-atomic. A crash
+  // mid-write would leave a half-written `jobs.json` that
+  // the next `list()` would fail to parse, silently losing
+  // every scheduled job. The fix mirrors the same tmp+rename
+  // pattern as writeTool / editTool / WorkflowStore /
+  // GoalStore / mcp-store / Session.persistMeta.
+  //
+  // This test pins: (1) after `save`, `jobs.json` exists and
+  // is parseable, (2) no `.tmp` orphan is left next to it.
+  const store = new CronStore();
+  store.save([{ id: "x", name: "t", prompt: "p", schedule: { kind: "interval", minutes: 60 }, enabled: true, createdAt: 0 }]);
+  const file = join(tmp, "cron", "jobs.json");
+  assert.ok(existsSync(file), "jobs.json should exist after save");
+  // Verify the file parses (catches half-written content).
+  const parsed = JSON.parse(readFileSync(file, "utf-8"));
+  assert.ok(Array.isArray(parsed));
+  assert.equal(parsed[0].id, "x");
+  // No `.tmp` orphan.
+  const siblings = readdirSync(join(tmp, "cron"));
+  const tmpFiles = siblings.filter((f) => f.endsWith(".tmp"));
+  assert.deepEqual(tmpFiles, [], "no .tmp files should remain after save()");
 });
 
 // ---- Compaction ----

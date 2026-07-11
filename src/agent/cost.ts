@@ -103,7 +103,16 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // DeepSeek (OpenRouter-style)
   { match: /^deepseek-chat/,         price: { input: 0.27,  output: 1.10,  provider: "deepseek", label: "DeepSeek Chat" } },
   { match: /^deepseek-reasoner/,     price: { input: 0.55,  output: 2.19,  provider: "deepseek", label: "DeepSeek Reasoner" } },
-  // xAI Grok — missing before; presets.ts default to grok-4.3.
+  // xAI Grok — xAI launched Grok 4.5 on July 8, 2026 at
+  // $2/$6 (and Grok 4.5 Fast at $4/$18). The bare /^grok-4/
+  // catch-all was correct for the older 4.0/4.3 line at
+  // $1.25/$2.50 but UNDER-CHARGES Grok 4.5 by 60% on input
+  // and 140% on output. The new entries must come BEFORE
+  // the bare /^grok-4/ catch-all to avoid the same
+  // prefix-stealing class as o1-mini vs o1 / gpt-5.6 vs
+  // gpt-5.
+  { match: /^grok-4\.5-fast/,        price: { input: 4.00,  output: 18.00, provider: "xai", label: "Grok 4.5 Fast" } },
+  { match: /^grok-4\.5/,             price: { input: 2.00,  output: 6.00,  provider: "xai", label: "Grok 4.5" } },
   { match: /^grok-4/,                price: { input: 1.25,  output: 2.50,  provider: "xai", label: "Grok 4.x" } },
   // OpenRouter passthrough prices (rough)
   { match: /llama-3\.1-405b/,         price: { input: 3.50,  output: 3.50,  provider: "openrouter", label: "Llama 3.1 405B" } },

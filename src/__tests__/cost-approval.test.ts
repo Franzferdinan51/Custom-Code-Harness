@@ -189,6 +189,30 @@ test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $
   assert.equal(mythos.label, "Claude Mythos 5");
 });
 
+test("priceFor: Grok 4.5 + Grok 4.5 Fast match (2026-07-08 launch — were under-charged as Grok 4.x)", () => {
+  // xAI launched Grok 4.5 on July 8, 2026 at $2 input / $6
+  // output per 1M tokens. Pre-fix, the bare /^grok-4/
+  // catch-all returned $1.25 / $2.50 (the older Grok 4.0/4.3
+  // rate), under-charging Grok 4.5 by 60% on input and 140%
+  // on output. Same prefix-stealing class as gpt-5.6 vs gpt-5.
+  const g45 = priceFor("grok-4.5");
+  assert.equal(g45.input, 2);
+  assert.equal(g45.output, 6);
+  assert.equal(g45.label, "Grok 4.5");
+
+  // Grok 4.5 Fast — premium tier for low-latency workloads.
+  const g45fast = priceFor("grok-4.5-fast");
+  assert.equal(g45fast.input, 4);
+  assert.equal(g45fast.output, 18);
+  assert.equal(g45fast.label, "Grok 4.5 Fast");
+
+  // Older Grok 4.3 still falls into the catch-all at $1.25/$2.50.
+  const g43 = priceFor("grok-4.3");
+  assert.equal(g43.input, 1.25);
+  assert.equal(g43.output, 2.50);
+  assert.equal(g43.label, "Grok 4.x");
+});
+
 test("priceFor: GPT-4.1 and GPT-3.5 Turbo match (regression: were $0/$0)", () => {
   // Pre-fix: only `^gpt-4o`, `^gpt-4o-mini`, and `^gpt-4-turbo`
   // were listed. `^gpt-4.1*` and `^gpt-3.5-turbo` both fell

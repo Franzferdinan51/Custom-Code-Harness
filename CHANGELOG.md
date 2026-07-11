@@ -2744,6 +2744,61 @@ pin all five entries. 819 pass / 0 fail across 53
 files; `npm run typecheck` clean. (The +2 from this
 commit: GPT-5.6 trio + Claude Fable/Mythos tests.)
 
+### Storage atomicity: `CronStore.save` + `saveSettings` now use tmp+rename (2026-07-11)
+
+Two more stores had the same non-atomic `writeFileSync` bug
+that the prior atomicity-pass fixes (WorkflowStore / GoalStore
+/ mcp-store / Session.persistMeta / trajectory / memory-layers)
+already addressed. Both used a direct `writeFileSync(path,
+...)` that could leave a half-written file on disk if the
+process died mid-write.
+
+- **`src/agent/cron.ts:52` `CronStore.save(jobs)`**:
+  pre-fix, a crash mid-write of `jobs.json` left an
+  unparseable file. The next `list()` caught the parse
+  failure and silently returned `[]` — every scheduled
+  cron job was lost without a single error log. The fix
+  wraps the write in a tmp+rename with a best-effort
+  unlink on rename failure. New test in
+  `src/__tests__/new-systems.test.ts` pins: after
+  `save()`, `jobs.json` exists and parses, no `.tmp`
+  orphan is left next to it.
+- **`src/config/settings.ts:160` `saveSettings(s)`**:
+  pre-fix, a crash mid-write of `settings.json` was
+  even worse — `loadSettings` already handles parse
+  failure (logs a warning, falls back to
+  `DEFAULT_SETTINGS`), so a half-written file meant
+  the user would lose every customized setting (api
+  key, default provider, default model, allowlist,
+  ...) on the next process start. Same fix shape:
+  tmp+rename with best-effort unlink. New test in
+  `src/__tests__/omni-providers.test.ts` pins two
+  consecutive save+reload cycles (with two different
+  contents) and confirms no `.tmp` orphan is left
+  after either save.
+
+### Cost table: Grok 4.5 + Grok 4.5 Fast match (2026-07-11)
+
+xAI launched Grok 4.5 on July 8, 2026 at $2 input / $6
+output per 1M tokens (and a premium Grok 4.5 Fast tier
+at $4/$18). Pre-fix, both fell into the bare
+`/^grok-4/` catch-all at $1.25 / $2.50 (the older
+Grok 4.0/4.3 rate), under-charging Grok 4.5 by 60% on
+input and 140% on output. Same prefix-stealing class
+as gpt-5.6 vs gpt-5. New entries added BEFORE the
+bare prefix in `src/agent/cost.ts`. The bare
+`/^grok-4/` catch-all is preserved for Grok 4.0 / 4.3
+/ future 4.x variants at the $1.25/$2.50 rate. New
+test in `src/__tests__/cost-approval.test.ts` pins
+Grok 4.5 + Grok 4.5 Fast at their official prices
+and confirms Grok 4.3 still resolves to the
+`/^grok-4/` catch-all.
+
+822 pass / 0 fail across 53 files; `npm run
+typecheck` clean. (The +3 from this commit: CronStore
+atomic-write test, saveSettings atomic-write test,
+Grok 4.5 trio test.)
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

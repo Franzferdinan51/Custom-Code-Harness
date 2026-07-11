@@ -22,7 +22,7 @@ import { ProviderRegistry, shouldUseCodexProvider } from "../providers/registry.
 import { getProviderPreset } from "../providers/presets.js";
 import { loadSettings, resetSettingsCache, saveSettings } from "../config/settings.js";
 import type { Settings } from "../config/settings.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -431,4 +431,58 @@ test("CodexProvider flushes partial tool calls on stream error", async () => {
   assert.notEqual(errorIdx, -1, "expected the stream to surface an error event");
   assert.ok(toolCallIdx < errorIdx, `tool_call (idx ${toolCallIdx}) must come before error (idx ${errorIdx})`);
   assert.equal(events.some((e) => e.type === "done"), false);
+});
+
+// Regression: saveSettings is now atomic (tmp + rename) so a
+// crash mid-write can't leave a half-written `settings.json`
+// that silently resets to defaults. Pre-fix, a partial write
+// on disk would cause `loadSettings` to fall back to
+// `DEFAULT_SETTINGS` and the user would lose every customized
+// setting (api key, default provider/model, allowlist,
+// ...) on the next process start.
+test("saveSettings: atomic write (no orphan .tmp on success; content survives a partial-write simulation)", () => {
+  // Use a fresh tempHome so we don't pollute the real settings.
+  const prevHome = process.env.CH_HOME;
+  const prevCodingHarnessHome = process.env.CODINGHARNESS_HOME;
+  const tempHome = mkdtempSync(join(tmpdir(), "ch-save-settings-"));
+  process.env.CH_HOME = tempHome;
+  process.env.CODINGHARNESS_HOME = tempHome;
+  resetSettingsCache();
+  try {
+    // First write — creates the file. Defaults only.
+    const s1 = loadSettings();
+    s1.providers.openai = { id: "openai", apiKey: "sk-test" };
+    saveSettings(s1);
+    const file = join(tempHome, "settings.json");
+    assert.ok(existsSync(file));
+    // Parse the file — must be valid JSON.
+    const parsed = JSON.parse(readFileSync(file, "utf-8"));
+    assert.equal(parsed.providers.openai.apiKey, "sk-test");
+    // No `.tmp` orphan next to it.
+    const siblings = readdirSync(tempHome);
+    const orphans = siblings.filter((f) => f.endsWith(".tmp"));
+    assert.deepEqual(orphans, [], "no .tmp files should remain after saveSettings()");
+
+    // Second write — the rename should swap atomically. We
+    // also verify that the on-disk content is a valid full
+    // JSON document, not a half-written one.
+    resetSettingsCache();
+    const s2 = loadSettings();
+    s2.defaultProvider = "anthropic";
+    s2.providers.anthropic = { id: "anthropic", apiKey: "sk-ant" };
+    saveSettings(s2);
+    const parsed2 = JSON.parse(readFileSync(file, "utf-8"));
+    assert.equal(parsed2.defaultProvider, "anthropic");
+    assert.equal(parsed2.providers.anthropic.apiKey, "sk-ant");
+    // And still no orphans.
+    const siblings2 = readdirSync(tempHome);
+    assert.deepEqual(siblings2.filter((f) => f.endsWith(".tmp")), []);
+  } finally {
+    if (prevHome === undefined) delete process.env.CH_HOME;
+    else process.env.CH_HOME = prevHome;
+    if (prevCodingHarnessHome === undefined) delete process.env.CODINGHARNESS_HOME;
+    else process.env.CODINGHARNESS_HOME = prevCodingHarnessHome;
+    resetSettingsCache();
+    rmSync(tempHome, { recursive: true, force: true });
+  }
 });

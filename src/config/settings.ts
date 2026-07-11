@@ -1,7 +1,8 @@
 // Settings.json loader. Settings live at $CH_HOME/settings.json.
 // Order of precedence: CLI flag > settings.json > env var > default.
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { paths } from "./paths.js";
 import { firstEnvValue, getProviderPreset, listProviderPresets, PRIMARY_PROVIDER_ID, type ProviderAuthMode } from "../providers/presets.js";
 
@@ -159,7 +160,30 @@ export function loadSettings(): Settings {
 
 export function saveSettings(s: Settings): void {
   cached = s;
-  writeFileSync(paths.settings, JSON.stringify(s, null, 2) + "\n", "utf-8");
+  // Atomic write: tmp + rename. Pre-fix: a direct
+  // `writeFileSync(paths.settings, ...)` could leave a half-
+  // written `settings.json` if the process crashed mid-write
+  // (or the FS ran out of space), and the next `loadSettings`
+  // would fail to parse the half-written file and silently
+  // fall back to `DEFAULT_SETTINGS` — losing every
+  // user-customized setting (api key, default provider,
+  // default model, allowlist, ...) without a single error
+  // log. The cache invalidates on the next process start so
+  // a fresh boot would re-read the now-empty file and the
+  // user is stuck. Same pattern as CronStore.save,
+  // writeTool / editTool / WorkflowStore / GoalStore /
+  // mcp-store / Session.persistMeta. The try/catch unlinks
+  // the `.tmp` on rename failure so a mid-flight crash
+  // doesn't leave an orphan.
+  const file = paths.settings;
+  const tmp = file + "." + randomBytes(4).toString("hex") + ".tmp";
+  try {
+    writeFileSync(tmp, JSON.stringify(s, null, 2) + "\n", "utf-8");
+    renameSync(tmp, file);
+  } catch (e) {
+    try { unlinkSync(tmp); } catch { /* best-effort */ }
+    throw e;
+  }
 }
 
 export function resetSettingsCache(): void {

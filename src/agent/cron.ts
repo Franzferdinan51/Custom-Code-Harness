@@ -8,7 +8,7 @@
 // (optionally) writes the output to a file. v1 does NOT do platform
 // delivery (Telegram/Discord etc) — that's a much bigger lift.
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { paths } from "../config/paths.js";
@@ -49,7 +49,25 @@ export class CronStore {
     catch { return []; }
   }
   save(jobs: CronJob[]): void {
-    writeFileSync(jobsFile(), JSON.stringify(jobs, null, 2) + "\n", "utf-8");
+    // Atomic write: tmp + rename. Pre-fix: a direct
+    // `writeFileSync(jobsFile(), ...)` could leave a half-
+    // written `jobs.json` if the process crashed mid-write
+    // (or the FS ran out of space), and the next `list()`
+    // would fail to parse and silently return `[]` — every
+    // scheduled job would be lost without a single error
+    // log. Same pattern as writeTool / editTool / WorkflowStore
+    // / GoalStore / mcp-store / Session.persistMeta. The
+    // try/catch unlinks the `.tmp` on rename failure so a
+    // mid-flight crash doesn't leave an orphan.
+    const file = jobsFile();
+    const tmp = file + "." + randomBytes(4).toString("hex") + ".tmp";
+    try {
+      writeFileSync(tmp, JSON.stringify(jobs, null, 2) + "\n", "utf-8");
+      renameSync(tmp, file);
+    } catch (e) {
+      try { unlinkSync(tmp); } catch { /* best-effort */ }
+      throw e;
+    }
   }
   add(job: Omit<CronJob, "id" | "createdAt">): CronJob {
     const jobs = this.list();

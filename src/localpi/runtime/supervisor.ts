@@ -9,7 +9,8 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { access, mkdir, readFile, rm, writeFile, constants } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, unlink, writeFile, constants } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import path from "node:path";
 
@@ -69,11 +70,25 @@ export async function ensureServer(
     pid,
     startedAt: new Date().toISOString()
   };
-  await writeFile(
-    metadataPath(stateDir),
-    JSON.stringify(metadata, null, 2) + "\n",
-    "utf8"
-  );
+  // Atomic write: tmp + rename. Pre-fix: a direct `writeFile(
+  // metadataPath(stateDir), ...)` could leave a half-written
+  // `server.json` if the process crashed mid-write. The next
+  // `readActiveMetadata()` would fail to parse and silently
+  // return `undefined` — the supervisor would think there is
+  // no active server, proceed to spawn a new one, and leave the
+  // previous process running as a zombie (the OS still has the
+  // pid, the harness no longer has the handle). Same family as
+  // the writeTool / editTool / CronStore / saveSettings / etc.
+  // atomic writes.
+  const metaFile = metadataPath(stateDir);
+  const tmpMeta = metaFile + "." + randomBytes(4).toString("hex") + ".tmp";
+  try {
+    await writeFile(tmpMeta, JSON.stringify(metadata, null, 2) + "\n", "utf8");
+    await rename(tmpMeta, metaFile);
+  } catch (e) {
+    try { await unlink(tmpMeta); } catch { /* best-effort */ }
+    throw e;
+  }
   return { metadata, reused: false };
 }
 

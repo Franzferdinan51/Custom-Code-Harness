@@ -234,14 +234,27 @@ export async function connectStdio(opts: StdioConnectOpts): Promise<McpClient> {
   }
   // Surface spawn errors (e.g. ENOENT on the command).
   const spawnError = await new Promise<Error | null>((resolve) => {
-    child.once("error", (e) => resolve(e as Error));
+    let settled = false;
+    const settle = (err: Error | null) => {
+      if (settled) return;
+      settled = true;
+      // Clear the race timer and the exit listener so a
+      // process that exits cleanly before the 50ms timer
+      // fires doesn't leave a dangling timer (each pending
+      // MCP call would otherwise leave a live timer alive
+      // for the full 50ms).
+      clearTimeout(exitTimer);
+      child.off("exit", onExit);
+      resolve(err);
+    };
+    child.once("error", (e) => settle(e as Error));
     // If the spawn "succeeds" (process object created), we get
     // an `exit` event later if the command isn't found. We use a
     // short timer to detect ENOENT-style errors that fire as
     // exit events with non-zero codes.
     const onExit = (code: number | null) => {
       if (code !== 0 && code !== null) {
-        resolve(new Error(
+        settle(new Error(
           command + " exited with code " + code +
           " before handshake (stderr: " + stderrBuf.trim().slice(0, 500) + ")",
         ));
@@ -250,11 +263,9 @@ export async function connectStdio(opts: StdioConnectOpts): Promise<McpClient> {
     child.once("exit", onExit);
     // Race: if the process emits an `error` event we resolve with
     // that; if it exits non-zero before the handshake starts we
-    // also resolve.
-    setTimeout(() => {
-      child.off("exit", onExit);
-      resolve(null);
-    }, 50);
+    // also resolve. Tracked as `exitTimer` so the settle() path
+    // can cancel it.
+    const exitTimer = setTimeout(() => settle(null), 50);
   });
   if (spawnError) {
     try { child.kill("SIGKILL"); } catch { /* ignore */ }

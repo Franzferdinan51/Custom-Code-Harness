@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -228,6 +228,30 @@ test("loadOrBuildIndex writes the cache on a miss and reuses it on a subsequent 
     for (let i = 0; i < a.index.size; i++) {
       // Both indices iterate in the same insertion order.
     }
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("loadOrBuildIndex does not leak .tmp files next to the cache", async () => {
+  // Regression for the 2026-07-12 fix: the atomic write
+  // created `diskPath + ".tmp-<pid>"` for the write, but on
+  // rename failure the tmp was never unlinked. After many
+  // crash/restore cycles the memory dir would accumulate
+  // `MEMORY.embeddings.json.tmp-12345` orphans.
+  const tmp = makeTmp();
+  try {
+    const sources = [
+      { docId: "5", line: 5, text: "alpha beta gamma" },
+    ];
+    // First call: write happens. On success, no .tmp-*
+    // should remain next to the cache file.
+    await loadOrBuildIndex(sources);
+    const cacheDir = join(tmp, "memory");
+    const tmpFiles = readdirSync(cacheDir).filter((n) => n.includes(".tmp-"));
+    assert.deepEqual(
+      tmpFiles,
+      [],
+      `expected no .tmp- orphans next to the cache, found: ${tmpFiles.join(", ")}`
+    );
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 

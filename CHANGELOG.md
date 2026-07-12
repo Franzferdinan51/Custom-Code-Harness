@@ -2799,6 +2799,43 @@ typecheck` clean. (The +3 from this commit: CronStore
 atomic-write test, saveSettings atomic-write test,
 Grok 4.5 trio test.)
 
+### Memory-vector + supervisor + MCP-client atomicity & timer leak
+
+Three follow-up fixes from the 2026-07-12 audit.
+
+1. **`memory-vector.ts:406` atomic write leaked `.tmp-` orphans.**
+   The embeddings-cache write created
+   `diskPath + ".tmp-" + process.pid` for the write, but on
+   `renameSync` failure the tmp was never unlinked. After many
+   crash/restore cycles the memory dir would accumulate
+   `MEMORY.embeddings.json.tmp-12345` siblings. Same family as
+   the writeTool / editTool / CronStore / saveSettings / etc.
+   fixes — catch the rename, unlink the tmp, and (in the
+   cross-device fallback path) swallow the rename error so the
+   direct-write fallback is the source of truth.
+
+2. **`localpi/runtime/supervisor.ts:71` wrote `server.json`
+   non-atomically.** A direct `writeFile(metadataPath(stateDir),
+   ...)` could leave a half-written metadata file on crash. The
+   next `readActiveMetadata()` would fail to parse and silently
+   return `undefined` — the supervisor would then spawn a new
+   server while the previous one kept running as a zombie (the
+   OS still had the pid, the harness no longer had the handle).
+   Same tmp+rename pattern as CronStore.
+
+3. **`mcp-client.ts:248` 50ms race timer was never cleared.**
+   The spawn-error probe scheduled a `setTimeout(..., 50)` and
+   only removed the *exit listener* on the timer body — the
+   timer itself stayed alive for the full 50ms even after the
+   process exited cleanly. Each pending MCP tool call left a
+   live timer; many concurrent calls piled them up. Refactored
+   to a single `settle()` that clears the timer and the
+   listener on every exit path.
+
+823 pass / 0 fail across 53 files; `npm run
+typecheck` clean. (The +1 from this commit: the
+memory-vector tmp-leak regression test.)
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

@@ -43,7 +43,8 @@
 // cache valid across appends).
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { paths } from "../config/paths.js";
 import { log } from "../util/logger.js";
@@ -405,13 +406,20 @@ export async function loadOrBuildIndex(
   if (misses > 0) {
     try {
       mkdirSync(paths.memory, { recursive: true });
-      const tmp = diskPath + ".tmp-" + process.pid;
-      writeFileSync(tmp, JSON.stringify(cache), "utf-8");
+      const tmp = diskPath + "." + randomBytes(4).toString("hex") + ".tmp";
       try {
+        writeFileSync(tmp, JSON.stringify(cache), "utf-8");
         renameSync(tmp, diskPath);
-      } catch {
-        // Cross-device fallback: best-effort direct write.
-        writeFileSync(diskPath, JSON.stringify(cache), "utf-8");
+      } catch (renameErr) {
+        // Cross-device fallback: best-effort direct write, then
+        // unlink the leftover `.tmp` so the memory dir stays
+        // clean. (Pre-fix: the tmp leaked next to diskPath when
+        // rename failed.)
+        try { writeFileSync(diskPath, JSON.stringify(cache), "utf-8"); } catch { /* best-effort */ }
+        try { unlinkSync(tmp); } catch { /* best-effort */ }
+        // Swallow the rename error — the direct-write fallback is
+        // the source of truth.
+        void renameErr;
       }
     } catch (e) {
       log.warn("vector: failed to write embeddings cache", e);

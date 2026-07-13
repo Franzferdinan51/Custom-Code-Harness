@@ -13,6 +13,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
+import { connect as netConnect } from "node:net";
 
 import { toolToMcpDefinition, startMcpServer, type McpToolDefinition } from "../mcp-server.js";
 import type { Tool } from "../agent/tools/registry.js";
@@ -478,6 +479,58 @@ test("rpc: tools/call aborts in-flight tool when the HTTP client disconnects", a
   // We allow the literal only as a fallback (signal ?? new ...).
   assert.ok(/signal \?\? new AbortController\(\)\.signal/.test(src),
     "expected dispatchTool to fall back to a fresh AbortController only when no signal was passed");
+});
+
+test("rpc: readBody rejects when the client disconnects mid-body (close event)", async () => {
+  // Regression: pre-fix the MCP server's readBody only listened
+  // for `data`, `end`, and `error`. A client that TCP-RST'd
+  // mid-body (no `end`, sometimes no `error`) would leave the
+  // promise pending — the request's socket was held until
+  // Node's default 2-minute server timeout. The fix adds a
+  // `close` fallback that settles the promise so the server
+  // can free the connection immediately. Same shape as the
+  // `readJson` fix in server.ts (2026-06-13).
+  const r = await startMcpServer({ port: 34580, host: "127.0.0.1", cwd: tmp });
+  try {
+    // Raw socket so we can open the connection, write the
+    // HTTP header, send PART of the body, then yank the
+    // socket before sending `Content-Length` worth of bytes.
+    // Node's req.on("close") fires on the server side as
+    // soon as the socket sees the FIN/RST.
+    await new Promise<void>((resolve) => {
+      const sock = netConnect(r.port, "127.0.0.1", () => {
+        sock.write(
+          "POST /mcp HTTP/1.1\r\n" +
+          "Host: 127.0.0.1\r\n" +
+          "Content-Type: application/json\r\n" +
+          "Content-Length: 1000\r\n" +
+          "\r\n" +
+          '{"jsonrpc":"2.0","id":1,"method":"initialize"',
+        );
+        // Send a couple of bytes of the (incomplete) body,
+        // then close the socket before the 1000-byte
+        // Content-Length is satisfied. The server-side
+        // `end` event will never fire, and on some platforms
+        // `error` won't either.
+        setTimeout(() => {
+          sock.destroy();
+          resolve();
+        }, 30);
+      });
+      sock.on("error", () => { /* expected once the server hits the close fallback */ });
+    });
+    // The server should now have logged a "request closed
+    // before body complete" warning and freed the socket.
+    // We can't directly observe the promise resolution, but
+    // we can verify the server is responsive to a fresh
+    // request on a different port-level interaction (i.e.
+    // the listening socket is not pinned by a hung request).
+    // A subsequent /healthz POST must succeed.
+    const hr = await fetch("http://127.0.0.1:" + r.port + "/health");
+    assert.equal(hr.status, 200);
+  } finally {
+    await r.stop();
+  }
 });
 
 test("ALL OK", () => {

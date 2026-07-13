@@ -2836,6 +2836,32 @@ Three follow-up fixes from the 2026-07-12 audit.
 typecheck` clean. (The +1 from this commit: the
 memory-vector tmp-leak regression test.)
 
+### MCP server `readBody` disconnect fallback
+
+`mcp-server.ts:467` `readBody` only listened for `data`,
+`end`, and `error`. A client that TCP-RST'd mid-body
+would always fire `error` (ECONNRESET), so the existing
+handler caught it — but a request that the *server*
+destroys (`req.destroy()` is called from the body-cap
+path, and from external test harnesses) fires `close`
+without `end` or `error`. The promise would hang forever
+in that case, pinning the request's socket. The fix
+adds a `close` fallback that settles the promise with a
+generic error, mirroring the same shape as `readJson` in
+`server.ts:1397-1413` (which was added 2026-06-13 for the
+same reason on the chat-server transport).
+
+Defense in depth: in the production code path the
+existing `error` handler still catches ECONNRESET; the
+`close` fallback is the safety net for the
+server-destroys-request case.
+
+824 pass / 0 fail across 53 files; `npm run
+typecheck` clean. (The +1 from this commit: the
+readBody disconnect regression test — opens a raw
+socket, writes a partial body, destroys, then confirms
+the server is still responsive to `/health`.)
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

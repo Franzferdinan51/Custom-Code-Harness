@@ -468,17 +468,33 @@ function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    let settled = false;
+    const settle = (err?: Error, body?: string) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err); else resolve(body!);
+    };
     req.on("data", (c: Buffer) => {
       total += c.length;
       if (total > MAX_BODY_BYTES) {
-        reject(new Error("body too large"));
+        settle(new Error("body too large"));
         req.destroy();
         return;
       }
       chunks.push(c);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-    req.on("error", (e) => reject(e));
+    req.on("end", () => settle(undefined, Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", (e) => settle(e));
+    // Fallback: a client disconnect mid-body (TCP RST / TLS
+    // close) fires `close` without `end` or `error`. Without
+    // this, the promise would hang forever and pin the
+    // request's socket until Node's default server timeout
+    // (2 minutes). Same fix shape as `readJson` in
+    // `server.ts:1397-1413`. (The pre-fix version was a
+    // straight copy of the Node docs example — fine for
+    // well-behaved clients, broken for hostile / flaky
+    // networks.)
+    req.on("close", () => settle(new Error("request closed before body complete")));
   });
 }
 

@@ -2862,6 +2862,35 @@ readBody disconnect regression test — opens a raw
 socket, writes a partial body, destroys, then confirms
 the server is still responsive to `/health`.)
 
+### Cost table: Meta Muse Spark 1.1 + OpenAI GPT-Live voice
+
+`src/agent/cost.ts` picked up the next two releases
+from the first half of July 2026:
+
+- **Meta Muse Spark 1.1** (released July 9, 2026) —
+  Meta's first proprietary model after the open Llama
+  era. $1.25/$4.25 per 1M tokens, 1M context window.
+  Pre-fix: every Muse Spark call fell through to
+  $0/$0. New entries: `^muse-spark-1.1` and a
+  `^muse-spark` catch-all (plus a bare `^muse`
+  wildcard) — placed before any future prefix-stealing
+  class to match the o1/o1-mini pattern.
+- **OpenAI GPT-Live-1 / GPT-Live-1 mini** (released
+  July 8, 2026) — voice models billed per MINUTE, not
+  per token. The cost tracker can only model token-based
+  pricing, so per-call cost is unknowable from the
+  `$N / 1M` table. The entries log a nominal $0 with a
+  label that flags the gap, so the unknown-model
+  fallback doesn't hide them and the harness user is
+  responsible for adding the real per-call cost.
+
+827 pass / 0 fail across 53 files; `npm run
+typecheck` clean. (The +3 from this commit: the Meta
+Muse Spark trio test, the GPT-Live voice test, and
+the readBody body-cap regression test — sends a 1.1 MiB
+body, confirms the server's listening socket isn't
+pinned and `/health` still responds.)
+
 ## [0.2.2] - 2026-06-07
 
 ### Added

@@ -533,6 +533,48 @@ test("rpc: readBody rejects when the client disconnects mid-body (close event)",
   }
 });
 
+test("rpc: readBody rejects bodies > MAX_BODY_BYTES and the server stays responsive", async () => {
+  // The MCP server enforces a hard cap (1 MiB) on POST
+  // bodies via readBody. Pre-fix: a 1.1 MiB body would have
+  // OOM'd the server (the cap is checked AFTER the data
+  // event, but a single oversized chunk could still
+  // exceed the V8 heap). Post-fix: the data handler
+  // rejects immediately and destroys the request, so the
+  // socket is freed and the server can keep serving. The
+  // client sees an ECONNRESET (no structured 413 — see the
+  // doc comment in readBody) but the important property
+  // is that the *server* isn't pinned by the oversized
+  // body and the next request succeeds.
+  const r = await startMcpServer({ port: 34581, host: "127.0.0.1", cwd: tmp });
+  try {
+    // 1.1 MiB body — exceeds the 1 MiB cap.
+    const oversized = "x".repeat(1_100_000);
+    const body = JSON.stringify({ oversized });
+    await new Promise<void>((resolve) => {
+      const req = httpRequest({
+        hostname: "127.0.0.1", port: r.port, path: "/mcp", method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+      }, (res) => {
+        // Drain the response to free the socket.
+        res.on("data", () => {});
+        res.on("end", () => resolve());
+        res.on("close", () => resolve());
+      });
+      req.on("error", () => resolve());
+      req.write(body);
+      req.end();
+    });
+    // The server should still be responsive after rejecting
+    // the oversized body. A subsequent /health GET must
+    // succeed (proving the listening socket wasn't pinned
+    // by the oversized POST).
+    const hr = await fetch("http://127.0.0.1:" + r.port + "/health");
+    assert.equal(hr.status, 200);
+  } finally {
+    await r.stop();
+  }
+});
+
 test("ALL OK", () => {
   // Cleanup the temp dir.
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }

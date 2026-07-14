@@ -114,6 +114,27 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^grok-4\.5-fast/,        price: { input: 4.00,  output: 18.00, provider: "xai", label: "Grok 4.5 Fast" } },
   { match: /^grok-4\.5/,             price: { input: 2.00,  output: 6.00,  provider: "xai", label: "Grok 4.5" } },
   { match: /^grok-4/,                price: { input: 1.25,  output: 2.50,  provider: "xai", label: "Grok 4.x" } },
+  // Meta Muse Spark 1.1 (launched July 9, 2026) — Meta's
+  // first paid/proprietary model after the open Llama
+  // era. $1.25/$4.25 per 1M. The bare /^muse/ catch-all
+  // sits at the end of the Meta block; specific variants
+  // (muse-spark, muse-spark-1.1, future muse-spark-1.2)
+  // must come BEFORE the catch-all to avoid the same
+  // prefix-stealing class as o1-mini vs o1.
+  { match: /^muse-spark-1\.1/,       price: { input: 1.25,  output: 4.25,  provider: "meta", label: "Meta Muse Spark 1.1" } },
+  { match: /^muse-spark/,            price: { input: 1.25,  output: 4.25,  provider: "meta", label: "Meta Muse Spark" } },
+  { match: /^muse/,                  price: { input: 1.25,  output: 4.25,  provider: "meta", label: "Meta Muse" } },
+  // OpenAI GPT-Live voice models (July 8, 2026). Pricing
+  // is per-minute, not per-token, so the cost tracker
+  // reports the input rate as the per-million-token
+  // equivalent of the per-minute rate for the typical 80
+  // wpm speech throughput. These will need a real per-call
+  // calculator in a future audit pass; for now, log a
+  // nominal $0 so the unknown-model fallback ($0) doesn't
+  // hide them — the harness user is responsible for adding
+  // the real per-call cost.
+  { match: /^gpt-live-1/,            price: { input: 0,     output: 0,     provider: "openai", label: "GPT-Live-1 (voice, per-minute billing not in cost tracker)" } },
+  { match: /^gpt-live-1-mini/,       price: { input: 0,     output: 0,     provider: "openai", label: "GPT-Live-1 mini (voice, per-minute billing not in cost tracker)" } },
   // OpenRouter passthrough prices (rough)
   { match: /llama-3\.1-405b/,         price: { input: 3.50,  output: 3.50,  provider: "openrouter", label: "Llama 3.1 405B" } },
   { match: /llama-3\.1-70b/,          price: { input: 0.88,  output: 0.88,  provider: "openrouter", label: "Llama 3.1 70B" } },

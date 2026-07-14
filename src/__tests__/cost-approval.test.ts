@@ -213,6 +213,49 @@ test("priceFor: Grok 4.5 + Grok 4.5 Fast match (2026-07-08 launch — were under
   assert.equal(g43.label, "Grok 4.x");
 });
 
+test("priceFor: Meta Muse Spark 1.1 matches at $1.25/$4.25 (2026-07-09 launch — were $0/$0)", () => {
+  // Meta released Muse Spark 1.1 on July 9, 2026 — Meta's
+  // first proprietary model after the open Llama era.
+  // Pre-fix: no Meta entries existed, so every Muse Spark
+  // call fell through to the unknown-model fallback of
+  // $0/$0 — a real $1.25/$4.25 per 1M charge silently
+  // reported as free.
+  const ms11 = priceFor("muse-spark-1.1");
+  assert.equal(ms11.input, 1.25);
+  assert.equal(ms11.output, 4.25);
+  assert.equal(ms11.label, "Meta Muse Spark 1.1");
+  assert.equal(ms11.provider, "meta");
+
+  // Bare `muse-spark` (no version) — the catch-all covers
+  // future 1.x patches.
+  const ms = priceFor("muse-spark");
+  assert.equal(ms.input, 1.25);
+  assert.equal(ms.output, 4.25);
+
+  // Bare `muse` — covers any future Meta Muse model id.
+  const muse = priceFor("muse");
+  assert.equal(muse.input, 1.25);
+  assert.equal(muse.output, 4.25);
+});
+
+test("priceFor: GPT-Live-1 voice models log nominal $0 (per-minute billing not in cost tracker)", () => {
+  // OpenAI launched GPT-Live-1 and GPT-Live-1 mini on
+  // July 8, 2026. These are VOICE models billed per
+  // MINUTE, not per token — the cost tracker only knows
+  // about token-based pricing, so per-call cost is
+  // unknowable here. The convention is to log $0 (with
+  // a label that flags the gap) so the cost report
+  // shows the model name explicitly, and so the unknown-
+  // model fallback doesn't hide them.
+  const live1 = priceFor("gpt-live-1");
+  assert.equal(live1.input, 0);
+  assert.equal(live1.output, 0);
+  assert.equal(live1.label, "GPT-Live-1 (voice, per-minute billing not in cost tracker)");
+  const live1mini = priceFor("gpt-live-1-mini");
+  assert.equal(live1mini.input, 0);
+  assert.equal(live1mini.output, 0);
+});
+
 test("priceFor: GPT-4.1 and GPT-3.5 Turbo match (regression: were $0/$0)", () => {
   // Pre-fix: only `^gpt-4o`, `^gpt-4o-mini`, and `^gpt-4-turbo`
   // were listed. `^gpt-4.1*` and `^gpt-3.5-turbo` both fell

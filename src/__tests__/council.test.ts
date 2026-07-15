@@ -304,6 +304,43 @@ test("council: renderCouncilResult includes header + final", () => {
   assert.match(text, /ANSWER/);
 });
 
+test("council: renderCouncilResult pads the rule column correctly for round >= 10 (regression for column drift)", () => {
+  // Pre-fix the column-padding math was `60 - role.length - 12`,
+  // a hard-coded 12 that assumed a single-digit round number. For
+  // round 10+ the rendered `── <role> (round 10) <dashes>` line
+  // was 1 char shorter than the others (drifted right). The
+  // current code uses `60 - prefix.length` so the rule always
+  // extends to col 60 regardless of round number. This test
+  // pins the round-10+ case so a future regression is caught.
+  const r = {
+    final: "ANSWER",
+    transcript: [
+      // 3 transcript entries, two of which are round 10. The
+      // long role name "synthesizer" + "(round 10)" prefix is
+      // 25 chars; the shorter "skeptic" + "(round 10)" is 20.
+      // Both should produce a rule of exactly 60 chars.
+      { round: 10, role: "skeptic" as CouncilorRole, content: "S1", usage: { inputTokens: 1, outputTokens: 1 } },
+      { round: 10, role: "synthesizer" as CouncilorRole, content: "S2", usage: { inputTokens: 1, outputTokens: 1 } },
+      { round: 1, role: "skeptic" as CouncilorRole, content: "S3", usage: { inputTokens: 1, outputTokens: 1 } },
+    ],
+    mode: "adversarial" as const,
+    usage: { inputTokens: 3, outputTokens: 3 },
+    durationMs: 12,
+  };
+  const text = renderCouncilResult(r);
+  const lines = text.split("\n");
+  // The rule lines are the ones that start with the box-drawing
+  // horizontal bar ──. Pin the round-10 lines to be exactly 60
+  // chars wide (matching the round-1 lines).
+  const ruleLines = lines.filter((l) => /^[─]/.test(l));
+  for (const rule of ruleLines) {
+    // The final-answer rule is 60 chars too (── final answer + dashes).
+    // The transcript rules and the final-answer rule should all be
+    // exactly 60 chars wide.
+    assert.equal(rule.length, 60, "rule line should be 60 chars wide: " + JSON.stringify(rule));
+  }
+});
+
 test("council: synthesizer is always the last entry", async () => {
   const deps = makeStubDeps({});
   const roster: Councilor[] = DEFAULT_COUNCIL_ROSTER.map((r) => BUILTIN_COUNCILORS[r]);

@@ -493,7 +493,13 @@ export function renderCouncilResult(r: CouncilResult): string {
     lines.push(t.content);
     lines.push("");
   }
-  lines.push("── final answer " + "─".repeat(48));
+  // Pin the final-answer rule to 60 chars wide (the same
+  // width as the per-councilor rules above). Pre-fix this was
+  // hard-coded to 48 dashes, producing a 64-char rule (16 for
+  // "── final answer " + 48 dashes) that drifted 4 chars
+  // right of the others. The same fix shape as the
+  // `Math.max(0, 60 - prefix.length)` per-line padding above.
+  lines.push("── final answer " + "─".repeat(60 - "── final answer ".length));
   lines.push(r.final);
   return lines.join("\n");
 }

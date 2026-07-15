@@ -5,6 +5,78 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: GPT-5.6 Luna Pro + Sol Pro + Terra Pro + Claude Opus 4.8 priced
+
+The cost table now has explicit entries for the
+`*-pro` variants of the GPT-5.6 family (released
+July 9, 2026 alongside the base Sol / Terra / Luna
+tiers). Per OpenAI's API page, the Pro variants are
+the SAME underlying model as their base counterpart
+served with `reasoning.mode = "pro"` — they are NOT
+separate, more-expensive models the way GPT-5.4 Pro
+and GPT-5.5 Pro are. Pricing is therefore identical
+to the base rate:
+
+- `gpt-5.6-sol-pro` — $5 / $30 (same as `gpt-5.6-sol`)
+- `gpt-5.6-terra-pro` — $2.50 / $15 (same as `gpt-5.6-terra`)
+- `gpt-5.6-luna-pro` — $1 / $6 (same as `gpt-5.6-luna`)
+
+The bare prefix patterns (`^gpt-5.6-sol`, `^gpt-5.6-terra`,
+`^gpt-5.6-luna`) would have matched the Pro variants at the
+correct price, but the new entries are what make the
+label distinct in the cost UI ("GPT-5.6 Sol Pro" instead
+of "GPT-5.6 Sol"). They sit ABOVE the corresponding
+`^gpt-5.6-sol` / `^gpt-5.6-terra` / `^gpt-5.6-luna` rows
+so the explicit Pro entry wins on first-match-wins
+iteration.
+
+Also added: an explicit test that pins `claude-opus-4-8`
+(released May 28, 2026) at $5 / $25. The bare
+`^claude-opus-4-` catch-all in the table already matched
+it correctly, but the test pins the regression — if
+someone ever splits the catch-all into per-version
+entries, the 4.8 row must still resolve at $5/$25.
+
+Four new tests in `src/__tests__/cost-approval.test.ts`
+(GPT-5.6 Luna Pro, GPT-5.6 Sol Pro + Terra Pro, Claude
+Opus 4.8).
+
+### `formatUSD`: thousands separator for amounts >= 1,000
+
+`formatUSD(1234567.89)` previously rendered as `"$1234567.89"`
+— hard to read for cumulative session totals that routinely
+pass $1k for long-running agents. The cost UI in the web
+panel sometimes surfaced 7+ digit strings. Fix: insert a
+comma every 3 digits above the 1k threshold. The output
+is locale-independent (we don't use `toLocaleString` —
+manual split-then-rejoin is cheaper and stable across
+locales) and the cost UI snapshot tests can pin the
+exact format. New test in
+`src/__tests__/cost-approval.test.ts` asserts on the
+exact comma placement for the boundary cases ($1,000.00,
+$1,234.56, $12,345.67, $1,234,567.89) and the negative
+case (-$12,345.67).
+
+### Council: `renderCouncilResult` final-answer rule now matches the per-councilor rule width
+
+`src/agent/council.ts:renderCouncilResult` rendered
+the final-answer horizontal rule as `── final answer `
++ 48 dashes = 64 chars wide. The per-councilor rules
+above it were 60 chars wide (the same `60 - prefix.length`
+shape used for round-10+ entries). The 4-char drift
+made the final-answer rule extend past the per-councilor
+column. Fix: derive the dash count from the actual
+prefix length (`60 - "── final answer ".length`) so
+the rule is exactly 60 chars wide. New test in
+`src/__tests__/council.test.ts` asserts on the
+60-char width for the transcript rules AND pins the
+round-10+ regression (a pre-existing fix at the
+per-councilor padding site — the new test catches a
+future regression on the same axis).
+
+827 → 832 pass / 0 fail across 53 files (+5 tests).
+`npm run typecheck` clean.
+
 ### Phase 4 T1 (D-WORKFLOW-IMPL) post-merge cleanups
 
 Three code-quality / correctness fixes that didn't make

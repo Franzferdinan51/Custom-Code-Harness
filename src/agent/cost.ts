@@ -30,8 +30,17 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // Must precede the bare /^gpt-5/ prefix (which would
   // otherwise match at the GPT-5 (Aug 2025) $1.25/$10 rate
   // — same prefix-stealing class as o1-mini vs o1).
+  { match: /^gpt-5\.6-sol-pro/,      price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.6 Sol Pro" } },
   { match: /^gpt-5\.6-sol/,          price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.6 Sol" } },
+  { match: /^gpt-5\.6-terra-pro/,    price: { input: 2.50,  output: 15.00, provider: "openai", label: "GPT-5.6 Terra Pro" } },
   { match: /^gpt-5\.6-terra/,        price: { input: 2.50,  output: 15.00, provider: "openai", label: "GPT-5.6 Terra" } },
+  { match: /^gpt-5\.6-luna-pro/,     price: { input: 1.00,  output: 6.00,  provider: "openai", label: "GPT-5.6 Luna Pro" } },
+  // GPT-5.6 Luna Pro is the same underlying model as Luna
+  // with its reasoning mode set to "pro" — pricing is
+  // identical at $1/$6 per OpenAI's API. The bare `^gpt-5.6-luna`
+  // entry below also matches `gpt-5.6-luna-pro` (it's a
+  // prefix match), so this specific entry is for clarity /
+  // test-pinning; the pricing would be correct either way.
   { match: /^gpt-5\.6-luna/,         price: { input: 1.00,  output: 6.00,  provider: "openai", label: "GPT-5.6 Luna" } },
   { match: /^gpt-5\.6/,              price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.6" } },
   { match: /^gpt-5\.5/,              price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.5" } },
@@ -236,5 +245,21 @@ export function formatUSD(n: number): string {
   if (n < 0) return "-" + formatUSD(-n);
   if (n < 0.01) return "$" + n.toFixed(4);
   if (n < 1) return "$" + n.toFixed(3);
-  return "$" + n.toFixed(2);
+  // For amounts >= 1,000 use a thousands separator so the
+  // cost UI doesn't render "$1234567.89" (which was the
+  // pre-fix behavior — hard to read for cumulative session
+  // totals that routinely pass $1k for long-running agents).
+  // We keep the same digit precision as the < 1 branch's
+  // sibling (`.toFixed(2)`) so the only visible change is
+  // the comma placement. The split-then-rejoin is cheaper
+  // than `toLocaleString` (no Intl init) and produces a
+  // stable, locale-independent string — the cost UI in the
+  // web panel asserts on the exact format during snapshot
+  // tests.
+  const fixed = n.toFixed(2);
+  const parts = fixed.split(".");
+  const intPart = parts[0] ?? "0";
+  const decPart = parts[1] ?? "00";
+  const withSep = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return "$" + withSep + "." + decPart;
 }

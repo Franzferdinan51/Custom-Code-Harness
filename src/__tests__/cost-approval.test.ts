@@ -171,6 +171,83 @@ test("priceFor: GPT-5.6 Sol/Terra/Luna match (2026-07-09 launch — were missing
   assert.equal(gpt56luna.label, "GPT-5.6 Luna");
 });
 
+test("priceFor: GPT-5.6 Luna Pro matches at $1/$6 (2026-07-09 launch — same as Luna, distinct label)", () => {
+  // OpenAI shipped GPT-5.6 Luna Pro on July 9, 2026 — same
+  // underlying Luna model with its reasoning mode set to
+  // "pro" (slower but more thorough). Pricing is identical
+  // to base Luna at $1/$6 per OpenAI's API page. The
+  // `^gpt-5.6-luna` prefix pattern below it would match
+  // `gpt-5.6-luna-pro` anyway, but the explicit entry
+  // is what makes the label distinct in the cost UI (so a
+  // user can tell which variant they actually ran).
+  const gpt56lunapro = priceFor("gpt-5.6-luna-pro");
+  assert.equal(gpt56lunapro.input, 1, "Luna Pro input should be $1 (same as Luna)");
+  assert.equal(gpt56lunapro.output, 6, "Luna Pro output should be $6 (same as Luna)");
+  assert.equal(gpt56lunapro.provider, "openai");
+  assert.equal(gpt56lunapro.label, "GPT-5.6 Luna Pro");
+
+  // callCost sanity check on the same model — 1M in / 1M out.
+  const c = callCost("gpt-5.6-luna-pro", 1_000_000, 1_000_000);
+  assert.ok(Math.abs(c - 7.00) < 0.01, "1M/1M Luna Pro should cost $7, got " + c);
+});
+
+test("priceFor: GPT-5.6 Sol Pro + Terra Pro match the same rate as their base models", () => {
+  // Unlike GPT-5.4 Pro and GPT-5.5 Pro (which are separate,
+  // far more expensive models), the GPT-5.6 Pro variants
+  // (Sol Pro, Terra Pro) are the SAME underlying model as
+  // their base counterpart, served with reasoning.mode
+  // set to "pro". Pricing is identical to the base
+  // ($5/$30 for Sol, $2.50/$15 for Terra). The
+  // explicit `^gpt-5.6-sol-pro` / `^gpt-5.6-terra-pro`
+  // entries exist primarily for label clarity in the
+  // cost UI — without them, the labels would show
+  // "GPT-5.6 Sol" / "GPT-5.6 Terra" for the Pro variants
+  // (the prefix patterns match the same price but produce
+  // the base label).
+  const solPro = priceFor("gpt-5.6-sol-pro");
+  assert.equal(solPro.input, 5, "Sol Pro should be $5 in (same as Sol)");
+  assert.equal(solPro.output, 30, "Sol Pro should be $30 out (same as Sol)");
+  assert.equal(solPro.label, "GPT-5.6 Sol Pro");
+
+  const terraPro = priceFor("gpt-5.6-terra-pro");
+  assert.equal(terraPro.input, 2.50, "Terra Pro should be $2.50 in (same as Terra)");
+  assert.equal(terraPro.output, 15, "Terra Pro should be $15 out (same as Terra)");
+  assert.equal(terraPro.label, "GPT-5.6 Terra Pro");
+
+  // callCost sanity check.
+  assert.ok(Math.abs(callCost("gpt-5.6-sol-pro", 1_000_000, 1_000_000) - 35.00) < 0.01);
+  assert.ok(Math.abs(callCost("gpt-5.6-terra-pro", 1_000_000, 1_000_000) - 17.50) < 0.01);
+});
+
+test("priceFor: Claude Opus 4.8 matches at $5/$25 (2026-05-28 launch — caught by ^claude-opus-4- catch-all)", () => {
+  // Anthropic released Claude Opus 4.8 on May 28, 2026 at
+  // the same $5/$25 token rate as 4.7 (with new effort
+  // controls and adaptive thinking). The bare `^claude-opus-4-`
+  // catch-all in the cost table matches the whole 4.x line
+  // at $5/$25, so Opus 4.8 is correctly priced automatically.
+  // This test pins the regression — if someone ever splits
+  // the catch-all into per-version entries, the 4.8 row
+  // must still resolve at $5/$25.
+  const opus48 = priceFor("claude-opus-4-8");
+  assert.equal(opus48.input, 5);
+  assert.equal(opus48.output, 25);
+  assert.equal(opus48.provider, "anthropic");
+  assert.equal(opus48.label, "Claude Opus 4.x");
+
+  // Older 4.7 and 4.6 still match the same catch-all.
+  assert.equal(priceFor("claude-opus-4-7").input, 5);
+  assert.equal(priceFor("claude-opus-4-6").input, 5);
+
+  // Legacy 3.0 is preserved at its old price.
+  const opus3 = priceFor("claude-3-opus-20240229");
+  assert.equal(opus3.input, 15);
+  assert.equal(opus3.output, 75);
+
+  // callCost sanity check — 1M in / 1M out is $30.
+  const c = callCost("claude-opus-4-8", 1_000_000, 1_000_000);
+  assert.ok(Math.abs(c - 30.00) < 0.01, "1M/1M Opus 4.8 should cost $30, got " + c);
+});
+
 test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $0/$0)", () => {
   // Anthropic launched the Mythos-class models on June 9,
   // 2026: claude-fable-5 (public, with safety classifiers)
@@ -333,6 +410,28 @@ test("formatUSD: small amounts show 4 decimals", () => {
   assert.equal(formatUSD(0.5), "$0.500");
   assert.equal(formatUSD(1.5), "$1.50");
   assert.equal(formatUSD(123.45), "$123.45");
+});
+
+test("formatUSD: amounts >= 1000 render with a thousands separator", () => {
+  // Pre-fix: formatUSD(1234.56) returned "$1234.56" (no
+  // separator). For cumulative session totals that routinely
+  // pass $1k for long-running agents, the cost UI rendered
+  // strings like "$1234567.89" that were hard to read at a
+  // glance. The thousands-separator enhancement inserts a
+  // comma every 3 digits above the 1k threshold. The exact
+  // output is asserted on (locale-independent — we don't use
+  // toLocaleString) so the cost UI snapshot tests can pin
+  // the format.
+  assert.equal(formatUSD(1_000), "$1,000.00");
+  assert.equal(formatUSD(1_234.56), "$1,234.56");
+  assert.equal(formatUSD(12_345.67), "$12,345.67");
+  assert.equal(formatUSD(1_234_567.89), "$1,234,567.89");
+  // Edge cases: small amounts stay in the original branches
+  // (no separator) and exact thousands still get the comma.
+  assert.equal(formatUSD(999.99), "$999.99");
+  assert.equal(formatUSD(10_000), "$10,000.00");
+  // Negative + thousands separator stack correctly.
+  assert.equal(formatUSD(-12_345.67), "-$12,345.67");
 });
 
 test("formatUSD: zero renders as $0.00 (fresh-session cosmetic)", () => {

@@ -5,6 +5,71 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: Gemini family + KAT-Coder V2.5 priced (were $0/$0)
+
+The cost table picked up three model families that were
+completely missing before, with every call falling through
+to the unknown-model $0/$0 fallback (a real charge
+silently reported as free):
+
+1. **Google Gemini** (verified July 2026 per Google's
+   Gemini API page):
+   - `gemini-3.5-flash` — $1.50 / $9 (May 19, 2026)
+   - `gemini-3.1-pro` — $2 / $12 (Feb 19, 2026 GA; the
+     3.1 Pro label flags the long-context tier
+     $4/$18 above 200K — the cost tracker only models
+     the standard rate, so 200K+ calls are under-charged
+     and the user must adjust)
+   - `gemini-3.1-flash-lite` — $0.25 / $1.50
+   - `gemini-3-flash` — $0.50 / $3 (preview)
+   - `gemini-2.5-pro` — $1.25 / $10
+   - `gemini-2.5-flash` — $0.30 / $2.50
+   - `gemini-2.5-flash-lite` — $0.10 / $0.40 (cheapest
+     current Gemini tier)
+
+2. **Kwaipilot KAT-Coder V2.5** (Kuaishou, released
+   July 10, 2026 — coding-focused agentic models):
+   - `kwaipilot/kat-coder-pro-v2.5` — $0.74 / $2.96
+   - `kwaipilot/kat-coder-air-v2.5` — $0.15 / $0.60
+   (roughly a fifth of Pro's rate; bare `kat-coder-*`
+   patterns cover the unprefixed model id form).
+
+3. **Prefix-ordering fix**: `^gemini-2.5-flash` would
+   have stolen the `gemini-2.5-flash-lite` match
+   (`flash-lite` starts with `flash`), so the Lite
+   entry is now placed BEFORE the bare `flash` entry.
+   Same prefix-stealing class as the long-standing
+   o1-mini vs o1 / gpt-5.6 vs gpt-5 / muse-spark
+   rules.
+
+Two new tests in `src/__tests__/cost-approval.test.ts`
+pin the Gemini family and the KAT-Coder V2.5 pricing.
+
+### Trajectory: redaction covers Groq / Perplexity / NVIDIA NIM keys
+
+`src/agent/trajectory.ts:139` `SECRET_RE` previously
+covered the major API providers (OpenAI `sk-`,
+Anthropic `sk-ant-`, xAI `xai-`, GitHub `ghp_` /
+`github_pat_`, AWS `AKIA`, Google `AIza`, and PEM
+private keys) but missed three increasingly-common
+key prefixes:
+
+- `gsk-` (Groq)
+- `pplx-` (Perplexity)
+- `nvapi-` (NVIDIA NIM / NGC)
+
+A session that pasted any of these into a user
+message and then exported in `share` format would
+have leaked the key verbatim — defeating the entire
+purpose of the redaction step. Fix: extend the
+regex to match all three with the same `20+` char
+shape as the other prefixes. The new test in
+`src/__tests__/trajectory.test.ts` pins the
+redaction for each prefix.
+
+832 → 835 pass / 0 fail across 53 files (+3 tests).
+`npm run typecheck` clean.
+
 ### Cost: GPT-5.6 Luna Pro + Sol Pro + Terra Pro + Claude Opus 4.8 priced
 
 The cost table now has explicit entries for the

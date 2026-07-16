@@ -144,6 +144,44 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // the real per-call cost.
   { match: /^gpt-live-1/,            price: { input: 0,     output: 0,     provider: "openai", label: "GPT-Live-1 (voice, per-minute billing not in cost tracker)" } },
   { match: /^gpt-live-1-mini/,       price: { input: 0,     output: 0,     provider: "openai", label: "GPT-Live-1 mini (voice, per-minute billing not in cost tracker)" } },
+  // Google Gemini family. More-specific patterns (3.5-flash,
+  // 3.1-pro, 3.1-flash-lite, 2.5-flash-lite) must come BEFORE
+  // the bare /^gemini-/ catch-all to avoid the same
+  // prefix-stealing class as o1-mini vs o1. Pre-fix: no
+  // Gemini entries existed at all, so every Gemini call fell
+  // through to the unknown-model $0/$0 fallback (a real
+  // $2/$12 charge on 3.1 Pro silently reported as free).
+  // Pricing per Google's Gemini API page (verified July 2026).
+  // Note: Gemini 3.1 Pro has a context-tiered rate ($2/$12
+  // up to 200K, $4/$18 above 200K). The cost tracker only
+  // models the standard rate; long-context requests are
+  // under-charged — call out in the label so the user can
+  // adjust if needed.
+  { match: /^gemini-3\.5-flash/,     price: { input: 1.50,  output: 9.00,  provider: "google", label: "Gemini 3.5 Flash" } },
+  { match: /^gemini-3\.1-pro/,       price: { input: 2.00,  output: 12.00, provider: "google", label: "Gemini 3.1 Pro (≤200K context; long-context tier $4/$18 not modeled)" } },
+  { match: /^gemini-3\.1-flash-lite/,price: { input: 0.25,  output: 1.50,  provider: "google", label: "Gemini 3.1 Flash-Lite" } },
+  { match: /^gemini-3-flash/,        price: { input: 0.50,  output: 3.00,  provider: "google", label: "Gemini 3 Flash" } },
+  { match: /^gemini-2\.5-pro/,       price: { input: 1.25,  output: 10.00, provider: "google", label: "Gemini 2.5 Pro" } },
+  { match: /^gemini-2\.5-flash-lite/,price: { input: 0.10,  output: 0.40,  provider: "google", label: "Gemini 2.5 Flash-Lite" } },
+  { match: /^gemini-2\.5-flash/,     price: { input: 0.30,  output: 2.50,  provider: "google", label: "Gemini 2.5 Flash" } },
+  { match: /^gemini-3/,              price: { input: 1.50,  output: 9.00,  provider: "google", label: "Gemini 3.x (unknown tier)" } },
+  { match: /^gemini-2/,              price: { input: 0.30,  output: 2.50,  provider: "google", label: "Gemini 2.x (unknown tier)" } },
+  { match: /^gemini/,                price: { input: 1.50,  output: 9.00,  provider: "google", label: "Gemini (unknown tier)" } },
+  // Kwaipilot KAT-Coder V2.5 family (released July 10, 2026).
+  // Kuaishou's coding-focused agentic models. V2.5 supersedes
+  // V2 (which was $0.30/$1.20). Two tiers: Pro at $0.74/$2.96
+  // and Air at $0.15/$0.60. Pre-fix: no KAT-Coder entries
+  // existed, so every call fell through to the unknown-model
+  // $0/$0 fallback. Specific patterns (pro, air) must come
+  // BEFORE the bare /^kwaipilot\// or /^kat-coder/ catch-all.
+  { match: /^kwaipilot\/kat-coder-pro-v2\.5/,  price: { input: 0.74,  output: 2.96,  provider: "kwaipilot", label: "KAT-Coder Pro V2.5" } },
+  { match: /^kwaipilot\/kat-coder-air-v2\.5/,  price: { input: 0.15,  output: 0.60,  provider: "kwaipilot", label: "KAT-Coder Air V2.5" } },
+  { match: /^kwaipilot\/kat-coder-pro/,        price: { input: 0.74,  output: 2.96,  provider: "kwaipilot", label: "KAT-Coder Pro" } },
+  { match: /^kwaipilot\/kat-coder-air/,        price: { input: 0.15,  output: 0.60,  provider: "kwaipilot", label: "KAT-Coder Air" } },
+  { match: /^kwaipilot\/kat-coder/,            price: { input: 0.30,  output: 1.20,  provider: "kwaipilot", label: "KAT-Coder (unknown tier)" } },
+  { match: /^kat-coder-pro/,                   price: { input: 0.74,  output: 2.96,  provider: "kwaipilot", label: "KAT-Coder Pro" } },
+  { match: /^kat-coder-air/,                   price: { input: 0.15,  output: 0.60,  provider: "kwaipilot", label: "KAT-Coder Air" } },
+  { match: /^kat-coder/,                       price: { input: 0.30,  output: 1.20,  provider: "kwaipilot", label: "KAT-Coder (unknown tier)" } },
   // OpenRouter passthrough prices (rough)
   { match: /llama-3\.1-405b/,         price: { input: 3.50,  output: 3.50,  provider: "openrouter", label: "Llama 3.1 405B" } },
   { match: /llama-3\.1-70b/,          price: { input: 0.88,  output: 0.88,  provider: "openrouter", label: "Llama 3.1 70B" } },

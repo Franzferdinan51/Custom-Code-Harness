@@ -248,6 +248,101 @@ test("priceFor: Claude Opus 4.8 matches at $5/$25 (2026-05-28 launch — caught 
   assert.ok(Math.abs(c - 30.00) < 0.01, "1M/1M Opus 4.8 should cost $30, got " + c);
 });
 
+test("priceFor: Gemini family — 3.5 Flash / 3.1 Pro / 3.1 Flash-Lite / 2.5 line match (were $0/$0)", () => {
+  // The Gemini family was completely absent from the cost
+  // table before 2026-07-16, so every Gemini call fell
+  // through to the unknown-model $0/$0 fallback — a real
+  // $2/$12 charge on Gemini 3.1 Pro silently reported as
+  // free. New entries (per Google's Gemini API page, verified
+  // July 2026) cover the current GA lineup:
+  //   gemini-3.5-flash       $1.50 / $9    (May 19, 2026)
+  //   gemini-3.1-pro         $2.00 / $12   (Feb 19, 2026 GA)
+  //   gemini-3.1-flash-lite  $0.25 / $1.50
+  //   gemini-3-flash         $0.50 / $3    (preview)
+  //   gemini-2.5-pro         $1.25 / $10
+  //   gemini-2.5-flash       $0.30 / $2.50
+  //   gemini-2.5-flash-lite  $0.10 / $0.40
+  // The label for 3.1 Pro flags the long-context tier
+  // ($4/$18 above 200K) which the cost tracker does not
+  // model — the user must adjust for long-context calls.
+  const flash35 = priceFor("gemini-3.5-flash");
+  assert.equal(flash35.input, 1.5);
+  assert.equal(flash35.output, 9);
+  assert.equal(flash35.provider, "google");
+  assert.equal(flash35.label, "Gemini 3.5 Flash");
+
+  const pro31 = priceFor("gemini-3.1-pro");
+  assert.equal(pro31.input, 2);
+  assert.equal(pro31.output, 12);
+  assert.equal(pro31.provider, "google");
+  assert.match(pro31.label!, /3\.1 Pro/);
+  // Label should flag the long-context tier mismatch so the
+  // user is not surprised by an under-charge on a 300K+ call.
+  assert.match(pro31.label!, /long-context/);
+
+  const flashLite = priceFor("gemini-3.1-flash-lite");
+  assert.equal(flashLite.input, 0.25);
+  assert.equal(flashLite.output, 1.50);
+  assert.equal(flashLite.provider, "google");
+
+  const flash3 = priceFor("gemini-3-flash");
+  assert.equal(flash3.input, 0.50);
+  assert.equal(flash3.output, 3);
+
+  const pro25 = priceFor("gemini-2.5-pro");
+  assert.equal(pro25.input, 1.25);
+  assert.equal(pro25.output, 10);
+
+  const flash25 = priceFor("gemini-2.5-flash");
+  assert.equal(flash25.input, 0.30);
+  assert.equal(flash25.output, 2.50);
+
+  const flashLite25 = priceFor("gemini-2.5-flash-lite");
+  assert.equal(flashLite25.input, 0.10);
+  assert.equal(flashLite25.output, 0.40);
+
+  // callCost sanity check.
+  assert.ok(Math.abs(callCost("gemini-3.1-pro", 1_000_000, 1_000_000) - 14.00) < 0.01);
+  assert.ok(Math.abs(callCost("gemini-2.5-flash-lite", 1_000_000, 1_000_000) - 0.50) < 0.01);
+});
+
+test("priceFor: KAT-Coder V2.5 Pro + Air match (2026-07-10 launch — were $0/$0)", () => {
+  // Kuaishou's Kwaipilot released the KAT-Coder V2.5 family
+  // on July 10, 2026 as coding-focused agentic models. V2.5
+  // supersedes V2 ($0.30/$1.20) with two tiers:
+  //   kwaipilot/kat-coder-pro-v2.5   $0.74 / $2.96
+  //   kwaipilot/kat-coder-air-v2.5   $0.15 / $0.60
+  // Pre-fix: no KAT-Coder entries existed, so every call
+  // fell through to the unknown-model $0/$0 fallback.
+  // The `kwaipilot/`-prefixed model id is the canonical
+  // form (as served by OpenRouter / Vercel AI Gateway);
+  // the bare `kat-coder-*` patterns cover the unprefixed
+  // form for callers that strip the org.
+  const proV25 = priceFor("kwaipilot/kat-coder-pro-v2.5");
+  assert.equal(proV25.input, 0.74);
+  assert.equal(proV25.output, 2.96);
+  assert.equal(proV25.provider, "kwaipilot");
+  assert.equal(proV25.label, "KAT-Coder Pro V2.5");
+
+  const airV25 = priceFor("kwaipilot/kat-coder-air-v2.5");
+  assert.equal(airV25.input, 0.15);
+  assert.equal(airV25.output, 0.60);
+  assert.equal(airV25.provider, "kwaipilot");
+  assert.equal(airV25.label, "KAT-Coder Air V2.5");
+
+  // Unprefixed form (no `kwaipilot/` org).
+  const proBare = priceFor("kat-coder-pro");
+  assert.equal(proBare.input, 0.74);
+  assert.equal(proBare.output, 2.96);
+
+  const airBare = priceFor("kat-coder-air");
+  assert.equal(airBare.input, 0.15);
+  assert.equal(airBare.output, 0.60);
+
+  // callCost sanity check.
+  assert.ok(Math.abs(callCost("kwaipilot/kat-coder-air-v2.5", 1_000_000, 1_000_000) - 0.75) < 0.01);
+});
+
 test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $0/$0)", () => {
   // Anthropic launched the Mythos-class models on June 9,
   // 2026: claude-fable-5 (public, with safety classifiers)

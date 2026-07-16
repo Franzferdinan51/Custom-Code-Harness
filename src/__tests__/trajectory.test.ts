@@ -73,6 +73,46 @@ test("export: share format redacts API keys", async () => {
   }
 });
 
+test("export: share format redacts Groq / Perplexity / NVIDIA NIM API key prefixes", async () => {
+  // Pre-fix the SECRET_RE covered the major providers (OpenAI,
+  // Anthropic, xAI, GitHub, AWS, Google) but missed three
+  // increasingly-common keys: Groq's `gsk-` prefix, Perplexity's
+  // `pplx-` prefix, and NVIDIA NIM's `nvapi-` prefix. A
+  // session that pasted any of these into a user message
+  // and then exported in `share` format would have leaked
+  // the key verbatim. Fix: extend SECRET_RE to match all
+  // three with the same 20+ char shape. The test pins the
+  // redaction for each prefix so a future regression where
+  // the pattern is dropped is caught.
+  const cwd = freshDir();
+  try {
+    const s = await makeSession(cwd, "share-vendor-keys");
+    await s.append({
+      kind: "message",
+      message: {
+        role: "user",
+        // Each key is exactly 24+ chars after the prefix — matches
+        // the {20,} shape in SECRET_RE.
+        content:
+          "gsk-" + "A".repeat(24) +
+          " pplx-" + "B".repeat(24) +
+          " nvapi-" + "C".repeat(24),
+      },
+    });
+    const out = freshDir();
+    const r = await exportSession(s, { format: "share", outDir: out });
+    const content = readFileSync(r.path, "utf-8");
+    assert.ok(!content.includes("gsk-" + "A".repeat(24)), "gsk- key should be redacted");
+    assert.ok(!content.includes("pplx-" + "B".repeat(24)), "pplx- key should be redacted");
+    assert.ok(!content.includes("nvapi-" + "C".repeat(24)), "nvapi- key should be redacted");
+    // All three should be replaced with the [REDACTED] marker.
+    const redactions = content.match(/\[REDACTED\]/g) ?? [];
+    assert.ok(redactions.length >= 3, "expected at least 3 redactions, got " + redactions.length);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("export: share format replaces absolute cwd paths with relative", async () => {
   const cwd = freshDir();
   try {

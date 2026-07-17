@@ -109,9 +109,21 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // Legacy Claude 3 Opus (3.0) — keep for users still on the original
   // Opus model. The Anthropic 4.x line dropped the price to $5/$25.
   { match: /^claude-3-opus/,         price: { input: 15.00, output: 75.00, provider: "anthropic", label: "Claude 3 Opus" } },
-  // DeepSeek (OpenRouter-style)
-  { match: /^deepseek-chat/,         price: { input: 0.27,  output: 1.10,  provider: "deepseek", label: "DeepSeek Chat" } },
-  { match: /^deepseek-reasoner/,     price: { input: 0.55,  output: 2.19,  provider: "deepseek", label: "DeepSeek Reasoner" } },
+  // DeepSeek (OpenRouter-style). The V4 family (launched
+  // mid-July 2026) dropped the output price by ~50% relative
+  // to the older V3.x rate that `deepseek-chat` /
+  // `deepseek-reasoner` still use. More-specific V4 patterns
+  // (v4-pro, v4-flash, v4-base) must come BEFORE the
+  // bare `^deepseek/` catch-all to avoid the same
+  // prefix-stealing class as o1-mini vs o1. The older
+  // `deepseek-chat` / `deepseek-reasoner` entries are
+  // preserved at their V3.x rates for callers still on
+  // the V3 API.
+  { match: /^deepseek-v4-pro/,       price: { input: 0.435, output: 0.87,  provider: "deepseek", label: "DeepSeek V4 Pro (75% permanent price cut, June 2026)" } },
+  { match: /^deepseek-v4-flash/,     price: { input: 0.14,  output: 0.28,  provider: "deepseek", label: "DeepSeek V4 Flash (cheapest frontier-ish)" } },
+  { match: /^deepseek-v4/,           price: { input: 0.27,  output: 0.55,  provider: "deepseek", label: "DeepSeek V4 (1T base)" } },
+  { match: /^deepseek-chat/,         price: { input: 0.27,  output: 1.10,  provider: "deepseek", label: "DeepSeek Chat (V3.x)" } },
+  { match: /^deepseek-reasoner/,     price: { input: 0.55,  output: 2.19,  provider: "deepseek", label: "DeepSeek Reasoner (R1)" } },
   // xAI Grok — xAI launched Grok 4.5 on July 8, 2026 at
   // $2/$6 (and Grok 4.5 Fast at $4/$18). The bare /^grok-4/
   // catch-all was correct for the older 4.0/4.3 line at
@@ -182,6 +194,29 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^kat-coder-pro/,                   price: { input: 0.74,  output: 2.96,  provider: "kwaipilot", label: "KAT-Coder Pro" } },
   { match: /^kat-coder-air/,                   price: { input: 0.15,  output: 0.60,  provider: "kwaipilot", label: "KAT-Coder Air" } },
   { match: /^kat-coder/,                       price: { input: 0.30,  output: 1.20,  provider: "kwaipilot", label: "KAT-Coder (unknown tier)" } },
+  // Moonshot AI Kimi K3 (released July 16, 2026). 2.8T-
+  // parameter MoE with native vision, 1M context, $3 in /
+  // $15 out. The Moonshot API is OpenAI-SDK compatible;
+  // the canonical model id is `kimi-k3` (with the
+  // `moonshotai/` org prefix on OpenRouter). Pre-fix: no
+  // Kimi entries existed, so every call fell through to
+  // the unknown-model $0/$0 fallback.
+  { match: /^kimi-k3/,              price: { input: 3.00,  output: 15.00, provider: "moonshot", label: "Moonshot Kimi K3" } },
+  { match: /^moonshotai\/kimi-k3/,  price: { input: 3.00,  output: 15.00, provider: "moonshot", label: "Moonshot Kimi K3 (OpenRouter)" } },
+  { match: /^kimi/,                 price: { input: 0.95,  output: 4.00,  provider: "moonshot", label: "Moonshot Kimi (K2.6/K2.7 family; $0.95/$4)" } },
+  // Llama 4 family (Meta, released April 2025; latest
+  // pricing on OpenRouter / DeepInfra as of July 2026).
+  // Two tiers:
+  //   llama-4-maverick   $0.20 in / $0.80 out (400B total / 17B active, 1M ctx)
+  //   llama-4-scout      $0.11 in / $0.34 out (109B total / 17B active, 10M ctx)
+  // Pre-fix: only Llama 3.1 entries existed; Llama 4 calls
+  // fell through to the unknown-model fallback. More-specific
+  // patterns (maverick, scout) MUST come BEFORE the bare
+  // `^llama-4/` catch-all (same prefix-stealing class as
+  // o1-mini vs o1 / gpt-5.6 vs gpt-5).
+  { match: /^llama-4-maverick/,     price: { input: 0.20,  output: 0.80,  provider: "meta", label: "Llama 4 Maverick (400B / 17B active, 1M ctx)" } },
+  { match: /^llama-4-scout/,        price: { input: 0.11,  output: 0.34,  provider: "meta", label: "Llama 4 Scout (109B / 17B active, 10M ctx)" } },
+  { match: /^llama-4/,              price: { input: 0.20,  output: 0.80,  provider: "meta", label: "Llama 4 (unknown tier)" } },
   // OpenRouter passthrough prices (rough)
   { match: /llama-3\.1-405b/,         price: { input: 3.50,  output: 3.50,  provider: "openrouter", label: "Llama 3.1 405B" } },
   { match: /llama-3\.1-70b/,          price: { input: 0.88,  output: 0.88,  provider: "openrouter", label: "Llama 3.1 70B" } },

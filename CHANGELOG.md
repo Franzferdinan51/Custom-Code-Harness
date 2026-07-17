@@ -5,6 +5,48 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: DeepSeek V4 + Moonshot Kimi K3 + Llama 4 priced (were $0/$0)
+
+Three more missing model families picked up by the
+2026-07-17 cron pass:
+
+1. **DeepSeek V4 family** (mid-July 2026, permanent
+   75% price cut to Pro per DeepSeek's API page):
+   - `deepseek-v4-pro` — $0.435 / $0.87 (1.6T MoE / 49B active)
+   - `deepseek-v4-flash` — $0.14 / $0.28 (284B / 13B active; cheapest frontier-ish)
+   - `deepseek-v4` — $0.27 / $0.55 (1T base)
+
+   The older V3.x entries (`deepseek-chat` at $0.27/$1.10
+   and `deepseek-reasoner` at $0.55/$2.19) are preserved
+   for callers still on the V3 API. The V4-specific
+   patterns sit ABOVE the V3 catch-alls so first-match-
+   wins iteration picks the V4 rate; same prefix-stealing
+   class as o1-mini vs o1 / gpt-5.6 vs gpt-5.
+
+2. **Moonshot Kimi K3** (released July 16, 2026). 2.8T-
+   parameter MoE with native vision, 1M context, $3 in /
+   $15 out, $0.30 cache-hit input. The Moonshot API is
+   OpenAI-SDK compatible; the canonical model id is
+   `kimi-k3` and the OpenRouter form is
+   `moonshotai/kimi-k3`. A bare `^kimi/` catch-all at
+   $0.95/$4 covers the older K2.6 / K2.7 family (same
+   per-token rate per Moonshot's lineup).
+
+3. **Llama 4 family** (Meta, April 2025). Two tiers:
+   - `llama-4-maverick` — $0.20 / $0.80 (400B / 17B active, 1M ctx)
+   - `llama-4-scout` — $0.11 / $0.34 (109B / 17B active, 10M ctx)
+
+   Pre-fix: only Llama 3.1 entries existed; Llama 4 calls
+   fell through to the unknown-model fallback. Maverick
+   and Scout MUST come BEFORE the bare `^llama-4/` catch-
+   all (same prefix-stealing class as o1-mini vs o1).
+
+Three new tests in `src/__tests__/cost-approval.test.ts`
+pin the DeepSeek V4, Kimi K3, and Llama 4 pricing.
+
+835 → 838 pass / 0 fail across 53 files (+3 tests).
+`npm run typecheck` clean.
+
 ### Cost: Gemini family + KAT-Coder V2.5 priced (were $0/$0)
 
 The cost table picked up three model families that were

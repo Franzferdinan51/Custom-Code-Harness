@@ -343,6 +343,117 @@ test("priceFor: KAT-Coder V2.5 Pro + Air match (2026-07-10 launch — were $0/$0
   assert.ok(Math.abs(callCost("kwaipilot/kat-coder-air-v2.5", 1_000_000, 1_000_000) - 0.75) < 0.01);
 });
 
+test("priceFor: DeepSeek V4 Pro / Flash / base match (mid-July 2026 launch — were $0/$0)", () => {
+  // DeepSeek launched the V4 family in mid-July 2026 with
+  // a permanent 75% price cut to the Pro tier. Per DeepSeek's
+  // API page and multiple aggregators, the V4 lineup is:
+  //   deepseek-v4-pro    $0.435 in / $0.87 out  (1.6T MoE / 49B active)
+  //   deepseek-v4-flash  $0.14 in / $0.28 out   (284B / 13B active)
+  //   deepseek-v4 (base) $0.27 in / $0.55 out   (1T base)
+  // Pre-fix: only V3.x entries existed (`deepseek-chat` at
+  // $0.27/$1.10, `deepseek-reasoner` at $0.55/$2.19). The
+  // V3.x entries are kept for callers still on the old API;
+  // V4-specific patterns sit ABOVE the V3 catch-all so
+  // first-match-wins iteration picks the V4 rate.
+  const proV4 = priceFor("deepseek-v4-pro");
+  assert.equal(proV4.input, 0.435);
+  assert.equal(proV4.output, 0.87);
+  assert.equal(proV4.provider, "deepseek");
+  assert.equal(proV4.label, "DeepSeek V4 Pro (75% permanent price cut, June 2026)");
+
+  const flashV4 = priceFor("deepseek-v4-flash");
+  assert.equal(flashV4.input, 0.14);
+  assert.equal(flashV4.output, 0.28);
+  assert.equal(flashV4.provider, "deepseek");
+
+  const baseV4 = priceFor("deepseek-v4");
+  assert.equal(baseV4.input, 0.27);
+  assert.equal(baseV4.output, 0.55);
+  assert.equal(baseV4.provider, "deepseek");
+
+  // Older V3.x entries preserved at the old rate.
+  const v3Chat = priceFor("deepseek-chat");
+  assert.equal(v3Chat.input, 0.27);
+  assert.equal(v3Chat.output, 1.10);
+  assert.equal(v3Chat.label, "DeepSeek Chat (V3.x)");
+
+  const v3Reasoner = priceFor("deepseek-reasoner");
+  assert.equal(v3Reasoner.input, 0.55);
+  assert.equal(v3Reasoner.output, 2.19);
+
+  // callCost sanity check.
+  // V4 Pro 1M/1M = $0.435 + $0.87 = $1.305
+  assert.ok(Math.abs(callCost("deepseek-v4-pro", 1_000_000, 1_000_000) - 1.305) < 0.01);
+  // V4 Flash 1M/1M = $0.14 + $0.28 = $0.42
+  assert.ok(Math.abs(callCost("deepseek-v4-flash", 1_000_000, 1_000_000) - 0.42) < 0.01);
+});
+
+test("priceFor: Moonshot Kimi K3 matches at $3/$15 (2026-07-16 launch — were $0/$0)", () => {
+  // Moonshot AI released Kimi K3 on July 16, 2026. 2.8T-
+  // parameter MoE with native vision and 1M context.
+  // Per Moonshot's API page: $3 in / $15 out, with $0.30
+  // cache-hit input. The Moonshot API is OpenAI-SDK
+  // compatible; the canonical model id is `kimi-k3` and
+  // the OpenRouter form is `moonshotai/kimi-k3`. Pre-fix:
+  // no Kimi entries existed, so every call fell through
+  // to the unknown-model $0/$0 fallback.
+  const k3 = priceFor("kimi-k3");
+  assert.equal(k3.input, 3);
+  assert.equal(k3.output, 15);
+  assert.equal(k3.provider, "moonshot");
+  assert.equal(k3.label, "Moonshot Kimi K3");
+
+  // OpenRouter form.
+  const k3OR = priceFor("moonshotai/kimi-k3");
+  assert.equal(k3OR.input, 3);
+  assert.equal(k3OR.output, 15);
+
+  // Older K2.6 / K2.7 family — same $0.95/$4 rate (per
+  // Moonshot's lineup, Moonshot lists the same rate for
+  // K2.6 and K2.7 Code). The bare `^kimi/` catch-all
+  // catches any future K.x model id at the same rate.
+  const k26 = priceFor("kimi-k2.6");
+  assert.equal(k26.input, 0.95);
+  assert.equal(k26.output, 4);
+
+  // callCost sanity check.
+  assert.ok(Math.abs(callCost("kimi-k3", 1_000_000, 1_000_000) - 18.00) < 0.01);
+});
+
+test("priceFor: Llama 4 Maverick / Scout match (April 2025 release — were $0/$0)", () => {
+  // Meta released the Llama 4 family in April 2025 under
+  // the Llama 4 Community License. Two tiers as of July
+  // 2026:
+  //   llama-4-maverick   $0.20 in / $0.80 out (400B / 17B active, 1M ctx)
+  //   llama-4-scout      $0.11 in / $0.34 out (109B / 17B active, 10M ctx)
+  // Pre-fix: only Llama 3.1 entries existed; Llama 4 calls
+  // fell through to the unknown-model fallback. Maverick
+  // and Scout MUST come BEFORE the bare `^llama-4/` catch-
+  // all (same prefix-stealing class as o1-mini vs o1).
+  const maverick = priceFor("llama-4-maverick");
+  assert.equal(maverick.input, 0.20);
+  assert.equal(maverick.output, 0.80);
+  assert.equal(maverick.provider, "meta");
+  assert.match(maverick.label!, /Maverick/);
+
+  const scout = priceFor("llama-4-scout");
+  assert.equal(scout.input, 0.11);
+  assert.equal(scout.output, 0.34);
+  assert.equal(scout.provider, "meta");
+  assert.match(scout.label!, /Scout/);
+
+  // Older Llama 3.1 entries preserved at the old rate.
+  const v31_70b = priceFor("llama-3.1-70b");
+  assert.equal(v31_70b.input, 0.88);
+  assert.equal(v31_70b.output, 0.88);
+
+  // callCost sanity check.
+  // Maverick 1M/1M = $0.20 + $0.80 = $1.00
+  assert.ok(Math.abs(callCost("llama-4-maverick", 1_000_000, 1_000_000) - 1.00) < 0.01);
+  // Scout 1M/1M = $0.11 + $0.34 = $0.45
+  assert.ok(Math.abs(callCost("llama-4-scout", 1_000_000, 1_000_000) - 0.45) < 0.01);
+});
+
 test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $0/$0)", () => {
   // Anthropic launched the Mythos-class models on June 9,
   // 2026: claude-fable-5 (public, with safety classifiers)

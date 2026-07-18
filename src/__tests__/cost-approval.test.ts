@@ -454,6 +454,101 @@ test("priceFor: Llama 4 Maverick / Scout match (April 2025 release — were $0/$
   assert.ok(Math.abs(callCost("llama-4-scout", 1_000_000, 1_000_000) - 0.45) < 0.01);
 });
 
+test("priceFor: o3-pro / o4-mini / o1-pro match the OpenAI reasoning-model lineup", () => {
+  // Per OpenAI's API pricing page (July 2026):
+  //   o3-pro                $20 / $80    (April 2026)
+  //   o1-pro                $150 / $600  (legacy but still live)
+  //   o3-deep-research      $10 / $40
+  //   o4-mini               $1.10 / $4.40 (same as o3-mini)
+  //   o4-mini-deep-research $2 / $8
+  // These were all missing from the cost table before —
+  // every call fell through to the unknown-model $0/$0
+  // fallback. The `o3-pro` and `o4-mini` entries sit ABOVE
+  // the bare `^o3/` and `^o4-mini/` patterns so the explicit
+  // Pro / deep-research entries win on first-match-wins
+  // iteration. Same prefix-stealing class as o1-mini vs o1.
+  const o3pro = priceFor("o3-pro");
+  assert.equal(o3pro.input, 20);
+  assert.equal(o3pro.output, 80);
+  assert.equal(o3pro.provider, "openai");
+  assert.equal(o3pro.label, "o3 pro");
+
+  const o1pro = priceFor("o1-pro");
+  assert.equal(o1pro.input, 150);
+  assert.equal(o1pro.output, 600);
+  assert.equal(o1pro.provider, "openai");
+  assert.equal(o1pro.label, "o1 pro");
+
+  const o3dr = priceFor("o3-deep-research");
+  assert.equal(o3dr.input, 10);
+  assert.equal(o3dr.output, 40);
+
+  const o4mini = priceFor("o4-mini");
+  assert.equal(o4mini.input, 1.10);
+  assert.equal(o4mini.output, 4.40);
+  assert.equal(o4mini.provider, "openai");
+  assert.equal(o4mini.label, "o4-mini");
+
+  const o4minidr = priceFor("o4-mini-deep-research");
+  assert.equal(o4minidr.input, 2);
+  assert.equal(o4minidr.output, 8);
+
+  // callCost sanity check.
+  // o3-pro 1M/1M = $20 + $80 = $100.
+  assert.ok(Math.abs(callCost("o3-pro", 1_000_000, 1_000_000) - 100.00) < 0.01);
+  // o4-mini 1M/1M = $1.10 + $4.40 = $5.50.
+  assert.ok(Math.abs(callCost("o4-mini", 1_000_000, 1_000_000) - 5.50) < 0.01);
+});
+
+test("priceFor: Mistral Medium 3.5 / Large 3 / Small 4 match the current Mistral lineup (were $0/$0)", () => {
+  // Mistral's current lineup as of July 2026 (per Mistral's
+  // API page):
+  //   mistral-medium-3.5  $1.50 / $7.50  (128B dense, April 2026, flagship)
+  //   mistral-medium-3    $0.40 / $2.00  (May 2025, mid-tier)
+  //   mistral-large-3     $0.50 / $1.50  (value workhorse)
+  //   mistral-small-4     $0.15 / $0.60  (budget tier)
+  // Pre-fix: only the legacy `mistral-large` (v1/v2 line at
+  // $2/$6) was in the table, and it sat in the OpenRouter
+  // block. The new entries are explicit per-tier so the
+  // cost UI shows a distinct label. The Medium 3.5 pattern
+  // MUST come BEFORE the Medium 3 pattern (same prefix-
+  // stealing class as o1-mini vs o1).
+  const medium35 = priceFor("mistral-medium-3.5");
+  assert.equal(medium35.input, 1.50);
+  assert.equal(medium35.output, 7.50);
+  assert.equal(medium35.provider, "mistral");
+  assert.match(medium35.label!, /Medium 3\.5/);
+
+  const medium3 = priceFor("mistral-medium-3");
+  assert.equal(medium3.input, 0.40);
+  assert.equal(medium3.output, 2.00);
+  assert.equal(medium3.provider, "mistral");
+
+  const large3 = priceFor("mistral-large-3");
+  assert.equal(large3.input, 0.50);
+  assert.equal(large3.output, 1.50);
+  assert.equal(large3.provider, "mistral");
+  assert.match(large3.label!, /Large 3/);
+
+  const small4 = priceFor("mistral-small-4");
+  assert.equal(small4.input, 0.15);
+  assert.equal(small4.output, 0.60);
+  assert.equal(small4.provider, "mistral");
+  assert.match(small4.label!, /Small 4/);
+
+  // Legacy `mistral-large` (v1/v2) preserved at the old rate.
+  const legacyLarge = priceFor("mistral-large");
+  assert.equal(legacyLarge.input, 2.00);
+  assert.equal(legacyLarge.output, 6.00);
+  assert.match(legacyLarge.label!, /legacy/);
+
+  // callCost sanity check.
+  // Medium 3.5 1M/1M = $1.50 + $7.50 = $9.00.
+  assert.ok(Math.abs(callCost("mistral-medium-3.5", 1_000_000, 1_000_000) - 9.00) < 0.01);
+  // Small 4 1M/1M = $0.15 + $0.60 = $0.75.
+  assert.ok(Math.abs(callCost("mistral-small-4", 1_000_000, 1_000_000) - 0.75) < 0.01);
+});
+
 test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $0/$0)", () => {
   // Anthropic launched the Mythos-class models on June 9,
   // 2026: claude-fable-5 (public, with safety classifiers)
@@ -554,9 +649,11 @@ test("priceFor: GPT-4.1 and GPT-3.5 Turbo match (regression: were $0/$0)", () =>
   assert.equal(gpt35.input, 0.50);
   assert.equal(gpt35.output, 1.50);
   // o3 (full) was missing — only o3-mini was listed.
+  // Per OpenAI's pricing page (July 2026), o3 is now
+  // $2/$8 (post-launch cut from the original $10/$40).
   const o3 = priceFor("o3");
-  assert.equal(o3.input, 10);
-  assert.equal(o3.output, 40);
+  assert.equal(o3.input, 2);
+  assert.equal(o3.output, 8);
   // o3-mini still matches the o3-mini pattern (regression).
   const o3mini = priceFor("o3-mini");
   assert.equal(o3mini.input, 1.10);

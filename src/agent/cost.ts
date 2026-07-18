@@ -45,6 +45,9 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^gpt-5\.6/,              price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.6" } },
   { match: /^gpt-5\.5/,              price: { input: 5.00,  output: 30.00, provider: "openai", label: "GPT-5.5" } },
   { match: /^gpt-5\.4-pro/,          price: { input: 30.00, output: 180.00, provider: "openai", label: "GPT-5.4 pro" } },
+  // GPT-5.4 itself (the base 5.4 model). The bare `^gpt-5.4`
+  // pattern below matches `gpt-5.4`, `gpt-5.4-20260301`, etc.
+  // — same as how `^gpt-5` matches the whole GPT-5 family.
   { match: /^gpt-5\.4-nano/,         price: { input: 0.20,  output: 1.25,  provider: "openai", label: "GPT-5.4 nano" } },
   { match: /^gpt-5\.4-mini/,         price: { input: 0.75,  output: 4.50,  provider: "openai", label: "GPT-5.4 mini" } },
   { match: /^gpt-5\.4/,              price: { input: 2.50,  output: 15.00, provider: "openai", label: "GPT-5.4" } },
@@ -70,12 +73,26 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // o1 (full) rate ($15/$60) — a 5x overcharge on the
   // cheaper mini model. Same fix shape as o3 / o3-mini.
   { match: /^o1-mini/,               price: { input: 3,     output: 12,    provider: "openai", label: "o1 mini" } },
+  { match: /^o1-pro/,                price: { input: 150.00, output: 600.00, provider: "openai", label: "o1 pro" } },
   { match: /^o1/,                    price: { input: 15,    output: 60,    provider: "openai", label: "o1" } },
+  { match: /^o3-pro/,                price: { input: 20.00, output: 80.00, provider: "openai", label: "o3 pro" } },
   { match: /^o3-mini/,               price: { input: 1.10,  output: 4.40,  provider: "openai", label: "o3 mini" } },
   // o3 (full) must come AFTER o3-mini because `^o3` would
   // otherwise steal the o3-mini match. Pre-fix this entry
   // was missing entirely and o3 fell through to $0/$0.
-  { match: /^o3/,                    price: { input: 10,    output: 40,    provider: "openai", label: "o3" } },
+  // Pre-fix-this-fix: the entry was at $10/$40 (the launch
+  // price), but OpenAI cut the rate to $2/$8 shortly after
+  // launch (per the official pricing page, April 2026).
+  // A real `o3` call at the new rate was being reported
+  // as 5x over-charged by the cost tracker.
+  { match: /^o3-deep-research/,      price: { input: 10.00, output: 40.00, provider: "openai", label: "o3 deep research" } },
+  { match: /^o3/,                    price: { input: 2,     output: 8,     provider: "openai", label: "o3 (post-launch price cut from $10/$40)" } },
+  // o4-mini (OpenAI's budget reasoning model) — $1.10/$4.40,
+  // same as o3-mini. Must come BEFORE any `^o4/` catch-all
+  // (none today, but the order keeps the prefix-stealing
+  // class consistent with o3 / o3-mini).
+  { match: /^o4-mini-deep-research/, price: { input: 2,     output: 8,     provider: "openai", label: "o4-mini deep research" } },
+  { match: /^o4-mini/,               price: { input: 1.10,  output: 4.40,  provider: "openai", label: "o4-mini" } },
   // Anthropic
   { match: /^claude-3-5-haiku/,      price: { input: 0.80,  output: 4.00,  provider: "anthropic", label: "Claude 3.5 Haiku" } },
   { match: /^claude-3-5-sonnet/,     price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude 3.5 Sonnet" } },
@@ -217,10 +234,25 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^llama-4-maverick/,     price: { input: 0.20,  output: 0.80,  provider: "meta", label: "Llama 4 Maverick (400B / 17B active, 1M ctx)" } },
   { match: /^llama-4-scout/,        price: { input: 0.11,  output: 0.34,  provider: "meta", label: "Llama 4 Scout (109B / 17B active, 10M ctx)" } },
   { match: /^llama-4/,              price: { input: 0.20,  output: 0.80,  provider: "meta", label: "Llama 4 (unknown tier)" } },
+  // Mistral family (current lineup as of July 2026, per
+  // Mistral's API page). The Medium 3.5, Large 3, and
+  // Small 4 entries cover the most current tiers; older
+  // `mistral-large` (the v1/v2 line at $2/$6) is preserved
+  // at the bottom of the OpenRouter block for callers
+  // still on the older API. More-specific patterns
+  // (medium-3.5, large-3, small-4) MUST come BEFORE the
+  // bare `^mistral-/` catch-all to avoid the same
+  // prefix-stealing class as o1-mini vs o1.
+  { match: /^mistral-medium-3\.5/,   price: { input: 1.50,  output: 7.50,  provider: "mistral", label: "Mistral Medium 3.5 (128B dense, April 2026)" } },
+  { match: /^mistral-medium-3/,      price: { input: 0.40,  output: 2.00,  provider: "mistral", label: "Mistral Medium 3 (May 2025)" } },
+  { match: /^mistral-medium-3\.1/,   price: { input: 0.40,  output: 2.00,  provider: "mistral", label: "Mistral Medium 3.1" } },
+  { match: /^mistral-large-3/,       price: { input: 0.50,  output: 1.50,  provider: "mistral", label: "Mistral Large 3 (value workhorse)" } },
+  { match: /^mistral-small-4/,       price: { input: 0.15,  output: 0.60,  provider: "mistral", label: "Mistral Small 4 (budget tier)" } },
+  { match: /^mistral-medium/,        price: { input: 1.50,  output: 7.50,  provider: "mistral", label: "Mistral Medium (unknown tier; default 3.5 rate)" } },
   // OpenRouter passthrough prices (rough)
   { match: /llama-3\.1-405b/,         price: { input: 3.50,  output: 3.50,  provider: "openrouter", label: "Llama 3.1 405B" } },
   { match: /llama-3\.1-70b/,          price: { input: 0.88,  output: 0.88,  provider: "openrouter", label: "Llama 3.1 70B" } },
-  { match: /mistral-large/,          price: { input: 2.00,  output: 6.00,  provider: "openrouter", label: "Mistral Large" } },
+  { match: /mistral-large/,          price: { input: 2.00,  output: 6.00,  provider: "openrouter", label: "Mistral Large (legacy v1/v2 line)" } },
 ];
 
 const FALLBACK: ModelPrice = { input: 0, output: 0, label: "unknown" };

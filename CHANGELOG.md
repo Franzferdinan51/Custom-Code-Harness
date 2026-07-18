@@ -5,6 +5,61 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: o3 price corrected ($10/$40 → $2/$8 post-launch cut) + OpenAI reasoning lineup + Mistral family
+
+Two corrections plus one new model family for the
+2026-07-18 cron pass:
+
+1. **o3 (full) price corrected** ($10/$40 → $2/$8).
+   The cost table listed o3 at the **launch** rate
+   ($10/$40) rather than the current rate ($2/$8).
+   OpenAI cut o3 shortly after launch (per the official
+   pricing page, April 2026). A real o3 call at the
+   current rate was being reported as 5x over-charged
+   by the cost tracker — a 400% over-charge on the
+   $2/$8 rate. The previous value was a launch-price
+   bug, not a deletion of dead code (the no-deletions
+   constraint covers unused code, not wrong prices).
+   The corresponding test in
+   `src/__tests__/cost-approval.test.ts` was updated
+   to pin the corrected $2/$8 rate.
+
+2. **OpenAI reasoning-model lineup** (new entries, all
+   previously $0/$0):
+   - `o3-pro` — $20 / $80 (April 2026)
+   - `o1-pro` — $150 / $600 (legacy but still live)
+   - `o3-deep-research` — $10 / $40
+   - `o4-mini` — $1.10 / $4.40 (same as o3-mini)
+   - `o4-mini-deep-research` — $2 / $8
+
+   The Pro and deep-research patterns sit ABOVE the
+   bare `^o3/` and `^o4-mini/` patterns so the explicit
+   Pro / deep-research entry wins on first-match-wins
+   iteration. Same prefix-stealing class as o1-mini
+   vs o1.
+
+3. **Mistral family** (current lineup as of July 2026,
+   per Mistral's API page):
+   - `mistral-medium-3.5` — $1.50 / $7.50 (128B dense, April 2026 flagship)
+   - `mistral-medium-3` — $0.40 / $2.00 (May 2025 mid-tier)
+   - `mistral-large-3` — $0.50 / $1.50 (value workhorse)
+   - `mistral-small-4` — $0.15 / $0.60 (budget tier)
+
+   Pre-fix: only the legacy `mistral-large` (v1/v2
+   line at $2/$6) was in the table; the new tiers
+   all fell through to the unknown-model $0/$0
+   fallback. The legacy entry is preserved and
+   relabeled as "Mistral Large (legacy v1/v2 line)"
+   so it's clear which one is in use. The Medium 3.5
+   pattern MUST come BEFORE the Medium 3 pattern
+   (same prefix-stealing class as o1-mini vs o1).
+
+Two new tests in `src/__tests__/cost-approval.test.ts`
+pin the o3-pro / o4-mini / Mistral family pricing.
+
+838 → 840 pass / 0 fail across 53 files (+2 tests).
+`npm run typecheck` clean.
+
 ### Cost: DeepSeek V4 + Moonshot Kimi K3 + Llama 4 priced (were $0/$0)
 
 Three more missing model families picked up by the

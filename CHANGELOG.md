@@ -5,6 +5,56 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: Qwen 3.6 / 3.7 + Thinking Machines Inkling + Gemma 4 priced (were $0/$0)
+
+Three more missing model families picked up by the
+2026-07-19 cron pass:
+
+1. **Qwen family** (Alibaba, OpenRouter-served).
+   Per OpenRouter + eesel.ai's pricing summary (July
+   2026):
+   - `qwen3.7-max` — $1.25 / $3.75 (50% promo off $2.50/$7.50)
+   - `qwen3.7-plus` — $0.32 / $1.28 (Jun 1, 2026; tiered by context)
+   - `qwen3.6-plus` — $0.325 / $1.95 (Apr 2, 2026, OpenRouter)
+   - `qwen3.6-flash` — $0.25 / $1.50 (cost-optimized)
+   - `qwen3.5-plus` — $0.40 / $2.40 (Apr 2026; also `qwen-plus`)
+   - `qwen-turbo` — $0.05 / $0.20 (cheapest text tier)
+
+   Pre-fix: no Qwen entries existed, so every Qwen
+   call fell through to the unknown-model $0/$0
+   fallback. The 3.7 patterns MUST come BEFORE the
+   3.6 patterns (same prefix-stealing class as
+   o1-mini vs o1 / gpt-5.6 vs gpt-5 / muse-spark
+   vs muse).
+
+2. **Thinking Machines Inkling** (released July 15,
+   2026). First open-weight model from a U.S.
+   frontier lab — 975B (41B active) MoE, 1M context,
+   multimodal (image + text + audio). Per Tinker
+   docs:
+   - `thinkingmachines/Inkling:peft:262144` — $3.74 / $9.36 (256K context tier)
+   - `thinkingmachines/Inkling` — $1.87 / $4.68 (Tinker base 64K rate)
+   - `thinkingmachines/inkling` (lowercase) — $1.00 / $4.05 (OpenRouter gateway rate)
+
+   The 256K-context pattern sits ABOVE the base
+   Inkling pattern so the explicit context-tier
+   entry wins on first-match-wins iteration. Bare
+   `^inkling` (no org) is the direct API form.
+
+3. **Google Gemma 4** (open weights, June 2026).
+   Per Scaleway's catalog (cheapest public reference
+   rate, July 2026):
+   - `gemma-4-26b-a4b-it` — $0.25 / $0.50
+
+   Pre-fix: no Gemma 4 entries existed; every call
+   fell through to the unknown-model $0/$0 fallback.
+
+Three new tests in `src/__tests__/cost-approval.test.ts`
+pin the Qwen, Inkling, and Gemma 4 pricing.
+
+840 → 843 pass / 0 fail across 53 files (+3 tests).
+`npm run typecheck` clean.
+
 ### Cost: o3 price corrected ($10/$40 → $2/$8 post-launch cut) + OpenAI reasoning lineup + Mistral family
 
 Two corrections plus one new model family for the

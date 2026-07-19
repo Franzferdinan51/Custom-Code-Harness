@@ -549,6 +549,127 @@ test("priceFor: Mistral Medium 3.5 / Large 3 / Small 4 match the current Mistral
   assert.ok(Math.abs(callCost("mistral-small-4", 1_000_000, 1_000_000) - 0.75) < 0.01);
 });
 
+test("priceFor: Qwen 3.6 / 3.7 + Qwen-Plus + Qwen-Turbo match (2026 line — were $0/$0)", () => {
+  // Alibaba's Qwen family (verified via OpenRouter +
+  // eesel.ai's pricing summary, July 2026):
+  //   qwen3.7-max      $1.25 / $3.75  (50% promo off $2.50/$7.50)
+  //   qwen3.7-plus     $0.32 / $1.28  (Jun 1, 2026; tiered by context)
+  //   qwen3.6-plus     $0.325 / $1.95 (Apr 2, 2026, OpenRouter)
+  //   qwen3.6-flash    $0.25 / $1.50  (cost-optimized)
+  //   qwen3.5-plus     $0.40 / $2.40  (Apr 2026; also `qwen-plus`)
+  //   qwen-turbo       $0.05 / $0.20  (cheapest text tier)
+  // Pre-fix: no Qwen entries existed, so every Qwen call
+  // fell through to the unknown-model $0/$0 fallback. The
+  // 3.7 patterns MUST come BEFORE the 3.6 patterns (same
+  // prefix-stealing class as o1-mini vs o1 / gpt-5.6 vs
+  // gpt-5 / muse-spark vs muse).
+  const max37 = priceFor("qwen3.7-max");
+  assert.equal(max37.input, 1.25);
+  assert.equal(max37.output, 3.75);
+  assert.equal(max37.provider, "alibaba");
+  assert.match(max37.label!, /Max/);
+
+  const plus37 = priceFor("qwen3.7-plus");
+  assert.equal(plus37.input, 0.32);
+  assert.equal(plus37.output, 1.28);
+  assert.equal(plus37.provider, "alibaba");
+  assert.match(plus37.label!, /3\.7/);
+
+  const plus36 = priceFor("qwen3.6-plus");
+  assert.equal(plus36.input, 0.325);
+  assert.equal(plus36.output, 1.95);
+  assert.equal(plus36.provider, "alibaba");
+  assert.match(plus36.label!, /3\.6 Plus/);
+
+  const flash36 = priceFor("qwen3.6-flash");
+  assert.equal(flash36.input, 0.25);
+  assert.equal(flash36.output, 1.50);
+  assert.equal(flash36.provider, "alibaba");
+  assert.match(flash36.label!, /Flash/);
+
+  const plus35 = priceFor("qwen3.5-plus");
+  assert.equal(plus35.input, 0.40);
+  assert.equal(plus35.output, 2.40);
+  assert.equal(plus35.provider, "alibaba");
+  assert.match(plus35.label!, /3\.5 Plus/);
+
+  // Stable `qwen-plus` alias.
+  const plusAlias = priceFor("qwen-plus");
+  assert.equal(plusAlias.input, 0.40);
+  assert.equal(plusAlias.output, 1.20);
+
+  // Cheapest Qwen text tier.
+  const turbo = priceFor("qwen-turbo");
+  assert.equal(turbo.input, 0.05);
+  assert.equal(turbo.output, 0.20);
+  assert.equal(turbo.provider, "alibaba");
+  assert.match(turbo.label!, /Turbo/);
+
+  // callCost sanity check.
+  // qwen3.6-flash 1M/1M = $0.25 + $1.50 = $1.75.
+  assert.ok(Math.abs(callCost("qwen3.6-flash", 1_000_000, 1_000_000) - 1.75) < 0.01);
+  // qwen-turbo 1M/1M = $0.05 + $0.20 = $0.25.
+  assert.ok(Math.abs(callCost("qwen-turbo", 1_000_000, 1_000_000) - 0.25) < 0.01);
+});
+
+test("priceFor: Thinking Machines Inkling matches at $1.87/$4.68 (Jul 15, 2026 launch — was $0/$0)", () => {
+  // Thinking Machines' Inkling — first open-weight model
+  // from a U.S. frontier lab. 975B (41B active) MoE, 1M
+  // context, multimodal (image + text + audio). Released
+  // July 15, 2026. Per Tinker docs:
+  //   thinkingmachines/Inkling:peft:262144  $3.74 / $9.36 (256K)
+  //   thinkingmachines/Inkling              $1.87 / $4.68 (64K, base)
+  //   thinkingmachines/inkling (OpenRouter) $1.00 / $4.05 (gateway)
+  // The bare `^inkling` (lowercase, no org) is the direct
+  // form. The 256K pattern must come BEFORE the base
+  // Inkling pattern (same prefix-stealing class as
+  // o1-mini vs o1 / gpt-5.6 vs gpt-5).
+  const inkling256k = priceFor("thinkingmachines/Inkling:peft:262144");
+  assert.equal(inkling256k.input, 3.74);
+  assert.equal(inkling256k.output, 9.36);
+  assert.equal(inkling256k.provider, "thinkingmachines");
+  assert.match(inkling256k.label!, /256K/);
+
+  const inklingTinker = priceFor("thinkingmachines/Inkling");
+  assert.equal(inklingTinker.input, 1.87);
+  assert.equal(inklingTinker.output, 4.68);
+  assert.equal(inklingTinker.provider, "thinkingmachines");
+  assert.match(inklingTinker.label!, /Tinker/);
+
+  const inklingOR = priceFor("thinkingmachines/inkling");
+  assert.equal(inklingOR.input, 1.00);
+  assert.equal(inklingOR.output, 4.05);
+  assert.equal(inklingOR.provider, "openrouter");
+  assert.match(inklingOR.label!, /OpenRouter/);
+
+  // Bare form (direct API).
+  const inklingDirect = priceFor("inkling");
+  assert.equal(inklingDirect.input, 1.87);
+  assert.equal(inklingDirect.output, 4.68);
+
+  // callCost sanity check.
+  assert.ok(Math.abs(callCost("thinkingmachines/inkling", 1_000_000, 1_000_000) - 5.05) < 0.01);
+});
+
+test("priceFor: Gemma 4 26B A4B IT matches at $0.25/$0.50 (open weights, June 2026 — was $0/$0)", () => {
+  // Google's Gemma 4 family (open weights, June 2026).
+  // Per Scaleway's catalog (cheapest public reference):
+  //   gemma-4-26b-a4b-it  $0.25 / $0.50
+  // Pre-fix: no Gemma 4 entries existed; every call fell
+  // through to the unknown-model $0/$0 fallback. The
+  // 26b-a4b-it pattern is the most specific (sits above
+  // the bare `^gemma-4/` catch-all to avoid prefix-stealing).
+  const gemma4 = priceFor("gemma-4-26b-a4b-it");
+  assert.equal(gemma4.input, 0.25);
+  assert.equal(gemma4.output, 0.50);
+  assert.equal(gemma4.provider, "google");
+  assert.match(gemma4.label!, /Gemma 4 26B/);
+
+  // callCost sanity check.
+  // 1M/1M = $0.25 + $0.50 = $0.75.
+  assert.ok(Math.abs(callCost("gemma-4-26b-a4b-it", 1_000_000, 1_000_000) - 0.75) < 0.01);
+});
+
 test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $0/$0)", () => {
   // Anthropic launched the Mythos-class models on June 9,
   // 2026: claude-fable-5 (public, with safety classifiers)

@@ -253,6 +253,54 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /llama-3\.1-405b/,         price: { input: 3.50,  output: 3.50,  provider: "openrouter", label: "Llama 3.1 405B" } },
   { match: /llama-3\.1-70b/,          price: { input: 0.88,  output: 0.88,  provider: "openrouter", label: "Llama 3.1 70B" } },
   { match: /mistral-large/,          price: { input: 2.00,  output: 6.00,  provider: "openrouter", label: "Mistral Large (legacy v1/v2 line)" } },
+  // Qwen family (Alibaba, OpenRouter-served). Per OpenRouter
+  // + eesel.ai's Qwen pricing summary (verified July 2026):
+  //   qwen3.7-max    $1.25 / $3.75 (50% promo off $2.50/$7.50 list)
+  //   qwen3.7-plus   $0.32 / $1.28 (Jun 1, 2026; tiered by context)
+  //   qwen3.6-plus   $0.325 / $1.95 (Apr 2, 2026, OpenRouter)
+  //   qwen3.6-flash  $0.25 / $1.50 (cost-optimized)
+  //   qwen3.5-plus   $0.40 / $2.40 (Apr 2026; also `qwen-plus`)
+  //   qwen-turbo     $0.05 / $0.20 (cheapest text tier)
+  // Pre-fix: no Qwen entries existed, so every Qwen call
+  // fell through to the unknown-model $0/$0 fallback. The
+  // 3.7 patterns must come BEFORE the 3.6 patterns (same
+  // prefix-stealing class as o1-mini vs o1 / gpt-5.6 vs
+  // gpt-5 / muse-spark vs muse).
+  { match: /^qwen3\.7-max/,         price: { input: 1.25,  output: 3.75,  provider: "alibaba", label: "Qwen 3.7 Max (50% promo off $2.50/$7.50 list)" } },
+  { match: /^qwen3\.7-plus/,        price: { input: 0.32,  output: 1.28,  provider: "alibaba", label: "Qwen 3.7 Plus (Jun 1, 2026; tiered by context)" } },
+  { match: /^qwen3\.6-plus/,        price: { input: 0.325, output: 1.95,  provider: "alibaba", label: "Qwen 3.6 Plus (Apr 2, 2026, OpenRouter)" } },
+  { match: /^qwen3\.6-flash/,       price: { input: 0.25,  output: 1.50,  provider: "alibaba", label: "Qwen 3.6 Flash (cost-optimized)" } },
+  { match: /^qwen3\.5-plus/,        price: { input: 0.40,  output: 2.40,  provider: "alibaba", label: "Qwen 3.5 Plus (Apr 2026)" } },
+  { match: /^qwen-plus/,            price: { input: 0.40,  output: 1.20,  provider: "alibaba", label: "Qwen Plus (stable alias)" } },
+  { match: /^qwen-turbo/,           price: { input: 0.05,  output: 0.20,  provider: "alibaba", label: "Qwen Turbo (cheapest text tier)" } },
+  { match: /^qwen3\.6/,             price: { input: 0.325, output: 1.95,  provider: "alibaba", label: "Qwen 3.6 (unknown tier)" } },
+  { match: /^qwen/,                 price: { input: 0.40,  output: 1.20,  provider: "alibaba", label: "Qwen (unknown tier)" } },
+  // Thinking Machines Inkling (released July 15, 2026).
+  // First open-weight model from a U.S. frontier lab —
+  // 975B (41B active) MoE, 1M context, multimodal
+  // (image + text + audio). Per Tinker docs, the canonical
+  // id is `thinkingmachines/Inkling` (mixed case, Tinker
+  // form) and the OpenRouter form is
+  // `thinkingmachines/inkling` (lowercase). The Tinker
+  // base rate (64K context) is $1.87 / $4.68; the 256K
+  // context tier is $3.74 / $9.36. Most providers route
+  // through OpenRouter at $1.00 / $4.05 — the `provider`
+  // field on each row is "thinkingmachines" for the
+  // direct Tinker form, "openrouter" for the gateway
+  // form. Pre-fix: no Inkling entries existed; every
+  // call fell through to the unknown-model fallback.
+  { match: /^thinkingmachines\/Inkling:peft:262144/, price: { input: 3.74, output: 9.36, provider: "thinkingmachines", label: "Inkling 256K context (Tinker)" } },
+  { match: /^thinkingmachines\/Inkling/,           price: { input: 1.87, output: 4.68, provider: "thinkingmachines", label: "Inkling 64K context (Tinker, $1.87/$4.68)" } },
+  { match: /^thinkingmachines\/inkling/,            price: { input: 1.00, output: 4.05, provider: "openrouter",       label: "Inkling (OpenRouter gateway, $1.00/$4.05)" } },
+  { match: /^inkling/,                              price: { input: 1.87, output: 4.68, provider: "thinkingmachines", label: "Inkling (direct)" } },
+  // Google Gemma 4 (open weights, released June 2026).
+  // Per Scaleway's catalog (the cheapest public reference
+  // rate, July 2026): gemma-4-26b-a4b-it at $0.25 / $0.50.
+  // Pre-fix: no Gemma 4 entries existed; every call
+  // fell through to the unknown-model $0/$0 fallback.
+  { match: /^gemma-4-26b-a4b-it/,   price: { input: 0.25,  output: 0.50,  provider: "google", label: "Gemma 4 26B A4B IT (open weights, June 2026)" } },
+  { match: /^gemma-4/,              price: { input: 0.25,  output: 0.50,  provider: "google", label: "Gemma 4 (unknown tier)" } },
+  { match: /^gemma/,                price: { input: 0.25,  output: 0.50,  provider: "google", label: "Gemma (unknown tier)" } },
 ];
 
 const FALLBACK: ModelPrice = { input: 0, output: 0, label: "unknown" };

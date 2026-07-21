@@ -5,6 +5,45 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: Meituan LongCat-2.0 + Tencent Hy3 (Hunyuan 3) priced (were $0/$0)
+
+Two more model families picked up by the 2026-07-20/21
+cron pass:
+
+1. **Meituan LongCat** (released June 30, 2026; the
+   2.0 line is the agentic-coding flagship). Per
+   Meituan's published pricing (July 20, 2026):
+   - `LongCat-2.0` — $0.75 / $2.95 (1.6T MoE / 48B active, 256K ctx)
+   - `longcat-flash-chat` — $0.14 / $0.70 (older Flash line, 2025)
+
+   The 2.0 model id is case-sensitive (`LongCat-2.0`
+   with capital L and C). The `^LongCat-2.0/` pattern
+   MUST come BEFORE the bare `^longcat/` catch-all
+   (the reverse-order trap on case sensitivity — a
+   lowercase pattern would not match the camel-cased
+   model id).
+
+2. **Tencent Hunyuan 3 / Hy3** (open weights, released
+   June 2026 — preview tier; GA in early July 2026).
+   295B MoE with 21B active, 256K context. Per Tencent
+   Cloud API (the canonical self-serve endpoint):
+   - `tencent/hy3` — $0.14 / $0.58 (OpenRouter form)
+   - `hy3` — same rate (bare form)
+   - `tencent/hy3-preview:free` — $0 / $0 (promotional
+     free tier, expires July 21, 2026)
+
+   The `tencent/hy3-preview:free` pattern sits ABOVE
+   the bare `^tencent\/hy3/` catch-all so the explicit
+   free-tier match wins on first-match-wins iteration.
+   Pre-fix: no Hy3 entries existed; every call fell
+   through to the unknown-model $0/$0 fallback.
+
+One new test in `src/__tests__/cost-approval.test.ts`
+pins the LongCat-2.0 + Hy3 pricing.
+
+843 → 844 pass / 0 fail across 53 files (+1 test).
+`npm run typecheck` clean.
+
 ### Cost: Qwen 3.6 / 3.7 + Thinking Machines Inkling + Gemma 4 priced (were $0/$0)
 
 Three more missing model families picked up by the

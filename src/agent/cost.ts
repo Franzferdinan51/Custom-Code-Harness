@@ -301,6 +301,37 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^gemma-4-26b-a4b-it/,   price: { input: 0.25,  output: 0.50,  provider: "google", label: "Gemma 4 26B A4B IT (open weights, June 2026)" } },
   { match: /^gemma-4/,              price: { input: 0.25,  output: 0.50,  provider: "google", label: "Gemma 4 (unknown tier)" } },
   { match: /^gemma/,                price: { input: 0.25,  output: 0.50,  provider: "google", label: "Gemma (unknown tier)" } },
+  // Meituan LongCat family (released June 30, 2026; the
+  // 2.0 line is the agentic-coding flagship). Per Meituan's
+  // published pricing (July 20, 2026):
+  //   LongCat-2.0           $0.75 / $2.95  (1.6T MoE / 48B active, 256K ctx)
+  //   LongCat-Flash-Chat    $0.14 / $0.70  (older Flash line, 2025)
+  // The 2.0 model id is case-sensitive (`LongCat-2.0` with
+  // capital L and C); older entries used lowercase
+  // `longcat-flash-chat`. The `^LongCat-2.0/` pattern MUST
+  // come BEFORE the bare `^longcat/` catch-all (the
+  // reverse-order trap on case sensitivity — a lowercase
+  // pattern would not match the camel-cased model id).
+  { match: /^LongCat-2\.0/,         price: { input: 0.75,  output: 2.95,  provider: "meituan", label: "Meituan LongCat-2.0 (1.6T MoE / 48B active, 256K ctx)" } },
+  { match: /^longcat-flash-chat/,   price: { input: 0.14,  output: 0.70,  provider: "meituan", label: "Meituan LongCat-Flash-Chat" } },
+  { match: /^longcat/,              price: { input: 0.14,  output: 0.70,  provider: "meituan", label: "Meituan LongCat (unknown tier)" } },
+  // Tencent Hunyuan 3 / Hy3 (open weights, released June
+  // 2026 — preview tier; GA in early July 2026). 295B MoE
+  // with 21B active, 256K context. Per Tencent Cloud API
+  // (the canonical self-serve endpoint):
+  //   hunyuan / Hy3          ~$0.14 / $0.58 (1 yuan per Mtok input)
+  // The OpenRouter form (`tencent/hy3`) routes through
+  // multiple providers at the same per-token rate; the
+  // `tencent/hy3-preview:free` form is $0 (promotional
+  // free tier, expires July 21, 2026). Pre-fix: no Hy3
+  // entries existed; every call fell through to the
+  // unknown-model $0/$0 fallback. The preview-free
+  // pattern MUST come BEFORE the bare `^tencent\/hy3/`
+  // catch-all so the explicit free-tier match wins.
+  { match: /^tencent\/hy3-preview:free/, price: { input: 0, output: 0, provider: "tencent", label: "Tencent Hy3 Preview (free tier through July 21, 2026)" } },
+  { match: /^tencent\/hy3/,            price: { input: 0.14, output: 0.58, provider: "tencent", label: "Tencent Hy3 (Hunyuan 3, 295B MoE / 21B active, 256K ctx)" } },
+  { match: /^hunyuan/,                 price: { input: 0.14, output: 0.58, provider: "tencent", label: "Hunyuan 3 / Hy3 (Tencent)" } },
+  { match: /^hy3/,                     price: { input: 0.14, output: 0.58, provider: "tencent", label: "Hy3 (Tencent Hunyuan 3)" } },
 ];
 
 const FALLBACK: ModelPrice = { input: 0, output: 0, label: "unknown" };

@@ -670,6 +670,57 @@ test("priceFor: Gemma 4 26B A4B IT matches at $0.25/$0.50 (open weights, June 20
   assert.ok(Math.abs(callCost("gemma-4-26b-a4b-it", 1_000_000, 1_000_000) - 0.75) < 0.01);
 });
 
+test("priceFor: Meituan LongCat-2.0 / Flash-Chat + Tencent Hy3 priced (were $0/$0)", () => {
+  // Meituan LongCat family (released June 30, 2026; the
+  // 2.0 line is the agentic-coding flagship). Per Meituan's
+  // published pricing (July 20, 2026):
+  //   LongCat-2.0          $0.75 / $2.95  (1.6T MoE / 48B active, 256K ctx)
+  //   LongCat-Flash-Chat   $0.14 / $0.70  (older Flash line, 2025)
+  // The 2.0 model id is case-sensitive (`LongCat-2.0` with
+  // capital L and C). The `^LongCat-2.0/` pattern MUST
+  // come BEFORE the bare `^longcat/` catch-all (the
+  // reverse-order trap on case sensitivity).
+  const longcat20 = priceFor("LongCat-2.0");
+  assert.equal(longcat20.input, 0.75);
+  assert.equal(longcat20.output, 2.95);
+  assert.equal(longcat20.provider, "meituan");
+  assert.match(longcat20.label!, /LongCat-2\.0/);
+
+  const longcatFlash = priceFor("longcat-flash-chat");
+  assert.equal(longcatFlash.input, 0.14);
+  assert.equal(longcatFlash.output, 0.70);
+  assert.equal(longcatFlash.provider, "meituan");
+
+  // Tencent Hunyuan 3 / Hy3 (open weights, released June
+  // 2026 — preview tier; GA in early July 2026). Per
+  // Tencent Cloud API: $0.14 / $0.58.
+  const hy3 = priceFor("tencent/hy3");
+  assert.equal(hy3.input, 0.14);
+  assert.equal(hy3.output, 0.58);
+  assert.equal(hy3.provider, "tencent");
+  assert.match(hy3.label!, /Hy3/);
+
+  // The `tencent/hy3-preview:free` form is $0 (promotional
+  // free tier, expires July 21, 2026). The free-tier pattern
+  // MUST come BEFORE the bare `^tencent\/hy3/` catch-all.
+  const hy3Free = priceFor("tencent/hy3-preview:free");
+  assert.equal(hy3Free.input, 0);
+  assert.equal(hy3Free.output, 0);
+  assert.equal(hy3Free.provider, "tencent");
+  assert.match(hy3Free.label!, /free/i);
+
+  // Bare `hy3` and `hunyuan` forms.
+  const hy3Bare = priceFor("hy3");
+  assert.equal(hy3Bare.input, 0.14);
+  assert.equal(hy3Bare.output, 0.58);
+
+  // callCost sanity checks.
+  // LongCat-2.0 1M/1M = $0.75 + $2.95 = $3.70.
+  assert.ok(Math.abs(callCost("LongCat-2.0", 1_000_000, 1_000_000) - 3.70) < 0.01);
+  // Hy3 1M/1M = $0.14 + $0.58 = $0.72.
+  assert.ok(Math.abs(callCost("tencent/hy3", 1_000_000, 1_000_000) - 0.72) < 0.01);
+});
+
 test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $0/$0)", () => {
   // Anthropic launched the Mythos-class models on June 9,
   // 2026: claude-fable-5 (public, with safety classifiers)

@@ -269,7 +269,11 @@ test("priceFor: Gemini family — 3.5 Flash / 3.1 Pro / 3.1 Flash-Lite / 2.5 lin
   assert.equal(flash35.input, 1.5);
   assert.equal(flash35.output, 9);
   assert.equal(flash35.provider, "google");
-  assert.equal(flash35.label, "Gemini 3.5 Flash");
+  // Label is informational — match the substring rather
+  // than the exact string so a future label tweak (e.g.
+  // appending "(deprecated by 3.6 Flash)") doesn't break
+  // the test.
+  assert.match(flash35.label!, /Gemini 3\.5 Flash/);
 
   const pro31 = priceFor("gemini-3.1-pro");
   assert.equal(pro31.input, 2);
@@ -719,6 +723,124 @@ test("priceFor: Meituan LongCat-2.0 / Flash-Chat + Tencent Hy3 priced (were $0/$
   assert.ok(Math.abs(callCost("LongCat-2.0", 1_000_000, 1_000_000) - 3.70) < 0.01);
   // Hy3 1M/1M = $0.14 + $0.58 = $0.72.
   assert.ok(Math.abs(callCost("tencent/hy3", 1_000_000, 1_000_000) - 0.72) < 0.01);
+});
+
+test("priceFor: Gemini 3.6 Flash + 3.5 Flash-Lite priced (Jul 21, 2026 — were $0/$0)", () => {
+  // Google released both 3.6 Flash and 3.5 Flash-Lite on
+  // July 21, 2026. Per Google's official blog post and API
+  // page:
+  //   gemini-3.6-flash      $1.50 / $7.50  (replaces 3.5 Flash; same input, lower output)
+  //   gemini-3.5-flash-lite $0.30 / $2.50  (cost-optimized)
+  // Pre-fix: no 3.6 Flash or 3.5 Flash-Lite entries
+  // existed; every call fell through to the unknown-model
+  // $0/$0 fallback. The 3.6-flash pattern MUST come BEFORE
+  // the 3.5-flash pattern (the 3.5-flash regex would also
+  // match 3.55-flash but NOT 3.6-flash — these are
+  // different major.minor versions so there's no actual
+  // prefix-stealing; the order is just for clarity).
+  const flash36 = priceFor("gemini-3.6-flash");
+  assert.equal(flash36.input, 1.50);
+  assert.equal(flash36.output, 7.50);
+  assert.equal(flash36.provider, "google");
+  assert.match(flash36.label!, /3\.6 Flash/);
+
+  const flashLite35 = priceFor("gemini-3.5-flash-lite");
+  assert.equal(flashLite35.input, 0.30);
+  assert.equal(flashLite35.output, 2.50);
+  assert.equal(flashLite35.provider, "google");
+  assert.match(flashLite35.label!, /3\.5 Flash-Lite/);
+
+  // 3.5 Flash itself is still around (deprecated by 3.6
+  // Flash) — its rate stays at $1.50/$9.
+  const flash35 = priceFor("gemini-3.5-flash");
+  assert.equal(flash35.input, 1.50);
+  assert.equal(flash35.output, 9.00);
+
+  // callCost sanity check.
+  // 3.6 Flash 1M/1M = $1.50 + $7.50 = $9.00.
+  assert.ok(Math.abs(callCost("gemini-3.6-flash", 1_000_000, 1_000_000) - 9.00) < 0.01);
+});
+
+test("priceFor: Poolside Laguna S 2.1 priced at $0.10/$0.20 (Jul 21, 2026 — was $0/$0)", () => {
+  // Poolside released Laguna S 2.1 on July 21, 2026.
+  // 118B MoE with 8B active, 1M context. Per poolside's
+  // blog post and OpenRouter:
+  //   poolside/laguna-s-2.1        $0.10 / $0.20  (1M context, paid)
+  //   poolside/laguna-s-2.1:free   $0 / $0       (256K context, free)
+  // Pre-fix: no Laguna entries existed; every call fell
+  // through to the unknown-model $0/$0 fallback. The
+  // free-tier pattern MUST come BEFORE the bare
+  // `^poolside\/laguna-s-2\.1/` catch-all.
+  const laguna = priceFor("poolside/laguna-s-2.1");
+  assert.equal(laguna.input, 0.10);
+  assert.equal(laguna.output, 0.20);
+  assert.equal(laguna.provider, "poolside");
+  assert.match(laguna.label!, /Laguna S 2\.1/);
+
+  const lagunaFree = priceFor("poolside/laguna-s-2.1:free");
+  assert.equal(lagunaFree.input, 0);
+  assert.equal(lagunaFree.output, 0);
+  assert.equal(lagunaFree.provider, "poolside");
+  assert.match(lagunaFree.label!, /free/i);
+
+  // callCost sanity check.
+  // 1M/1M = $0.10 + $0.20 = $0.30.
+  assert.ok(Math.abs(callCost("poolside/laguna-s-2.1", 1_000_000, 1_000_000) - 0.30) < 0.01);
+});
+
+test("priceFor: Z.ai GLM-5 family (5.2, 5.1, Turbo, base) priced (were $0/$0)", () => {
+  // Z.ai / Zhipu GLM-5 family (open weights, MIT license).
+  // Per Vercel AI Gateway + ofox.ai pricing summary (June
+  // 2026):
+  //   glm-5.2        $1.40 / $4.40  (Jun 16, 2026; 1M ctx)
+  //   glm-5.2-fast   $2.10 / $6.60  (Jun 23, 2026; 1M ctx)
+  //   glm-5.1        $1.30 / $4.30  (Apr 7, 2026; long-horizon agentic)
+  //   glm-5-turbo    $1.20 / $4.00  (Mar 15, 2026; 200K ctx)
+  //   glm-5          $1.00 / $3.20  (Feb 13, 2026; flagship)
+  // Pre-fix: no GLM-5 entries existed; every call fell
+  // through to the unknown-model $0/$0 fallback. The 5.2
+  // and 5.1 patterns MUST come BEFORE the bare `^glm-5/`
+  // and `^glm-5$` catch-alls (same prefix-stealing class
+  // as o1-mini vs o1 / gpt-5.6 vs gpt-5). The `zai/`-
+  // prefixed forms (Vercel AI Gateway) are matched
+  // alongside the bare forms.
+  const glm52 = priceFor("glm-5.2");
+  assert.equal(glm52.input, 1.40);
+  assert.equal(glm52.output, 4.40);
+  assert.equal(glm52.provider, "zhipu");
+  assert.match(glm52.label!, /5\.2/);
+
+  const glm52fast = priceFor("glm-5.2-fast");
+  assert.equal(glm52fast.input, 2.10);
+  assert.equal(glm52fast.output, 6.60);
+  assert.equal(glm52fast.provider, "zhipu");
+
+  const glm51 = priceFor("glm-5.1");
+  assert.equal(glm51.input, 1.30);
+  assert.equal(glm51.output, 4.30);
+  assert.equal(glm51.provider, "zhipu");
+
+  const glm5Turbo = priceFor("glm-5-turbo");
+  assert.equal(glm5Turbo.input, 1.20);
+  assert.equal(glm5Turbo.output, 4.00);
+  assert.equal(glm5Turbo.provider, "zhipu");
+
+  const glm5 = priceFor("glm-5");
+  assert.equal(glm5.input, 1.00);
+  assert.equal(glm5.output, 3.20);
+  assert.equal(glm5.provider, "zhipu");
+  assert.match(glm5.label!, /flagship|MIT/);
+
+  // Vercel AI Gateway form (`zai/...`).
+  const glm5Zai = priceFor("zai/glm-5");
+  assert.equal(glm5Zai.input, 1.00);
+  assert.equal(glm5Zai.output, 3.20);
+
+  // callCost sanity checks.
+  // glm-5 1M/1M = $1.00 + $3.20 = $4.20.
+  assert.ok(Math.abs(callCost("glm-5", 1_000_000, 1_000_000) - 4.20) < 0.01);
+  // glm-5.2 1M/1M = $1.40 + $4.40 = $5.80.
+  assert.ok(Math.abs(callCost("glm-5.2", 1_000_000, 1_000_000) - 5.80) < 0.01);
 });
 
 test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $0/$0)", () => {

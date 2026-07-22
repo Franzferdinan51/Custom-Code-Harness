@@ -5,6 +5,56 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: Gemini 3.6 Flash / 3.5 Flash-Lite + Poolside Laguna S 2.1 + Z.ai GLM-5 family priced (were $0/$0)
+
+Three more model families picked up by the 2026-07-22
+cron pass:
+
+1. **Google Gemini 3.6 Flash + 3.5 Flash-Lite**
+   (released July 21, 2026, per Google's official blog
+   post + API page):
+   - `gemini-3.6-flash` — $1.50 / $7.50 (replaces 3.5 Flash; same input, lower output)
+   - `gemini-3.5-flash-lite` — $0.30 / $2.50 (cost-optimized)
+
+   Pre-fix: no 3.6 Flash or 3.5 Flash-Lite entries
+   existed; every call fell through to the unknown-model
+   $0/$0 fallback. The Gemini 3.5 Flash entry is
+   preserved (deprecated but still callable) with a
+   label note that 3.6 Flash replaces it.
+
+2. **Poolside Laguna S 2.1** (released July 21, 2026).
+   118B MoE with 8B active, 1M context. Per poolside's
+   blog post + OpenRouter:
+   - `poolside/laguna-s-2.1` — $0.10 / $0.20 (1M context, paid)
+   - `poolside/laguna-s-2.1:free` — $0 / $0 (256K context, free tier)
+
+   The `^poolside/laguna-s-2.1:free` pattern sits
+   ABOVE the bare `^poolside/laguna-s-2.1/` catch-all
+   so the explicit free-tier match wins on
+   first-match-wins iteration.
+
+3. **Z.ai / Zhipu GLM-5 family** (open weights, MIT
+   license). Per Vercel AI Gateway + ofox.ai pricing
+   summary (June 2026):
+   - `glm-5.2` — $1.40 / $4.40 (Jun 16, 2026; 1M ctx)
+   - `glm-5.2-fast` — $2.10 / $6.60 (Jun 23, 2026; 1M ctx)
+   - `glm-5.1` — $1.30 / $4.30 (Apr 7, 2026; long-horizon agentic)
+   - `glm-5-turbo` — $1.20 / $4.00 (Mar 15, 2026; 200K ctx)
+   - `glm-5` — $1.00 / $3.20 (Feb 13, 2026; 744B MoE / 40B active, MIT flagship)
+
+   The 5.2 and 5.1 patterns MUST come BEFORE the bare
+   `^glm-5/` and `^glm-5$` catch-alls (same prefix-
+   stealing class as o1-mini vs o1 / gpt-5.6 vs gpt-5).
+   The `zai/`-prefixed forms (Vercel AI Gateway) are
+   matched alongside the bare forms.
+
+3 new tests in `src/__tests__/cost-approval.test.ts`
+pin the Gemini 3.6 Flash / 3.5 Flash-Lite, Poolside
+Laguna S 2.1, and Z.ai GLM-5 pricing.
+
+844 → 847 pass / 0 fail across 53 files (+3 tests).
+`npm run typecheck` clean.
+
 ### Cost: Meituan LongCat-2.0 + Tencent Hy3 (Hunyuan 3) priced (were $0/$0)
 
 Two more model families picked up by the 2026-07-20/21

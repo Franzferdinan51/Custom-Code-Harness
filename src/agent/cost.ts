@@ -173,29 +173,32 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // the real per-call cost.
   { match: /^gpt-live-1/,            price: { input: 0,     output: 0,     provider: "openai", label: "GPT-Live-1 (voice, per-minute billing not in cost tracker)" } },
   { match: /^gpt-live-1-mini/,       price: { input: 0,     output: 0,     provider: "openai", label: "GPT-Live-1 mini (voice, per-minute billing not in cost tracker)" } },
-  // Google Gemini family. More-specific patterns (3.5-flash,
-  // 3.1-pro, 3.1-flash-lite, 2.5-flash-lite) must come BEFORE
-  // the bare /^gemini-/ catch-all to avoid the same
-  // prefix-stealing class as o1-mini vs o1. Pre-fix: no
-  // Gemini entries existed at all, so every Gemini call fell
-  // through to the unknown-model $0/$0 fallback (a real
-  // $2/$12 charge on 3.1 Pro silently reported as free).
-  // Pricing per Google's Gemini API page (verified July 2026).
+  // Google Gemini family. More-specific patterns (3.6-flash,
+  // 3.5-flash-lite, 3.5-flash, 3.1-pro, 3.1-flash-lite,
+  // 2.5-flash-lite) must come BEFORE the bare /^gemini-/
+  // catch-all to avoid the same prefix-stealing class as
+  // o1-mini vs o1. Pre-fix: no Gemini entries existed at
+  // all, so every Gemini call fell through to the
+  // unknown-model $0/$0 fallback (a real $2/$12 charge on
+  // 3.1 Pro silently reported as free). Pricing per
+  // Google's Gemini API page (verified July 2026).
   // Note: Gemini 3.1 Pro has a context-tiered rate ($2/$12
   // up to 200K, $4/$18 above 200K). The cost tracker only
   // models the standard rate; long-context requests are
   // under-charged — call out in the label so the user can
   // adjust if needed.
-  { match: /^gemini-3\.5-flash/,     price: { input: 1.50,  output: 9.00,  provider: "google", label: "Gemini 3.5 Flash" } },
+  { match: /^gemini-3\.6-flash/,     price: { input: 1.50,  output: 7.50,  provider: "google", label: "Gemini 3.6 Flash (Jul 21, 2026; replaces 3.5 Flash)" } },
+  { match: /^gemini-3\.5-flash-lite/,price: { input: 0.30,  output: 2.50,  provider: "google", label: "Gemini 3.5 Flash-Lite (Jul 21, 2026)" } },
+  { match: /^gemini-3\.5-flash/,     price: { input: 1.50,  output: 9.00,  provider: "google", label: "Gemini 3.5 Flash (deprecated by 3.6 Flash)" } },
   { match: /^gemini-3\.1-pro/,       price: { input: 2.00,  output: 12.00, provider: "google", label: "Gemini 3.1 Pro (≤200K context; long-context tier $4/$18 not modeled)" } },
   { match: /^gemini-3\.1-flash-lite/,price: { input: 0.25,  output: 1.50,  provider: "google", label: "Gemini 3.1 Flash-Lite" } },
   { match: /^gemini-3-flash/,        price: { input: 0.50,  output: 3.00,  provider: "google", label: "Gemini 3 Flash" } },
   { match: /^gemini-2\.5-pro/,       price: { input: 1.25,  output: 10.00, provider: "google", label: "Gemini 2.5 Pro" } },
   { match: /^gemini-2\.5-flash-lite/,price: { input: 0.10,  output: 0.40,  provider: "google", label: "Gemini 2.5 Flash-Lite" } },
   { match: /^gemini-2\.5-flash/,     price: { input: 0.30,  output: 2.50,  provider: "google", label: "Gemini 2.5 Flash" } },
-  { match: /^gemini-3/,              price: { input: 1.50,  output: 9.00,  provider: "google", label: "Gemini 3.x (unknown tier)" } },
+  { match: /^gemini-3/,              price: { input: 1.50,  output: 7.50,  provider: "google", label: "Gemini 3.x (unknown tier; default 3.6 Flash rate)" } },
   { match: /^gemini-2/,              price: { input: 0.30,  output: 2.50,  provider: "google", label: "Gemini 2.x (unknown tier)" } },
-  { match: /^gemini/,                price: { input: 1.50,  output: 9.00,  provider: "google", label: "Gemini (unknown tier)" } },
+  { match: /^gemini/,                price: { input: 1.50,  output: 7.50,  provider: "google", label: "Gemini (unknown tier)" } },
   // Kwaipilot KAT-Coder V2.5 family (released July 10, 2026).
   // Kuaishou's coding-focused agentic models. V2.5 supersedes
   // V2 (which was $0.30/$1.20). Two tiers: Pro at $0.74/$2.96
@@ -293,6 +296,42 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^thinkingmachines\/Inkling/,           price: { input: 1.87, output: 4.68, provider: "thinkingmachines", label: "Inkling 64K context (Tinker, $1.87/$4.68)" } },
   { match: /^thinkingmachines\/inkling/,            price: { input: 1.00, output: 4.05, provider: "openrouter",       label: "Inkling (OpenRouter gateway, $1.00/$4.05)" } },
   { match: /^inkling/,                              price: { input: 1.87, output: 4.68, provider: "thinkingmachines", label: "Inkling (direct)" } },
+  // Poolside Laguna S 2.1 (released July 21, 2026). 118B
+  // MoE with 8B active, 1M context. Per poolside's blog
+  // post + OpenRouter:
+  //   poolside/laguna-s-2.1  $0.10 / $0.20  (1M context, paid)
+  //   poolside/laguna-s-2.1:free  $0 / $0  (256K context, free)
+  // Pre-fix: no Laguna entries existed; every call fell
+  // through to the unknown-model $0/$0 fallback. The
+  // free-tier pattern MUST come BEFORE the bare
+  // `^poolside\/laguna-s-2\.1/` catch-all so the explicit
+  // free-tier match wins on first-match-wins iteration.
+  { match: /^poolside\/laguna-s-2\.1:free/, price: { input: 0, output: 0, provider: "poolside", label: "Laguna S 2.1 (free tier, 256K context)" } },
+  { match: /^poolside\/laguna-s-2\.1/,       price: { input: 0.10, output: 0.20, provider: "poolside", label: "Laguna S 2.1 (118B MoE / 8B active, 1M context, Jul 21, 2026)" } },
+  { match: /^laguna-s/,                     price: { input: 0.10, output: 0.20, provider: "poolside", label: "Laguna S (Poolside)" } },
+  // Z.ai / Zhipu GLM-5 family (open weights). Per Vercel
+  // AI Gateway catalog + ofox.ai pricing summary (June
+  // 2026):
+  //   glm-5.2        $1.40 / $4.40  (Jun 16, 2026; 1M ctx)
+  //   glm-5.2-fast   $2.10 / $6.60  (Jun 23, 2026; 1M ctx)
+  //   glm-5.1        $1.30 / $4.30  (Apr 7, 2026)
+  //   glm-5-turbo    $1.20 / $4.00  (Mar 15, 2026; 200K ctx)
+  //   glm-5          $1.00 / $3.20  (Feb 13, 2026; flagship)
+  // Pre-fix: no GLM-5 entries existed; every call fell
+  // through to the unknown-model $0/$0 fallback. The 5.2
+  // and 5.1 patterns MUST come BEFORE the bare `^glm-5/`
+  // and `^glm-5$` catch-alls (same prefix-stealing class
+  // as o1-mini vs o1 / gpt-5.6 vs gpt-5).
+  { match: /^zai\/glm-5\.2-fast/,   price: { input: 2.10,  output: 6.60,  provider: "zhipu", label: "Z.ai GLM-5.2 Fast (Jun 23, 2026)" } },
+  { match: /^glm-5\.2-fast/,        price: { input: 2.10,  output: 6.60,  provider: "zhipu", label: "Z.ai GLM-5.2 Fast" } },
+  { match: /^zai\/glm-5\.2/,         price: { input: 1.40,  output: 4.40,  provider: "zhipu", label: "Z.ai GLM-5.2 (Jun 16, 2026)" } },
+  { match: /^glm-5\.2/,              price: { input: 1.40,  output: 4.40,  provider: "zhipu", label: "Z.ai GLM-5.2" } },
+  { match: /^zai\/glm-5\.1/,         price: { input: 1.30,  output: 4.30,  provider: "zhipu", label: "Z.ai GLM-5.1 (Apr 7, 2026; long-horizon agentic)" } },
+  { match: /^glm-5\.1/,              price: { input: 1.30,  output: 4.30,  provider: "zhipu", label: "Z.ai GLM-5.1" } },
+  { match: /^zai\/glm-5-turbo/,      price: { input: 1.20,  output: 4.00,  provider: "zhipu", label: "Z.ai GLM-5 Turbo (Mar 15, 2026; agent workflows)" } },
+  { match: /^glm-5-turbo/,           price: { input: 1.20,  output: 4.00,  provider: "zhipu", label: "Z.ai GLM-5 Turbo" } },
+  { match: /^zai\/glm-5/,            price: { input: 1.00,  output: 3.20,  provider: "zhipu", label: "Z.ai GLM-5 (Feb 13, 2026; flagship)" } },
+  { match: /^glm-5/,                 price: { input: 1.00,  output: 3.20,  provider: "zhipu", label: "Z.ai GLM-5 (744B MoE / 40B active, MIT license)" } },
   // Google Gemma 4 (open weights, released June 2026).
   // Per Scaleway's catalog (the cheapest public reference
   // rate, July 2026): gemma-4-26b-a4b-it at $0.25 / $0.50.

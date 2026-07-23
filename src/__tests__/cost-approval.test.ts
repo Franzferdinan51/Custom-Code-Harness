@@ -609,6 +609,26 @@ test("priceFor: Qwen 3.6 / 3.7 + Qwen-Plus + Qwen-Turbo match (2026 line — wer
   assert.equal(turbo.provider, "alibaba");
   assert.match(turbo.label!, /Turbo/);
 
+  // Catch-all for unknown Qwen 3.7 tiers (e.g. a future
+  // qwen3.7-mini or qwen3.7-flash). Defaults to the 3.7
+  // Plus rate. Pre-fix: an unknown qwen3.7-* model id
+  // would fall through to the bare `^qwen/` catch-all at
+  // $0.40/$1.20 (Qwen Plus rate) — a reasonable but
+  // off-trend default. The explicit 3.7 catch-all pins
+  // the 3.7 Plus rate so a future regression where the
+  // 3.7-specific rows are dropped still lands the model
+  // on a sensible 3.7-era rate rather than the older
+  // 3.x rate.
+  const unknown37 = priceFor("qwen3.7-mini");
+  assert.equal(unknown37.input, 0.32);
+  assert.equal(unknown37.output, 1.28);
+  assert.match(unknown37.label!, /3\.7.*unknown/);
+
+  const unknown36 = priceFor("qwen3.6-pro");
+  assert.equal(unknown36.input, 0.325);
+  assert.equal(unknown36.output, 1.95);
+  assert.match(unknown36.label!, /3\.6.*unknown/);
+
   // callCost sanity check.
   // qwen3.6-flash 1M/1M = $0.25 + $1.50 = $1.75.
   assert.ok(Math.abs(callCost("qwen3.6-flash", 1_000_000, 1_000_000) - 1.75) < 0.01);

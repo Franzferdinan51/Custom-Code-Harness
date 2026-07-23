@@ -5,6 +5,37 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: `^qwen3.7/` catch-all added for unknown Qwen 3.7 tiers (table symmetry)
+
+The cost table had a `^qwen3.6/` catch-all (for unknown
+Qwen 3.6 tiers) but no equivalent `^qwen3.7/` row. An
+unknown Qwen 3.7 model id (e.g. a future `qwen3.7-mini`
+or `qwen3.7-flash`) would fall through to the bare
+`^qwen/` catch-all at $0.40/$1.20 (the older Qwen Plus
+rate) — a reasonable but off-trend default for a 3.7-era
+model.
+
+Fix: add an explicit `^qwen3.7/` row at the 3.7 Plus
+rate ($0.32 / $1.28) as the default for any future
+Qwen 3.7 tier. The 3.7-specific rows (`^qwen3.7-max`,
+`^qwen3.7-plus`) sit ABOVE the new catch-all so the
+explicit entries win on first-match-wins iteration.
+Same shape as the existing `^qwen3.6/` catch-all.
+
+This is a forward-compatibility enhancement, not a
+deletion — the unknown-tier row is purely additive.
+The cost UI now reports "Qwen 3.7 (unknown tier; default
+3.7 Plus rate)" for any future Qwen 3.7 model id
+that doesn't match a specific row.
+
+Two new assertions in the existing Qwen test pin
+`qwen3.7-mini` (catch-all match) and `qwen3.6-pro`
+(the pre-existing 3.6 catch-all).
+
+847 → 847 pass / 0 fail across 53 files (no new test
+file, additional assertions in the Qwen test).
+`npm run typecheck` clean.
+
 ### Cost: Gemini 3.6 Flash / 3.5 Flash-Lite + Poolside Laguna S 2.1 + Z.ai GLM-5 family priced (were $0/$0)
 
 Three more model families picked up by the 2026-07-22

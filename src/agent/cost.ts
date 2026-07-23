@@ -276,6 +276,7 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^qwen3\.5-plus/,        price: { input: 0.40,  output: 2.40,  provider: "alibaba", label: "Qwen 3.5 Plus (Apr 2026)" } },
   { match: /^qwen-plus/,            price: { input: 0.40,  output: 1.20,  provider: "alibaba", label: "Qwen Plus (stable alias)" } },
   { match: /^qwen-turbo/,           price: { input: 0.05,  output: 0.20,  provider: "alibaba", label: "Qwen Turbo (cheapest text tier)" } },
+  { match: /^qwen3\.7/,             price: { input: 0.32,  output: 1.28,  provider: "alibaba", label: "Qwen 3.7 (unknown tier; default 3.7 Plus rate)" } },
   { match: /^qwen3\.6/,             price: { input: 0.325, output: 1.95,  provider: "alibaba", label: "Qwen 3.6 (unknown tier)" } },
   { match: /^qwen/,                 price: { input: 0.40,  output: 1.20,  provider: "alibaba", label: "Qwen (unknown tier)" } },
   // Thinking Machines Inkling (released July 15, 2026).

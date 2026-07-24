@@ -113,6 +113,54 @@ test("export: share format redacts Groq / Perplexity / NVIDIA NIM API key prefix
   }
 });
 
+test("export: share format redacts Hugging Face / Replicate / Cohere / GitLab / Postman key prefixes", async () => {
+  // Pre-fix: SECRET_RE covered OpenAI, Anthropic, xAI,
+  // GitHub, AWS, Google, Groq, Perplexity, NVIDIA NIM —
+  // but missed several other common developer-API key
+  // prefixes that show up in LLM-adjacent workflows:
+  //   hf_    Hugging Face (used to pull models + Inference API)
+  //   r8_    Replicate
+  //   co-    Cohere
+  //   glpat- GitLab personal access token
+  //   PMAK-  Postman API key
+  // A session that pasted any of these into a user message
+  // and then exported in `share` format would have leaked
+  // the key verbatim — same class of bug as the
+  // gsk-/pplx-/nvapi- fix. Fix: extend SECRET_RE to match
+  // all five. The test pins the redaction for each prefix.
+  const cwd = freshDir();
+  try {
+    const s = await makeSession(cwd, "share-vendor-keys-2");
+    await s.append({
+      kind: "message",
+      message: {
+        role: "user",
+        // Each key is 24+ chars after the prefix to match
+        // the {20,} shape in SECRET_RE.
+        content:
+          "hf_" + "A".repeat(24) +
+          " r8_" + "B".repeat(24) +
+          " co-" + "C".repeat(24) +
+          " glpat-" + "D".repeat(24) +
+          " PMAK-" + "E".repeat(24),
+      },
+    });
+    const out = freshDir();
+    const r = await exportSession(s, { format: "share", outDir: out });
+    const content = readFileSync(r.path, "utf-8");
+    assert.ok(!content.includes("hf_" + "A".repeat(24)), "hf_ key should be redacted");
+    assert.ok(!content.includes("r8_" + "B".repeat(24)), "r8_ key should be redacted");
+    assert.ok(!content.includes("co-" + "C".repeat(24)), "co- key should be redacted");
+    assert.ok(!content.includes("glpat-" + "D".repeat(24)), "glpat- key should be redacted");
+    assert.ok(!content.includes("PMAK-" + "E".repeat(24)), "PMAK- key should be redacted");
+    // All five should be replaced with the [REDACTED] marker.
+    const redactions = content.match(/\[REDACTED\]/g) ?? [];
+    assert.ok(redactions.length >= 5, "expected at least 5 redactions, got " + redactions.length);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("export: share format replaces absolute cwd paths with relative", async () => {
   const cwd = freshDir();
   try {

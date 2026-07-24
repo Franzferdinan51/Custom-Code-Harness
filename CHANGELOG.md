@@ -5,6 +5,37 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Trajectory: `share` format now redacts 5 more key prefixes (Hugging Face / Replicate / Cohere / GitLab / Postman)
+
+`src/agent/trajectory.ts:139` `SECRET_RE` previously
+covered OpenAI (`sk-`), Anthropic (`sk-ant-`), xAI
+(`xai-`), GitHub (`ghp_` / `github_pat_`), AWS
+(`AKIA`), Google (`AIza`), Groq (`gsk-`),
+Perplexity (`pplx-`), NVIDIA NIM (`nvapi-`), and
+PEM private keys — but missed several other
+common developer-API key prefixes that show up in
+LLM-adjacent workflows:
+
+- `hf_` — Hugging Face (used to pull models + Inference API)
+- `r8_` — Replicate
+- `co-` — Cohere
+- `glpat-` — GitLab personal access token
+- `PMAK-` — Postman API key
+
+A session that pasted any of these into a user
+message and then exported in `share` format would
+have leaked the key verbatim — same class of bug
+as the `gsk-` / `pplx-` / `nvapi-` fix from 2026-07-16.
+Fix: extend `SECRET_RE` to match all five. The
+regex now covers the 12 most-common LLM-adjacent
+API key prefixes.
+
+One new test in `src/__tests__/trajectory.test.ts`
+pins the redaction for each of the 5 new prefixes.
+
+847 → 848 pass / 0 fail across 53 files (+1 test).
+`npm run typecheck` clean.
+
 ### Cost: `^qwen3.7/` catch-all added for unknown Qwen 3.7 tiers (table symmetry)
 
 The cost table had a `^qwen3.6/` catch-all (for unknown

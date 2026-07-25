@@ -553,6 +553,43 @@ test("priceFor: Mistral Medium 3.5 / Large 3 / Small 4 match the current Mistral
   assert.ok(Math.abs(callCost("mistral-small-4", 1_000_000, 1_000_000) - 0.75) < 0.01);
 });
 
+test("priceFor: Mistral Leanstral 1.5 (Lean 4 prover) priced (was $0/$0 unknown fallback)", () => {
+  // Mistral released Leanstral 1.5 on 2026-07-02. A 119B/6B-active
+  // MoE specialized for Lean 4 formal verification, Apache-2.0,
+  // free API endpoint accessible as `leanstral-1-5`. PutnamBench
+  // 587/672, miniF2F 100%, FLTEval pass@8 43.2 (above Opus 4.6
+  // at ~1/7 the cost). Mistral's model card explicitly lists
+  // $0 list price. The HF org-prefixed form is also handled.
+  // Pre-fix: no Leanstral entry existed, so every call fell
+  // through to the unknown-model $0/$0 fallback and showed up
+  // in the cost UI as a generic placeholder rather than as
+  // the recognized model. The `leanstral-1.5` pattern must
+  // come BEFORE the bare `^leanstral/` catch-all (same prefix-
+  // stealing class as o1-mini vs o1 / gpt-5.6 vs gpt-5).
+  const leanstral = priceFor("leanstral-1.5");
+  assert.equal(leanstral.input, 0.00);
+  assert.equal(leanstral.output, 0.00);
+  assert.equal(leanstral.provider, "mistral");
+  assert.match(leanstral.label!, /Leanstral 1\.5/);
+
+  // HF org-prefixed form (mistralai/Leanstral-1.5-119B-A6B).
+  const leanstralHF = priceFor("mistralai/leanstral-1.5-119b-a6b");
+  assert.equal(leanstralHF.input, 0.00);
+  assert.equal(leanstralHF.output, 0.00);
+  assert.equal(leanstralHF.provider, "mistral");
+  assert.match(leanstralHF.label!, /Leanstral/);
+
+  // catch-all for any future Leanstral version.
+  const leanstralFuture = priceFor("leanstral-1.6");
+  assert.equal(leanstralFuture.input, 0.00);
+  assert.equal(leanstralFuture.output, 0.00);
+  assert.equal(leanstralFuture.provider, "mistral");
+  assert.match(leanstralFuture.label!, /unknown version/);
+
+  // callCost sanity: 1M/1M on a free model is $0.
+  assert.equal(callCost("leanstral-1.5", 1_000_000, 1_000_000), 0);
+});
+
 test("priceFor: Qwen 3.6 / 3.7 + Qwen-Plus + Qwen-Turbo match (2026 line — were $0/$0)", () => {
   // Alibaba's Qwen family (verified via OpenRouter +
   // eesel.ai's pricing summary, July 2026):

@@ -5,6 +5,32 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: Mistral Leanstral 1.5 priced (was $0/$0 unknown fallback)
+
+The cost table picked up Mistral's Leanstral 1.5 (released
+2026-07-02), a 119B/6B-active MoE specialized for Lean 4
+formal verification (PutnamBench 587/672, miniF2F 100%,
+FLTEval pass@8 43.2 — above Opus 4.6 at ~1/7 the cost).
+Apache-2.0, weights on Hugging Face, and a free API
+endpoint accessible as `leanstral-1-5`. Mistral's model
+card explicitly lists $0 list price.
+
+- `leanstral-1.5` — $0.00 / $0.00 (free API, 119B/6B-active)
+- `mistralai/leanstral-1.5-119b-a6b` — $0.00 / $0.00 (HF org-prefixed form)
+- `leanstral-*` catch-all — $0.00 / $0.00 (any future Leanstral version)
+
+Pre-fix: no Leanstral entry existed, so every call fell
+through to the unknown-model $0/$0 fallback and showed up
+in the cost UI as a generic placeholder rather than as the
+recognized model. The `leanstral-1.5` pattern must come
+BEFORE the bare `^leanstral/` catch-all (same prefix-
+stealing class as o1-mini vs o1 / gpt-5.6 vs gpt-5).
+
+One new test in `src/__tests__/cost-approval.test.ts`
+pins the Leanstral 1.5 pricing.
+
+849 → 850 pass / 0 fail across 53 files (+1 test).
+
 ### Cost: Cohere Command family priced (were $0/$0)
 
 The cost table picked up Cohere's current production

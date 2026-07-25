@@ -251,6 +251,20 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^mistral-medium-3\.1/,   price: { input: 0.40,  output: 2.00,  provider: "mistral", label: "Mistral Medium 3.1" } },
   { match: /^mistral-large-3/,       price: { input: 0.50,  output: 1.50,  provider: "mistral", label: "Mistral Large 3 (value workhorse)" } },
   { match: /^mistral-small-4/,       price: { input: 0.15,  output: 0.60,  provider: "mistral", label: "Mistral Small 4 (budget tier)" } },
+  // Mistral Leanstral 1.5 (released 2026-07-02). A 119B/6B-active
+  // MoE specialized for Lean 4 formal verification (PutnamBench
+  // 587/672, miniF2F 100%, FLTEval pass@8 43.2 — above Opus 4.6
+  // at 1/7 the cost). Apache-2.0, weights on Hugging Face, and a
+  // free API endpoint accessible as `leanstral-1-5` (Mistral's
+  // card explicitly notes $0 list price). Pre-fix: no Leanstral
+  // entry existed, so every call fell through to the unknown-
+  // model $0/$0 fallback and showed up in the cost UI as a
+  // generic placeholder. The specific `leanstral-1-5` pattern
+  // must come BEFORE the bare `^leanstral/` catch-all (same
+  // prefix-stealing class as o1-mini vs o1).
+  { match: /^mistralai\/leanstral-1\.5/,   price: { input: 0.00,  output: 0.00,  provider: "mistral", label: "Mistral Leanstral 1.5 (Lean 4 prover, free API; via HF org)" } },
+  { match: /^leanstral-1\.5/,              price: { input: 0.00,  output: 0.00,  provider: "mistral", label: "Mistral Leanstral 1.5 (Lean 4 prover, free API)" } },
+  { match: /^leanstral/,                   price: { input: 0.00,  output: 0.00,  provider: "mistral", label: "Mistral Leanstral (unknown version; free API)" } },
   { match: /^mistral-medium/,        price: { input: 1.50,  output: 7.50,  provider: "mistral", label: "Mistral Medium (unknown tier; default 3.5 rate)" } },
   // OpenRouter passthrough prices (rough)
   { match: /llama-3\.1-405b/,         price: { input: 3.50,  output: 3.50,  provider: "openrouter", label: "Llama 3.1 405B" } },

@@ -341,6 +341,25 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^gemma-4-26b-a4b-it/,   price: { input: 0.25,  output: 0.50,  provider: "google", label: "Gemma 4 26B A4B IT (open weights, June 2026)" } },
   { match: /^gemma-4/,              price: { input: 0.25,  output: 0.50,  provider: "google", label: "Gemma 4 (unknown tier)" } },
   { match: /^gemma/,                price: { input: 0.25,  output: 0.50,  provider: "google", label: "Gemma (unknown tier)" } },
+  // Cohere Command family. Per Cohere's published pricing
+  // (cohere.com/pricing, verified July 2026):
+  //   command-a          $2.50 / $10.00  (current flagship, 2026)
+  //   command-r-plus     $2.50 / $10.00  (legacy flagship, Aug 2024)
+  //   command-r          $0.15 / $0.60   (RAG-optimized mid-tier)
+  //   command-r7b        $0.0375 / $0.15 (cheapest chat model)
+  // The `command-a` and `command-r-plus` are priced
+  // identically ($2.50/$10.00) but have distinct labels.
+  // The more-specific patterns MUST come BEFORE the bare
+  // `^command/` catch-all (same prefix-stealing class as
+  // o1-mini vs o1 / gpt-5.6 vs gpt-5). Pre-fix: no Cohere
+  // entries existed; every call fell through to the
+  // unknown-model $0/$0 fallback.
+  { match: /^command-a/,            price: { input: 2.50,  output: 10.00, provider: "cohere", label: "Cohere Command A (current flagship, 2026)" } },
+  { match: /^command-r-plus/,       price: { input: 2.50,  output: 10.00, provider: "cohere", label: "Cohere Command R+ (Aug 2024)" } },
+  { match: /^command-r-08/,         price: { input: 0.15,  output: 0.60,  provider: "cohere", label: "Cohere Command R (Aug 2024)" } },
+  { match: /^command-r7b/,          price: { input: 0.0375, output: 0.15,  provider: "cohere", label: "Cohere Command R7B (cheapest chat)" } },
+  { match: /^command-r/,            price: { input: 0.15,  output: 0.60,  provider: "cohere", label: "Cohere Command R (RAG-optimized mid-tier)" } },
+  { match: /^command/,              price: { input: 1.00,  output: 2.00,  provider: "cohere", label: "Cohere Command (legacy, 2023)" } },
   // Meituan LongCat family (released June 30, 2026; the
   // 2.0 line is the agentic-coding flagship). Per Meituan's
   // published pricing (July 20, 2026):

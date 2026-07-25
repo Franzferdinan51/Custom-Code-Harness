@@ -863,6 +863,56 @@ test("priceFor: Z.ai GLM-5 family (5.2, 5.1, Turbo, base) priced (were $0/$0)", 
   assert.ok(Math.abs(callCost("glm-5.2", 1_000_000, 1_000_000) - 5.80) < 0.01);
 });
 
+test("priceFor: Cohere Command family (A, R+, R, R7B) priced (were $0/$0)", () => {
+  // Cohere's current production lineup per cohere.com/
+  // pricing (verified July 2026):
+  //   command-a          $2.50 / $10.00  (current flagship, 2026)
+  //   command-r-plus     $2.50 / $10.00  (legacy flagship, Aug 2024)
+  //   command-r          $0.15 / $0.60   (RAG-optimized mid-tier)
+  //   command-r7b        $0.0375 / $0.15 (cheapest chat model)
+  // Pre-fix: no Cohere entries existed; every call fell
+  // through to the unknown-model $0/$0 fallback. The
+  // `command-a` and `command-r-plus` patterns MUST come
+  // BEFORE the bare `^command/` catch-all (same prefix-
+  // stealing class as o1-mini vs o1 / gpt-5.6 vs gpt-5).
+  // The `command-r7b` pattern MUST come BEFORE the
+  // `command-r` catch-all (otherwise it would match as
+  // command-r with the wrong rate).
+  const cmdA = priceFor("command-a");
+  assert.equal(cmdA.input, 2.50);
+  assert.equal(cmdA.output, 10.00);
+  assert.equal(cmdA.provider, "cohere");
+  assert.match(cmdA.label!, /Command A/);
+
+  const cmdRPlus = priceFor("command-r-plus");
+  assert.equal(cmdRPlus.input, 2.50);
+  assert.equal(cmdRPlus.output, 10.00);
+  assert.equal(cmdRPlus.provider, "cohere");
+  assert.match(cmdRPlus.label!, /Command R\+/);
+
+  const cmdR = priceFor("command-r");
+  assert.equal(cmdR.input, 0.15);
+  assert.equal(cmdR.output, 0.60);
+  assert.equal(cmdR.provider, "cohere");
+
+  const cmdR7b = priceFor("command-r7b");
+  assert.equal(cmdR7b.input, 0.0375);
+  assert.equal(cmdR7b.output, 0.15);
+  assert.equal(cmdR7b.provider, "cohere");
+  assert.match(cmdR7b.label!, /cheapest/);
+
+  // Dated model id form (`command-r-08-2024`).
+  const cmdR08 = priceFor("command-r-08-2024");
+  assert.equal(cmdR08.input, 0.15);
+  assert.equal(cmdR08.output, 0.60);
+
+  // callCost sanity checks.
+  // Command A 1M/1M = $2.50 + $10.00 = $12.50.
+  assert.ok(Math.abs(callCost("command-a", 1_000_000, 1_000_000) - 12.50) < 0.01);
+  // Command R7B 1M/1M = $0.0375 + $0.15 = $0.1875.
+  assert.ok(Math.abs(callCost("command-r7b", 1_000_000, 1_000_000) - 0.1875) < 0.001);
+});
+
 test("priceFor: Claude Fable 5 + Mythos 5 match at $10/$50 (Mythos-class, were $0/$0)", () => {
   // Anthropic launched the Mythos-class models on June 9,
   // 2026: claude-fable-5 (public, with safety classifiers)

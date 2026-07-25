@@ -5,6 +5,31 @@ All notable changes to CodingHarness are documented here. Format follows
 
 ## Unreleased
 
+### Cost: Cohere Command family priced (were $0/$0)
+
+The cost table picked up Cohere's current production
+lineup per cohere.com/pricing (verified July 2026):
+
+- `command-a` — $2.50 / $10.00 (current flagship, 2026)
+- `command-r-plus` — $2.50 / $10.00 (legacy flagship, Aug 2024)
+- `command-r` — $0.15 / $0.60 (RAG-optimized mid-tier)
+- `command-r7b` — $0.0375 / $0.15 (cheapest chat model)
+
+Pre-fix: no Cohere entries existed; every call fell
+through to the unknown-model $0/$0 fallback. The
+`command-a` and `command-r-plus` patterns MUST come
+BEFORE the bare `^command/` catch-all (same prefix-
+stealing class as o1-mini vs o1 / gpt-5.6 vs gpt-5).
+The `command-r7b` pattern MUST come BEFORE the
+`command-r` catch-all (otherwise it would match as
+command-r with the wrong rate).
+
+One new test in `src/__tests__/cost-approval.test.ts`
+pins the Cohere Command family pricing.
+
+848 → 849 pass / 0 fail across 53 files (+1 test).
+`npm run typecheck` clean.
+
 ### Trajectory: `share` format now redacts 5 more key prefixes (Hugging Face / Replicate / Cohere / GitLab / Postman)
 
 `src/agent/trajectory.ts:139` `SECRET_RE` previously

@@ -11,7 +11,7 @@ import {
 } from "../doctor.js";
 import { resetSettingsCache } from "../config/settings.js";
 
-describe("doctor (OpenClaw-style)", () => {
+describe("doctor (GrokBot-style; formerly OpenClaw-style)", () => {
   test("summarizeDiagnostics counts errors and warnings", () => {
     const summary = summarizeDiagnostics([
       { name: "a", status: "ok", message: "fine" },

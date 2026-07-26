@@ -134,7 +134,7 @@ registerSubcommand("loop", "Re-send the previous (or new) prompt N times, with o
   "ch loop [N] [sentinel] <prompt>  (or: ch loop N)",
   async (ctx) => { return runLoopCmd(ctx); });
 
-registerSubcommand("doctor", "Run diagnostics (OpenClaw-style: --lint --json --fix).",
+registerSubcommand("doctor", "Run diagnostics (GrokBot-style: --lint --json --fix).",
   "ch doctor [--lint] [--json] [--fix]",
   async (ctx) => { return runDoctorCmd(ctx); });
 
@@ -142,7 +142,7 @@ registerSubcommand("welcome", "Print the quick-start card (4 commands to get goi
   "ch welcome",
   async (_ctx) => { return runWelcomeCmd(); });
 
-registerSubcommand("onboard", "First-run setup wizard (OpenClaw-style auth choices).",
+registerSubcommand("onboard", "First-run setup wizard (GrokBot-style auth choices).",
   "ch onboard [--provider <id>] [--oauth | --api-key <key>]",
   async (ctx) => { return runOnboardCmd(ctx); });
 
@@ -214,7 +214,7 @@ registerSubcommand("web", "Start the server AND open the web UI in your default 
   "ch web [--port <n>] [--host <addr>]",
   async (ctx) => { return runWebCmd(ctx); });
 
-registerSubcommand("update", "Update CodingHarness to the latest version and rebuild.",
+registerSubcommand("update", "Update GrokBot to the latest version and rebuild.",
   "ch update [--check] [--channel stable|beta|dev]",
   async (ctx) => { return runUpdateCmd(ctx); });
 
@@ -269,16 +269,16 @@ function showHelp(cmd?: string): number {
       names: ["mcp", "update"] },
   ];
   const lines: string[] = [
-    "CodingHarness — a versatile terminal coding harness.",
+    "GrokBot — a versatile terminal coding harness built on Grok Build CLI.",
     "",
     "Usage: ch <subcommand> [args...]",
     "",
-    "Quick start (OpenCode server-first + OpenClaw onboarding):",
+    "Quick start (OpenCode server-first + GrokBot onboarding):",
     "  ch                        # open the TUI",
     "  ch serve                  # start the shared HTTP sidecar",
     "  ch attach http://127.0.0.1:7777   # terminal client to that server",
     "  ch web / ch desktop       # browser or Electron shell (same backend)",
-    "  ch onboard --provider minimax --oauth   # OpenClaw-style provider auth",
+    "  ch onboard --provider minimax --oauth   # GrokBot-style provider auth",
     "  ch doctor --lint --json   # CI-friendly health check",
     "",
   ];
@@ -353,9 +353,9 @@ async function main(): Promise<number> {
   }
 
   if (argv[0] === "help") return showHelp(argv[1]);
-  if (argv[0] === "version") { process.stdout.write("CodingHarness " + VERSION + "\n"); return 0; }
+  if (argv[0] === "version") { process.stdout.write("GrokBot " + VERSION + "\n"); return 0; }
   if (argv[0] === "-h" || argv[0] === "--help") return showHelp();
-  if (argv[0] === "-v" || argv[0] === "--version") { process.stdout.write("CodingHarness " + VERSION + "\n"); return 0; }
+  if (argv[0] === "-v" || argv[0] === "--version") { process.stdout.write("GrokBot " + VERSION + "\n"); return 0; }
 
   const sub = SUBCOMMANDS.get(argv[0]!);
   if (sub) {
@@ -901,7 +901,7 @@ async function runOnboardCmd(ctx: SubcommandContext): Promise<number> {
     if (useOauth && preset.authModes.includes("oauth")) {
       const { createInterface } = await import("node:readline");
       const { execFile } = await import("node:child_process");
-      process.stdout.write("OpenClaw-style OAuth setup for " + preset.label + "\n");
+      process.stdout.write("GrokBot-style OAuth setup for " + preset.label + "\n");
       if (preset.authLaunchUrl) {
         process.stdout.write("  1. Sign in: " + preset.authLaunchUrl + "\n");
         const cmd = process.platform === "darwin" ? "open" :

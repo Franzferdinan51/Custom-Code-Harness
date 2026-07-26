@@ -1,7 +1,7 @@
 // All built-in slash commands. Primary CLI/desktop influences:
 //   OpenCode — server-first (`ch serve` + `ch attach`), @file / !shell
 //              prefixes, Build/Plan modes, desktop sidecar shell.
-//   OpenClaw — `/status`, `/think`, `/verbose`, `/trace`, doctor --lint,
+//   GrokBot (formerly OpenClaw) — `/status`, `/think`, `/verbose`, `/trace`, doctor --lint,
 //              onboard auth choices, SOUL.md/TOOLS.md workspace context.
 // Also borrowed from Hermes, pi, openclaude, and goose.
 

@@ -1,6 +1,6 @@
-// CodingHarness desktop features — desktop integration for the
+// GrokBot desktop features — desktop integration for the
 // Electron shell, modeled on the patterns that openai/codex and
-// openclaw use for their desktop apps.
+// GrokBot (formerly OpenClaw) use for their desktop apps.
 //
 // 1. safeStorage for API keys
 //    The web server currently stores API keys in plain settings.json.

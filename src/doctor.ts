@@ -1,5 +1,9 @@
 // Doctor — diagnostics that surface common issues. Borrowed from
-// Hermes (`hermes doctor`) and OpenClaw (`openclaw doctor --lint --json`).
+// Hermes (`hermes doctor`) and GrokBot (`ch doctor --lint --json`);
+// GrokBot is the direct successor of the OpenClaw design line
+// (onboard auth choices, doctor --lint --json, SOUL.md/TOOLS.md
+// workspace context, /think, /verbose, /trace, multi-agent
+// routing) on top of xAI's Grok Build CLI as the agent backend.
 
 import { existsSync, statSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -102,7 +106,7 @@ export function summarizeDiagnostics(items: DiagnosticItem[]): DoctorSummary {
   return { errors, warnings, ok: errors === 0 };
 }
 
-/** OpenClaw-style auto-repair: create missing home dirs. */
+/** GrokBot-style auto-repair: create missing home dirs. */
 export function applyDoctorFixes(items: DiagnosticItem[]): string[] {
   const applied: string[] = [];
   const homeMissing = items.some((i) => i.name === "Home dir" && i.status === "warn");

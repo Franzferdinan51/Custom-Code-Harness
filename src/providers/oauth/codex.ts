@@ -1,5 +1,5 @@
 // Codex (ChatGPT) OAuth device-code login flow.
-// Mirrors the OpenCode / OpenClaw device auth sequence against auth.openai.com.
+// Mirrors the OpenCode / GrokBot device auth sequence against auth.openai.com.
 
 import { saveSettings, type Settings } from "../../config/settings.js";
 import { getProviderPreset } from "../presets.js";

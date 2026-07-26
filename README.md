@@ -330,17 +330,21 @@ A full **sub-agent** system, a **skills** system following the
 **cron scheduling**, **30+ slash commands**, **doctor diagnostics**,
 a fresh **extension manifest** format, a **`serve` mode** that
 exposes the agent over HTTP, a full **TUI**, and a self-updater —
-all inspired by the best parts of Hermes, OpenClaw, openclaude, pi,
-goose, and codex.
+all inspired by the best parts of Grok Build CLI, Hermes, OpenClaw,
+openclaude, pi, goose, and codex. The product is now called
+**GrokBot**: the local harness / TUI / desktop shell, with
+[Grok Build CLI](https://github.com/xai-org/grok-build) as the
+primary coding-agent backend.
 
-| From              | What we pulled                                                                                |
-| ----------------- | --------------------------------------------------------------------------------------------- |
-| **Hermes**        | Sub-agents with isolation, skills system, memory, cron, doctor, multi-provider, retry/undo   |
-| **OpenClaw**      | Multi-agent routing, AGENTS.md/SOUL.md context files, sandbox flag, sessions_spawn, /compact  |
-| **openclaude**    | Per-agent model routing (`agentRouting`), gRPC-style headless server hooks (extensible)        |
-| **goose**         | Recipe pattern → `/goal` auto-planner; self-test recipe philosophy                            |
-| **pi**            | Minimal core, JSONL sessions with tree, prompt templates, extensions, "no MCP" stance         |
-| **codex**         | ChatGPT OAuth detection in registry, prompt-caching mindset, sandbox thinking                 |
+| From                | What we pulled                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| **Grok Build CLI**  | Coding-agent backend; `grok -p … --output-format streaming-json` is the canonical transport   |
+| **Hermes**          | Sub-agents with isolation, skills system, memory, cron, doctor, multi-provider, retry/undo   |
+| **OpenClaw** (hist.)| Multi-agent routing, AGENTS.md/SOUL.md context files, sandbox flag, sessions_spawn, /compact  |
+| **openclaude**      | Per-agent model routing (`agentRouting`), gRPC-style headless server hooks (extensible)        |
+| **goose**           | Recipe pattern → `/goal` auto-planner; self-test recipe philosophy                            |
+| **pi** (hist.)      | Minimal core, JSONL sessions with tree, prompt templates, extensions, "no MCP" stance         |
+| **codex**           | ChatGPT OAuth detection in registry, prompt-caching mindset, sandbox thinking                 |
 
 ## Quick start
 

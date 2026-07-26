@@ -16,7 +16,7 @@ bypass auth. The full route table is the `ROUTES` array at the top of
 `src/server.ts` and is the single source of truth — adding a new endpoint
 without an entry there fails the `server-expansion` test.
 
-**Design influences (primary):** [OpenCode](https://opencode.ai) (server-first CLI/desktop — `ch serve` + `ch attach` + shared web UI, OpenTUI, `@file` / `!shell` input prefixes, Build/Plan modes) and [OpenClaw](https://openclaw.ai) (onboard auth choices, doctor `--lint --json`, SOUL.md/TOOLS.md workspace context, `/think`/`/verbose`/`/trace` directives, multi-agent routing).
+**Design influences (primary):** [Grok Build CLI](https://github.com/xai-org/grok-build) (the xAI coding-agent backend — `grok -p … --output-format streaming-json` is the canonical transport for autonomous turns), [OpenCode](https://opencode.ai) (server-first CLI/desktop — `ch serve` + `ch attach` + shared web UI, OpenTUI, `@file` / `!shell` input prefixes, Build/Plan modes), and the historical [OpenClaw](https://openclaw.ai) patterns (onboard auth choices, doctor `--lint --json`, SOUL.md/TOOLS.md workspace context, `/think`/`/verbose`/`/trace` directives, multi-agent routing). The product name is now **GrokBot** — the agent harness, not the cloud backend. Grok Build remains the sole coding-agent runtime; GrokBot is the local harness / TUI / desktop shell that calls it.
 
 ## Setup commands
 

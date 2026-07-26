@@ -1,9 +1,66 @@
 # Changelog
 
-All notable changes to CodingHarness are documented here. Format follows
-[Keep a Changelog](https://keepachangelog.com/).
+All notable changes to CodingHarness / GrokBot are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/).
+
+> **Identity update (2026-07-25):** the project is now **GrokBot**, the
+> local agent / TUI / desktop shell that calls xAI's
+> [Grok Build CLI](https://github.com/xai-org/grok-build) as the
+> coding-agent backend. The package name `codingharness`, the
+> `~/.codingharness/` home dir, and the `CODINGHARNESS_HOME` env var
+> remain in place for backward compatibility with existing user
+> installs; the user-facing strings, subcommand descriptions, and
+> comments are now GrokBot. OpenClaw is preserved as the historical
+> design-attribution ancestor (see `AGENTS.md` and the influences
+> table in `README.md`).
 
 ## Unreleased
+
+### Rebrand: OpenClaw → GrokBot (identity, comments, subcommand descriptions)
+
+User-facing strings now identify the project as **GrokBot**, the
+local harness / TUI / desktop shell built on xAI's
+[Grok Build CLI](https://github.com/xai-org/grok-build). Two commits:
+
+- `d5747f6 docs(rebrand): OpenClaw → GrokBot identity — add Grok Build CLI as primary`
+  - `AGENTS.md` — adds Grok Build CLI as the primary coding-agent
+    backend, marks the project as GrokBot, retains OpenClaw as a
+    historical design influence.
+  - `README.md` — adds Grok Build CLI as the first row in the
+    influences table; marks OpenClaw and pi as historical.
+- `15c4fd7 fix(rebrand): src/ subcommand descriptions + comments → GrokBot`
+  - `src/cli.ts` — user-facing strings:
+    `doctor` / `onboard` / `update` subcommand descriptions,
+    welcome line (`ch` with no args), `--version` / `version`
+    banner, OAuth setup line, quick-start card.
+  - `src/doctor.ts`, `src/providers/oauth/codex.ts`,
+    `src/agent/context.ts`, `src/slash/builtin.ts`,
+    `electron/desktop-features.cjs` — top-of-file / inline
+    comments.
+  - `src/__tests__/doctor.test.ts` — describe label.
+
+Out of scope (will move in a coordinated follow-up that updates
+the corresponding tests and bumps the migration guide):
+
+- `package.json` `name: "codingharness"` (also `productName`,
+  `appId`) — kept for backward compat with existing installs.
+- `src/runtime/info.ts:70` `"CodingHarness " + version` (ch info
+  banner) — checked by `desktop-cmd.test.ts:123`.
+- `src/mcp-server.ts:63` `SERVER_INFO.name = "codingharness"` and
+  the `: codingharness mcp stream\n\n` comment line — checked by
+  `mcp-server.test.ts`.
+- `~/.codingharness/` home dir and `CODINGHARNESS_HOME` env var —
+  checked by `omni-providers.test.ts`, `provider-presets.test.ts`,
+  `workflow-store.test.ts`, `trajectory.test.ts`, `mcp-client.test.ts`.
+
+The new branch `grokbot-rebrand-from-custom-code-harness` is
+also pushed to `https://github.com/Franzferdinan51/GrokBot` so
+the rebrand is visible there for review / merge without
+overwriting GrokBot's existing `main` branch (which is a
+different, more-advanced project — see the cron report for
+2026-07-25).
+
+850 pass / 0 fail across 53 files. typecheck clean.
 
 ### Cost: Mistral Leanstral 1.5 priced (was $0/$0 unknown fallback)
 

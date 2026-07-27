@@ -546,7 +546,7 @@ async function runSimpleRepl(runtime: HarnessRuntime, ctx: SubcommandContext & {
       runtime.settings.ui?.verbose ? "verbose" : "",
       runtime.settings.ui?.trace ? "trace" : "",
     ].filter(Boolean).join(" · ");
-    process.stdout.write(c.bold("CodingHarness") + c.gray(" · ") + c.cyan(provider) + c.gray(" · ") + c.gray(model) + c.gray(" · ") + c.dim("thinking " + thinking) + (flags ? c.gray(" · ") + c.dim(flags) : "") + c.gray(" · ") + c.dim(ctx.cwd) + "\n");
+    process.stdout.write(c.bold("GrokBot") + c.gray(" · ") + c.cyan(provider) + c.gray(" · ") + c.gray(model) + c.gray(" · ") + c.dim("thinking " + thinking) + (flags ? c.gray(" · ") + c.dim(flags) : "") + c.gray(" · ") + c.dim(ctx.cwd) + "\n");
     process.stdout.write(c.dim('type /help for commands, ctrl+c to abort a turn, ctrl+d to exit') + "\n\n");
   }
 
@@ -1341,7 +1341,7 @@ async function runMcpCmd(ctx: SubcommandContext): Promise<number> {
   });
   // Stderr banner so the line is visible even when stdout is
   // redirected (some MCP clients capture stdout).
-  process.stderr.write(c.cyan("CodingHarness MCP server listening on ") + r.url + "\n");
+  process.stderr.write(c.cyan("GrokBot MCP server listening on ") + r.url + "\n");
   process.stderr.write(c.dim(`  JSON-RPC:  POST ${r.url}/mcp\n`));
   process.stderr.write(c.dim(`  SSE:       GET  ${r.url}/sse\n`));
   process.stderr.write(c.dim(`  Health:    GET  ${r.url}/health\n`));
@@ -1360,7 +1360,7 @@ function printMcpHelp(): void {
   process.stdout.write(`ch mcp — manage MCP (Model Context Protocol) servers.
 
 Usage:
-  ch mcp                                Start the CodingHarness MCP server (HTTP+SSE)
+  ch mcp                                Start the GrokBot MCP server (HTTP+SSE)
   ch mcp --stdio                        Start the GrokBot MCP server (stdio)
   ch mcp get <package-or-url>           Preview: connect, handshake, list tools. No side effects.
   ch mcp add <package-or-url>           Install + persist to ~/.grokbot/mcp.json
@@ -1569,7 +1569,7 @@ async function runMcpStdio(ctx: SubcommandContext, approveBash: boolean): Promis
     approveBash,
   });
   // Banner to stderr (stdout is reserved for the JSON-RPC wire).
-  process.stderr.write(c.cyan("CodingHarness MCP stdio server ready") + "\n");
+  process.stderr.write(c.cyan("GrokBot MCP stdio server ready") + "\n");
   process.stderr.write(c.dim(`  Protocol:  ${"2025-06-18"}\n`));
   process.stderr.write(c.dim(`  Tools:     ${r.tools.length}\n`));
   const onSig = () => { void r.stop().then(() => process.exit(0)); };
@@ -1703,8 +1703,8 @@ async function runTokensCmd(ctx: SubcommandContext): Promise<number> {
 async function runDesktopCmd(ctx: SubcommandContext): Promise<number> {
   const projectRoot = findProjectRoot();
   if (!projectRoot) {
-    process.stderr.write(c.red("error: ") + "could not locate a CodingHarness project root.\n");
-    process.stderr.write("  Run `ch desktop` from inside a CodingHarness checkout, or use\n");
+    process.stderr.write(c.red("error: ") + "could not locate a GrokBot project root.\n");
+    process.stderr.write("  Run `ch desktop` from inside a GrokBot checkout, or use\n");
     process.stderr.write("  `npm run electron` from the project root.\n");
     return 1;
   }
@@ -1939,7 +1939,7 @@ async function runLegacyFlagMode(argv: string[]): Promise<number> {
   }
   const opts = parsed.values;
   if (opts.help) return showHelp();
-  if (opts.version) { process.stdout.write("CodingHarness " + VERSION + "\n"); return 0; }
+  if (opts.version) { process.stdout.write("GrokBot " + VERSION + "\n"); return 0; }
   if (opts.doctor) return runDoctorCmd({ args: [], cwd: String(opts.cwd ?? process.cwd()), ephemeral: false });
   if (opts.skills) return listSkillsCmd({ args: [], cwd: String(opts.cwd ?? process.cwd()), ephemeral: false });
   if (opts.agents) return listAgentsCmd({ args: [], cwd: String(opts.cwd ?? process.cwd()), ephemeral: false });

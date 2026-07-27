@@ -1,7 +1,8 @@
 // skill tool — load a named skill's content into context.
-// Skills are SKILL.md files in ~/.codingharness/skills/, .codingharness/skills/,
-// or from any registered source. The tool returns the full body so the
-// model can read it.
+// Skills are SKILL.md files in ~/.grokbot/skills/ (new default),
+// ~/.codingharness/skills/ (legacy), .grokbot/skills/ or
+// .codingharness/skills/ in cwd, or from any registered
+// source. The tool returns the full body so the model can read it.
 
 import type { Tool, ToolContext } from "./registry.js";
 import { asString, parseToolArgs } from "./registry.js";
@@ -16,7 +17,7 @@ const spec: ToolSpec = {
   name: "skill",
   description:
     "List available skills or load a specific skill by name. A skill is a SKILL.md file " +
-    "in ~/.codingharness/skills/ or .codingharness/skills/. Loading a skill returns its " +
+    "in ~/.grokbot/skills/ or .grokbot/skills/ in cwd (legacy ~/.codingharness/skills/ also read). Loading a skill returns its " +
     "full content for you to read and apply.",
   parameters: {
     type: "object",

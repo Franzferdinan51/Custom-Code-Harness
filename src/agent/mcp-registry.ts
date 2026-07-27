@@ -43,7 +43,7 @@ import type {
 export class LocalMcpRegistry implements McpRegistry {
   /** Stable id of the registry, per the `McpRegistry` interface. */
   readonly id = "local";
-  /** Path to the on-disk config. Defaults to `~/.codingharness/mcp.json`
+  /** Path to the on-disk config. Defaults to `~/.grokbot/mcp.json`
    *  via `resolveMcpConfigPath()`; tests inject a tmp path through
    *  the `MCP_CONFIG_PATH` env var (set before importing this file)
    *  or by passing an explicit `filePath` to the constructor. */

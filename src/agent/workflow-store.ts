@@ -308,7 +308,8 @@ export class WorkflowStore {
                 // Pre-fix: a failed `rename` (e.g. target exists
                 // as a directory, FS full) leaked the `.tmp`
                 // orphan next to the workflow file — visually
-                // noisy in `~/.codingharness/workflows/`.
+                // noisy in `~/.grokbot/workflows/` (legacy
+                // `~/.codingharness/workflows/` if pre-rebrand).
                 if (tmp !== undefined) {
                     try { await unlink(tmp); } catch { /* best-effort */ }
                 }

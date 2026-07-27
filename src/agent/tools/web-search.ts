@@ -53,7 +53,7 @@ export const webSearchTool: Tool = {
       try {
         const res = await fetch(url, {
           method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": "codingharness/0.1" },
+          headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": "grokbot/0.2.2" },
           body: "q=" + encodeURIComponent(args.query),
           signal: ctrl.signal,
         });

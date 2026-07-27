@@ -1,8 +1,8 @@
-// MCP (Model Context Protocol) **client** for CodingHarness.
+// MCP (Model Context Protocol) **client** for GrokBot.
 //
 // Symmetric to `src/mcp-server.ts` (the server side). The server
-// exposes CodingHarness's tools to MCP-aware clients; this client
-// lets CodingHarness consume *external* MCP servers (Claude Code's
+// exposes GrokBot's tools to MCP-aware clients; this client
+// lets GrokBot consume *external* MCP servers (Claude Code's
 // `~/.claude/mcp_servers.json`, Cursor's, third-party servers from
 // `npm install -g <pkg>` or `npx -y <pkg>`).
 //
@@ -27,7 +27,8 @@
 //      `clientInfo`.
 //   4. **`tools/list`** — discover what the server provides.
 //   5. **Persist** — write an `McpServerEntry` to
-//      `~/.codingharness/mcp.json`.
+//      `~/.grokbot/mcp.json` (legacy `~/.codingharness/mcp.json`
+//      is also still read, see `src/config/paths.ts`).
 //   6. **Return** the connection handle so the caller (CLI or
 //      test) can inspect the result before the registry takes
 //      over.
@@ -753,7 +754,7 @@ export async function mcpGet(packageOrUrl: string, opts: McpGetOpts = {}): Promi
 }
 
 /** "Add" an MCP server: get it (which connects + lists tools),
- *  then persist an entry to `~/.codingharness/mcp.json`. The
+ *  then persist an entry to `~/.grokbot/mcp.json`. The
  *  connection is closed after the entry is written — the registry
  *  re-opens on every tool call. */
 export async function mcpAdd(

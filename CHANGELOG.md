@@ -16,6 +16,97 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Rebrand: structural rebrand (package.json, MCP server, paths, web UI, comments → grokbot)
+
+The identity-only rebrand from d5747f6 + 15c4fd7 (which only
+touched user-facing strings, subcommand descriptions, and
+comments) is now followed by a structural rebrand: every
+runtime identifier that would have broken an installed user
+is now `grokbot` / `~/.grokbot` / `GROKBOT_HOME`, with
+backward-compat shims so pre-rebrand installs continue to
+work without any manual data migration.
+
+Two commits land this work:
+
+- `d02c2026 fix(rebrand): package.json + MCP server + paths + web UI → grokbot identity`
+  - `package.json`: `name: "codingharness" → "grokbot"`,
+    `productName: "CodingHarness" → "GrokBot"`,
+    `appId: "com.codingharness.app" → "com.grokbot.app"`,
+    description rewritten to mention Grok Build CLI.
+  - `src/mcp-server.ts`: `SERVER_INFO.name "codingharness"
+    → "grokbot"`, `SERVER_INFO.title "CodingHarness" →
+    "GrokBot"`, SSE comment `: codingharness mcp stream` →
+    `: grokbot mcp stream`.
+  - `src/providers/{,oauth/}codex.ts`: Codex OAuth
+    `originator: "codingharness"` → `"grokbot"`,
+    `User-Agent: "codingharness/0.2.2"` → `"grokbot/0.2.2"`.
+  - `src/server.ts`: `GET /v1/` discovery body
+    `name: "codingharness"` → `"grokbot"`; the
+    "CodingHarness server listening on" banner is now
+    "GrokBot server listening on".
+  - `src/runtime/info.ts`: `ch info` banner.
+  - `src/config/paths.ts`: home-dir resolution with full
+    backward-compat:
+    1. `$GROKBOT_HOME` (new env var)
+    2. `$CODINGHARNESS_HOME` (legacy override — still
+       wins so existing installs on disk keep working)
+    3. `$CH_HOME` (legacy alias, still wins)
+    4. `~/.grokbot` (new default, if it exists)
+    5. `~/.codingharness` (legacy fallback,
+       transparently found if it's the only one on disk;
+       no data copy)
+    6. `~/.grokbot` (new default, created on first access)
+    Pre-fix: only the first / third / sixth paths existed.
+    Existing users with `~/.codingharness/` data would have
+    been silently abandoned — they'd start a fresh
+    `~/.grokbot/` on next launch with no settings, no
+    sessions, no skills, no MCP servers. The shim now
+    transparently finds the legacy dir.
+  - `src/cli.ts`: `findProjectRoot` now accepts both
+    `grokbot` (new) and `codingharness` (legacy) names;
+    `ch desktop` invoked from a pre-rebrand dev checkout
+    still resolves correctly.
+  - `src/ui/tui.ts`: sidebar title + header status line.
+  - `src/web/*`: `<title>`, sidebar, welcome banner, header,
+    favicon `aria-label`, `app.js` storage key
+    (`grokbot.composerMode` first, then the legacy
+    `codingharness.composerMode` as a fallback read for
+    existing users — never silently dropped).
+  - `src/doctor.ts`: doctor banner + ripgrep fallback msg.
+  - `src/ui/repl-v2.ts`: header comment.
+  - Test updates: 4 assertions in `mcp-server.test.ts`,
+    1 in `server-expansion.test.ts`, 3 in
+    `desktop-cmd.test.ts`, 1 in `slash.test.ts`.
+- next commit: cosmetic rebrand — remaining user-facing
+  strings (`ch` status line, MCP "listening" / "ready",
+  `ch mcp` subcommand description, `findProjectRoot` error,
+  `--version` flag, `opts.version` flag) and `src/agent/*`
+  comments referencing `~/.codingharness/`. The
+  `user-codingharness` source-type literal in
+  `src/agent/context.ts:14` is preserved (dead variant; not
+  actually emitted, kept for type back-compat with any
+  external caller) and a new `user-grokbot` variant is added
+  alongside. The legacy `~/.codingharness/AGENTS.md` path
+  is still searched as a fallback after the new
+  `~/.grokbot/AGENTS.md`.
+
+850 pass / 0 fail across 53 files. typecheck clean. No
+test regressions; the only test file that needed fixture
+updates was `desktop-cmd.test.ts` (the synthetic
+`name: "codingharness"` fixture, swapped to
+`name: "grokbot"`). All other tests that referenced
+`CODINGHARNESS_HOME` and `~/.codingharness/` keep working
+because the env var + home-dir shims are intentional.
+
+Existing installs (`CODINGHARNESS_HOME` set, or
+`~/.codingharness/` data on disk, or pre-rebrand
+`~/.codingharness/AGENTS.md`): transparently found and
+read; nothing is moved or copied. New installs: get the
+new `~/.grokbot/` layout by default. The new `grokbot.*`
+storage key in the web UI's localStorage is also
+read-fallback-compatible with the old
+`codingharness.composerMode` key.
+
 ### Rebrand: OpenClaw → GrokBot (identity, comments, subcommand descriptions)
 
 User-facing strings now identify the project as **GrokBot**, the

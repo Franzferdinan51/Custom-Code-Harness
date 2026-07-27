@@ -11,7 +11,7 @@ import { paths } from "../config/paths.js";
 
 export interface ContextFile {
   path: string;
-  source: "global" | "user" | "project" | "user-codingharness";
+  source: "global" | "user" | "project" | "user-codingharness" | "user-grokbot";
   body: string;
 }
 
@@ -27,9 +27,11 @@ export async function loadContextFiles(cwd: string, opts: { includeUserCodinghar
     out.push({ path: globalFile, source: "global", body: await safeRead(globalFile) });
   }
 
-  // 2. User: ~/.agents/AGENTS.md, ~/.codingharness/AGENTS.md
+  // 2. User: ~/.agents/AGENTS.md, ~/.grokbot/AGENTS.md,
+  //    and the legacy ~/.codingharness/AGENTS.md (pre-rebrand).
   const userFiles = [
     join(homedir(), ".agents", "AGENTS.md"),
+    join(homedir(), ".grokbot", "AGENTS.md"),
     join(homedir(), ".codingharness", "AGENTS.md"),
   ];
   for (const f of userFiles) {
@@ -56,11 +58,20 @@ export async function loadContextFiles(cwd: string, opts: { includeUserCodinghar
     cur = parent;
   }
 
-  // 4. .codingharness/AGENTS.md in cwd (explicit)
+  // 4. .grokbot/AGENTS.md and legacy .codingharness/AGENTS.md in
+  //    cwd (explicit). Both are emitted with source 'user-grokbot'
+  //    / 'user-codingharness' for callers that need to distinguish
+  //    workspace-level context from global user context.
   if (opts.includeUserCodingharness !== false) {
-    const localCodingharness = join(cwd, ".codingharness", "AGENTS.md");
-    if (existsSync(localCodingharness) && !seen.has(localCodingharness)) {
-      out.push({ path: localCodingharness, source: "user-codingharness", body: await safeRead(localCodingharness) });
+    const localDirs = [
+      { dir: join(cwd, ".grokbot"), source: "user-grokbot" as const },
+      { dir: join(cwd, ".codingharness"), source: "user-codingharness" as const },
+    ];
+    for (const { dir, source } of localDirs) {
+      const f = join(dir, "AGENTS.md");
+      if (existsSync(f) && !seen.has(f)) {
+        out.push({ path: f, source, body: await safeRead(f) });
+      }
     }
   }
 

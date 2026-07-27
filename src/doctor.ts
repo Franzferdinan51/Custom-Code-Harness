@@ -48,7 +48,7 @@ export async function runDiagnostics(opts: { cwd: string } = { cwd: process.cwd(
     const v = execFileSync("rg", ["--version"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 2_000 }).trim();
     out.push({ name: "ripgrep", status: "ok", message: v.split("\n")[0] ?? "rg" });
   } catch {
-    out.push({ name: "ripgrep", status: "info", message: "ripgrep not installed — CodingHarness falls back to a JS-based search" });
+    out.push({ name: "ripgrep", status: "info", message: "ripgrep not installed — GrokBot falls back to a JS-based search" });
   }
 
   // 5. bash on PATH
@@ -131,7 +131,7 @@ export function renderDiagnostics(items: DiagnosticItem[]): string {
       case "info": return "·";
     }
   };
-  const lines: string[] = ["CodingHarness doctor:", ""];
+  const lines: string[] = ["GrokBot doctor:", ""];
   for (const i of items) {
     lines.push("  " + icon(i.status) + " " + i.name + ": " + i.message);
     if (i.fix) lines.push("      fix: " + i.fix);

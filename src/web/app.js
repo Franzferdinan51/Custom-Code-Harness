@@ -1,4 +1,4 @@
-// CodingHarness web UI — client-side logic.
+// GrokBot web UI — client-side logic.
 // Talks to ch serve at the same origin (relative URLs).
 
 // ---------- State ----------
@@ -50,7 +50,11 @@ let composerHintEl = null;
 let composerBuildButton = null;
 let composerPlanButton = null;
 
-const COMPOSER_MODE_STORAGE_KEY = "codingharness.composerMode";
+// Composer mode preference — stored under the new grokbot.* key
+// but read first from the legacy codingharness.composerMode key
+// for users who installed before the 2026-07-26 rebrand.
+const COMPOSER_MODE_STORAGE_KEY = "grokbot.composerMode";
+const COMPOSER_MODE_STORAGE_KEY_LEGACY = "codingharness.composerMode";
 const COMPOSER_MODE_HELP = {
   build: "plain prompts become implementation requests",
   plan: "plain prompts become planning requests",
@@ -140,7 +144,10 @@ function normalizeComposerMode(mode) {
 
 function loadComposerMode() {
   try {
-    return normalizeComposerMode(localStorage.getItem(COMPOSER_MODE_STORAGE_KEY));
+    // New key first, fall back to the pre-rebrand key.
+    const v = localStorage.getItem(COMPOSER_MODE_STORAGE_KEY)
+      ?? localStorage.getItem(COMPOSER_MODE_STORAGE_KEY_LEGACY);
+    return normalizeComposerMode(v);
   } catch {
     return "build";
   }

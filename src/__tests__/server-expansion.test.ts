@@ -215,7 +215,7 @@ test("index: GET /v1/ returns the ROUTES table with name, version, and endpoints
         `http://127.0.0.1:${port}/v1/`,
       );
       assert.equal(r.status, 200);
-      assert.equal(r.body.name, "codingharness");
+      assert.equal(r.body.name, "grokbot");
       assert.equal(r.body.version, "0.2.2");
       assert.ok(Array.isArray(r.body.endpoints));
       assert.ok(r.body.endpoints.length > 10, "index should list many endpoints");

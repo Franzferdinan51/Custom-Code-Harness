@@ -1,4 +1,4 @@
-// MCP (Model Context Protocol) server for CodingHarness.
+// MCP (Model Context Protocol) server for GrokBot.
 //
 // Exposes our tool registry to MCP-aware clients (Claude Code, Cursor,
 // mcporter, etc.) over JSON-RPC 2.0 (HTTP POST) and SSE.
@@ -58,8 +58,8 @@ export type {
 } from "./mcp-transport.js";
 
 const SERVER_INFO: McpServerInfo = {
-  name: "codingharness",
-  title: "CodingHarness",
+  name: "grokbot",
+  title: "GrokBot",
   version: "0.2.2",
 };
 
@@ -79,7 +79,7 @@ const READONLY_TOOLS: ReadonlySet<string> = new Set([
   "http", "web_search",
 ]);
 
-/** Convert a CodingHarness `Tool` into the MCP `tools/list` shape. */
+/** Convert a GrokBot `Tool` into the MCP `tools/list` shape. */
 export function toolToMcpDefinition(tool: Tool): McpToolDefinition {
   const out: McpToolDefinition = {
     name: tool.spec.name,
@@ -741,7 +741,7 @@ function handleSse(
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
   });
-  res.write(": codingharness mcp stream\n\n");
+  res.write(": grokbot mcp stream\n\n");
   const id = randomUUID();
   const client: SseClient = { id, res };
   sseClients.add(client);

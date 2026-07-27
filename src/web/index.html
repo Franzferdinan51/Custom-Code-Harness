@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CodingHarness</title>
+  <title>GrokBot</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -11,7 +11,7 @@
   <div class="app">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-section">
-        <div class="sidebar-title">CodingHarness</div>
+        <div class="sidebar-title">GrokBot</div>
         <div class="sidebar-version" id="version">v0.2.2</div>
       </div>
       <div class="sidebar-section">
@@ -67,7 +67,7 @@
 
       <header class="header">
         <div class="header-left">
-          <span class="header-title">CodingHarness</span>
+          <span class="header-title">GrokBot</span>
           <span class="header-model" id="model">— / —</span>
           <span class="header-session" id="header-session">session —</span>
         </div>
@@ -82,7 +82,7 @@
       <div class="messages" id="messages">
         <div class="message message-system">
           <div class="message-prefix">·</div>
-          <div class="message-body">Welcome to CodingHarness. Type a prompt or <code>/help</code> for commands.</div>
+          <div class="message-body">Welcome to GrokBot. Type a prompt or <code>/help</code> for commands.</div>
         </div>
       </div>
 
@@ -334,7 +334,7 @@
     <div class="onboard-card">
       <div class="onboard-header">
         <div class="onboard-eyebrow">first run</div>
-        <div class="onboard-title">Welcome to CodingHarness</div>
+        <div class="onboard-title">Welcome to GrokBot</div>
         <div class="onboard-subtitle" id="onboard-subtitle">Let's set up a provider so the agent can do things. Three quick steps.</div>
       </div>
       <ol class="onboard-steps">
@@ -351,7 +351,7 @@
           <div class="onboard-step-num">2</div>
           <div class="onboard-step-body" id="onboard-key-body">
             <div class="onboard-step-title">Save your key</div>
-            <div class="onboard-step-hint" id="onboard-key-hint">Stored locally in <code>~/.codingharness/settings.json</code>. Never sent anywhere except to the provider.</div>
+            <div class="onboard-step-hint" id="onboard-key-hint">Stored locally in <code>~/.grokbot/settings.json</code> (or <code>~/.codingharness/settings.json</code> for pre-rebrand installs). Never sent anywhere except to the provider.</div>
             <!--
               Auth mode selector. Only shown when the provider advertises
               more than one auth mode (e.g. ["oauth","apiKey"]). Codex

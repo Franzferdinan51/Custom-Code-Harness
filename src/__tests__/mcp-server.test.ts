@@ -123,7 +123,7 @@ test("rpc: initialize returns protocolVersion, capabilities, serverInfo", async 
     assert.equal(json.id, 1);
     assert.equal(json.result.protocolVersion, "2025-06-18");
     assert.ok(json.result.capabilities?.tools);
-    assert.equal(json.result.serverInfo.name, "codingharness");
+    assert.equal(json.result.serverInfo.name, "grokbot");
     // `protocolVersion` is NOT a spec field on serverInfo — must not leak.
     assert.equal(json.result.serverInfo.protocolVersion, undefined);
   } finally { await r.stop(); }
@@ -225,7 +225,7 @@ test("health endpoint returns server info and tool count", async () => {
     });
     const j = JSON.parse(data);
     assert.equal(j.status, "ok");
-    assert.equal(j.server, "codingharness");
+    assert.equal(j.server, "grokbot");
     assert.ok(j.tools > 0);
   } finally { await r.stop(); }
 });
@@ -311,7 +311,7 @@ test("stdio: responds to initialize with serverInfo + protocolVersion", async ()
   assert.equal(msg.jsonrpc, "2.0");
   assert.equal(msg.id, 1);
   assert.equal(msg.result.protocolVersion, "2025-06-18");
-  assert.equal(msg.result.serverInfo.name, "codingharness");
+  assert.equal(msg.result.serverInfo.name, "grokbot");
 });
 
 test("stdio: responds to tools/list with the same tools as HTTP", async () => {
@@ -430,11 +430,11 @@ test("rpc: GET /sse opens an event-stream and emits a comment (regression for ss
     });
     assert.equal(got.status, 200, "sse must return 200");
     assert.match(got.contentType, /text\/event-stream/, "sse must set text/event-stream content-type");
-    // The server writes a `: codingharness mcp stream\n\n` comment
+    // The server writes a `: grokbot mcp stream\n\n` comment
     // right after the headers. If the old `req.res` cast bug is
     // back, the body would be empty (req was destroyed before any
     // bytes were written).
-    assert.match(got.firstChunk, /codingharness mcp stream/);
+    assert.match(got.firstChunk, /grokbot mcp stream/);
   } finally { await r.stop(); }
 });
 

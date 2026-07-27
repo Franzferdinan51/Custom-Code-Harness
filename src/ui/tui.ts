@@ -174,7 +174,7 @@ export function createTui(opts: TuiOptions): Tui {
   body.add(sidebar);
 
   // Sidebar header
-  const sidebarTitle = new TextRenderable(renderer, { id: "sb-title", content: " CodingHarness", fg: COLORS.fgAccent, attributes: 1 });
+  const sidebarTitle = new TextRenderable(renderer, { id: "sb-title", content: " GrokBot", fg: COLORS.fgAccent, attributes: 1 });
   sidebar.add(sidebarTitle);
 
   const sbGoalLabel = new TextRenderable(renderer, { id: "sb-goal-label", content: " current run", fg: COLORS.fgDim });
@@ -356,7 +356,7 @@ export function createTui(opts: TuiOptions): Tui {
   // --- rendering helpers ---
 
   function updateStatus(): void {
-    headerLeft.content = " CodingHarness v" + VERSION + "  " + (status.provider || "—") + "/" + (status.model || "—") + "  " + (status.cwd || "—");
+    headerLeft.content = " GrokBot v" + VERSION + "  " + (status.provider || "—") + "/" + (status.model || "—") + "  " + (status.cwd || "—");
     const thinking = runtime?.settings.thinking ?? status.thinking ?? "medium";
     const flags = [
       runtime?.settings.ui?.verbose ? "verbose" : "",

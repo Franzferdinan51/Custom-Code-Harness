@@ -35,8 +35,8 @@ export interface CodexOAuthLoginHooks {
 function authHeaders(contentType: string): Record<string, string> {
   return {
     "Content-Type": contentType,
-    originator: "codingharness",
-    "User-Agent": "codingharness/0.2.2",
+    originator: "grokbot",
+    "User-Agent": "grokbot/0.2.2",
   };
 }
 

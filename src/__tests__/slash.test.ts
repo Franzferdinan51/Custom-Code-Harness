@@ -542,7 +542,7 @@ test("/info renders the runtime snapshot", async () => {
   assert.ok(info);
   const out = await info!.run("", { cwd: "/" });
   assert.ok(typeof out === "string");
-  assert.match(out!, /CodingHarness \d+\.\d+\.\d+/);
+  assert.match(out!, /GrokBot \d+\.\d+\.\d+/);
   assert.match(out!, /node:/);
   assert.match(out!, /home:/);
   assert.match(out!, /Settings/);

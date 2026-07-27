@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("findProjectRoot: returns the directory containing a package.json with name=codingharness", async () => {
+test("findProjectRoot: returns the directory containing a package.json with name=grokbot", async () => {
   // We test the function indirectly: the implementation walks up
   // from CWD looking for package.json with the right name. We can
   // verify the logic by creating a fake project root and running
@@ -14,7 +14,7 @@ test("findProjectRoot: returns the directory containing a package.json with name
   const tmp = mkdtempSync(join(tmpdir(), "ch-desktop-"));
   const project = join(tmp, "myproject");
   mkdirSync(join(project, "src", "sub"), { recursive: true });
-  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "codingharness", version: "0.2.2" }));
+  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "grokbot", version: "0.2.2" }));
   // Save and chdir.
   const orig = process.cwd();
   process.chdir(join(project, "src", "sub"));
@@ -120,7 +120,7 @@ test("ch info prints a runtime snapshot", () => {
       env,
     });
     assert.equal(info.status, 0, info.stderr);
-    assert.match(info.stdout, /CodingHarness 0\.2\.2/);
+    assert.match(info.stdout, /GrokBot 0\.2\.2/);
     assert.match(info.stdout, /Settings/);
     assert.match(info.stdout, /Paths/);
 

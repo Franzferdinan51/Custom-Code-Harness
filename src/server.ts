@@ -503,7 +503,7 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
     // tests cross-check against the actual handler list.
     if (req.method === "GET" && path === "/v1/") {
       sendJson(res, 200, {
-        name: "codingharness",
+        name: "grokbot",
         version: SERVER_VERSION,
         endpoints: ROUTES.map((r) => ({
           method: r.method,
@@ -1352,7 +1352,7 @@ export async function startServer(runtime: HarnessRuntime, opts: StartServerOpts
   server.listen(opts.port, opts.host, () => {
     const uiUrl = `http://${opts.host}:${opts.port}/`;
     const apiUrl = `http://${opts.host}:${opts.port}/v1/`;
-    process.stdout.write("CodingHarness server listening on " + uiUrl + "\n");
+    process.stdout.write("GrokBot server listening on " + uiUrl + "\n");
     process.stdout.write("  web UI:    " + uiUrl + "\n");
     process.stdout.write("  JSON API:  " + apiUrl + "\n");
     process.stdout.write("  SSE chat:  POST " + apiUrl + "chat/stream\n");

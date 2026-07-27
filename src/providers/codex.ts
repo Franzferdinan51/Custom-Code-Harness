@@ -66,8 +66,8 @@ export class CodexProvider implements Provider {
       "content-type": "application/json",
       accept: "text/event-stream",
       authorization: `Bearer ${this.cfg.accessToken}`,
-      originator: "codingharness",
-      "User-Agent": "codingharness/0.2.2",
+      originator: "grokbot",
+      "User-Agent": "grokbot/0.2.2",
     };
 
     log.debug(`provider ${this.id} codex request`, { url, model: req.model });

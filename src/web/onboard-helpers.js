@@ -1,4 +1,4 @@
-// CodingHarness web UI — pure helpers for the first-run onboarding wizard.
+// GrokBot web UI — pure helpers for the first-run onboarding wizard.
 //
 // Browser side: attaches helpers to `window.OnboardHelpers` so
 // `app.js` (a classic script) can reach them. Test side: this

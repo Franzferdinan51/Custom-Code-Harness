@@ -1,10 +1,20 @@
-// Resolved filesystem paths for CodingHarness state.
-// All state lives under $CH_HOME (default ~/.codingharness) so the
+// Resolved filesystem paths for GrokBot state.
+// All state lives under $GROKBOT_HOME (default ~/.grokbot) so the
 // tool is self-contained and easy to wipe.
+//
+// Backward-compat (pre-GrokBot / pre-2026-07-26 installs):
+//   - $CODINGHARNESS_HOME still overrides; legacy value wins
+//     over the new default to keep existing installs on disk.
+//   - If neither env var is set and neither $GROKBOT_HOME nor
+//     $CODINGHARNESS_HOME is in the environment, paths.home
+//     returns ~/.grokbot for a fresh install but transparently
+//     returns ~/.codingharness when only the legacy dir is
+//     present (so existing user data is found and migrated
+//     lazily on first read — no copy step, no data loss).
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 
 function expand(p: string): string {
   if (p.startsWith("~")) return join(homedir(), p.slice(1));
@@ -12,11 +22,20 @@ function expand(p: string): string {
 }
 
 function home(): string {
-  return process.env.CODINGHARNESS_HOME
-    ? expand(process.env.CODINGHARNESS_HOME)
-    : process.env.CH_HOME
-    ? expand(process.env.CH_HOME)
-    : join(homedir(), ".codingharness");
+  // New identity first.
+  if (process.env.GROKBOT_HOME) return expand(process.env.GROKBOT_HOME);
+  // Legacy override (preserves installed state for users
+  // who set CODINGHARNESS_HOME before the 2026-07-26 rebrand).
+  if (process.env.CODINGHARNESS_HOME) return expand(process.env.CODINGHARNESS_HOME);
+  if (process.env.CH_HOME) return expand(process.env.CH_HOME);
+  // No env var: prefer the new dir if it already exists,
+  // otherwise fall back to the legacy dir if it does
+  // (transparent migration of existing user data).
+  const grokbotDir = join(homedir(), ".grokbot");
+  const codingHarnessDir = join(homedir(), ".codingharness");
+  if (existsSync(grokbotDir)) return grokbotDir;
+  if (existsSync(codingHarnessDir)) return codingHarnessDir;
+  return grokbotDir;
 }
 
 /** All paths. Evaluated lazily so tests can override $CH_HOME. */

@@ -9,7 +9,7 @@
 //
 // Layout (per the spike spec):
 //
-//   ch · session 7f2a · opus-4.5 · codingharness
+//   ch · session 7f2a · opus-4.5 · grokbot
 //   ─────────────────────────────────────────────────────────────────
 //   user  ▸ wire up OAuth for the dashboard
 //   ─── thinking ──

@@ -198,7 +198,7 @@ registerSubcommand("compact", "Compact the active session and print the outcome.
   "ch compact [--preview|--dry-run] [--session <id>|--resume <id>|-c] [instructions]",
   async (ctx) => { return runCompactCmd(ctx); });
 
-registerSubcommand("init", "Generate a starter .codingharness/AGENTS.md in the current directory.",
+registerSubcommand("init", "Generate a starter .grokbot/AGENTS.md in the current directory.",
   "ch init",
   async (ctx) => { return runInitCmd(ctx); });
 
@@ -315,7 +315,7 @@ function showHelp(cmd?: string): number {
   lines.push("  MINIMAX_API_KEY, MINIMAX_BASE_URL, MINIMAX_MODEL");
   lines.push("  OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL");
   lines.push("  LMSTUDIO_API_KEY, LMSTUDIO_BASE_URL, LMSTUDIO_MODEL, LM_API_TOKEN");
-  lines.push("  CH_HOME (default ~/.codingharness)");
+  lines.push("  GROKBOT_HOME (default ~/.grokbot; legacy ~/.codingharness still read)");
   lines.push("  CH_FORCE_TUI=1  force the legacy OpenTUI TUI (for CI / scripts)");
   lines.push("  CH_FORCE_REPL=1 force the new streaming REPL");
   lines.push("  CODINGHARNESS_DEBUG=1 for verbose logging");
@@ -1147,7 +1147,7 @@ async function listSkillsCmd(ctx: SubcommandContext): Promise<number> {
   }
   const all = await reg.list();
   if (all.length === 0) {
-    process.stdout.write("(no skills installed — drop SKILL.md into ~/.codingharness/skills/<name>/)\n");
+    process.stdout.write("(no skills installed — drop SKILL.md into ~/.grokbot/skills/<name>/; ~/.codingharness/skills/ also read for legacy installs)\n");
     return 0;
   }
   for (const s of all) process.stdout.write(s.name + " — " + s.description + "\n");
@@ -1309,7 +1309,7 @@ async function runMcpCmd(ctx: SubcommandContext): Promise<number> {
   //   ch mcp                          # start the server (default)
   //   ch mcp --stdio                  # same, stdio transport
   //   ch mcp get <pkg-or-url>         # preview: connect + list tools, no persist
-  //   ch mcp add <pkg-or-url>         # install + persist to ~/.codingharness/mcp.json
+  //   ch mcp add <pkg-or-url>         # install + persist to ~/.grokbot/mcp.json
   //   ch mcp list                     # show installed servers
   //   ch mcp remove <id>              # uninstall
   const sub = (ctx.args[0] ?? "").toLowerCase();
@@ -1361,9 +1361,9 @@ function printMcpHelp(): void {
 
 Usage:
   ch mcp                                Start the CodingHarness MCP server (HTTP+SSE)
-  ch mcp --stdio                        Start the CodingHarness MCP server (stdio)
+  ch mcp --stdio                        Start the GrokBot MCP server (stdio)
   ch mcp get <package-or-url>           Preview: connect, handshake, list tools. No side effects.
-  ch mcp add <package-or-url>           Install + persist to ~/.codingharness/mcp.json
+  ch mcp add <package-or-url>           Install + persist to ~/.grokbot/mcp.json
   ch mcp list                           Show installed MCP servers and their tools
   ch mcp remove <id>                    Uninstall an MCP server by id
 
@@ -1443,7 +1443,7 @@ async function runMcpGet(ctx: SubcommandContext, args: string[]): Promise<number
 // ---------- ch mcp add ----------
 //
 // Resolve, connect, handshake, list tools, persist an entry to
-// `~/.codingharness/mcp.json`. Prints the same shape as `mcp get`
+// `~/.grokbot/mcp.json`. Prints the same shape as `mcp get`
 // on success so the user can confirm the install. Errors are
 // surfaced verbatim — a bad handshake means the package isn't an
 // MCP server (or has a version mismatch with our protocol).
@@ -1692,12 +1692,13 @@ async function runTokensCmd(ctx: SubcommandContext): Promise<number> {
  * project root by:
  *
  *   1. Walking up from CWD looking for a package.json with
- *      "name": "codingharness".
+ *      "name": "grokbot" (or the legacy "codingharness" alias
+ *      for pre-2026-07-26 checkouts).
  *   2. Falling back to the script's resolved location (for the
  *      case where `ch desktop` is run via `npm run desktop` from
  *      inside the project).
  *   3. If neither finds it, error with a hint to run from inside
- *      a CodingHarness checkout (or use `npm run electron`).
+ *      a GrokBot checkout (or use `npm run electron`).
  */
 async function runDesktopCmd(ctx: SubcommandContext): Promise<number> {
   const projectRoot = findProjectRoot();
@@ -1736,6 +1737,11 @@ async function runDesktopCmd(ctx: SubcommandContext): Promise<number> {
 
 function findProjectRoot(): string | null {
   const { existsSync, readFileSync } = fs;
+  // Project root detection: accept the new "grokbot" name and the
+  // legacy "codingharness" name (pre-2026-07-26) so older dev
+  // checkouts still resolve correctly.
+  const isOurProject = (meta: { name?: string }): boolean =>
+    meta.name === "grokbot" || meta.name === "codingharness";
   // 1. Walk up from CWD.
   let dir = process.cwd();
   for (let i = 0; i < 8; i++) {
@@ -1743,7 +1749,7 @@ function findProjectRoot(): string | null {
     if (existsSync(pkg)) {
       try {
         const meta = JSON.parse(readFileSync(pkg, "utf-8"));
-        if (meta.name === "codingharness") return dir;
+        if (isOurProject(meta)) return dir;
       } catch { /* ignore */ }
     }
     const parent = dirname(dir);
@@ -1760,7 +1766,7 @@ function findProjectRoot(): string | null {
       if (existsSync(pkg)) {
         try {
           const meta = JSON.parse(readFileSync(pkg, "utf-8"));
-          if (meta.name === "codingharness") return dir;
+          if (isOurProject(meta)) return dir;
         } catch { /* ignore */ }
       }
       const parent = dirname(dir);

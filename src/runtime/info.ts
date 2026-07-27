@@ -67,7 +67,7 @@ export function collectRuntimeInfo(cwd: string): RuntimeInfo {
 export function renderRuntimeInfo(cwd: string): string {
   const info = collectRuntimeInfo(cwd);
   const lines: string[] = [];
-  lines.push("CodingHarness " + info.version);
+  lines.push("GrokBot " + info.version);
   lines.push("");
   lines.push("  node:      " + info.node + " (" + info.platform + "/" + info.arch + ")");
   lines.push("  cli:       " + info.cliPath);

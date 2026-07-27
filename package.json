@@ -1,7 +1,7 @@
 {
-  "name": "codingharness",
+  "name": "grokbot",
   "version": "0.2.2",
-  "description": "A versatile terminal coding harness — multi-provider, extensible, crash-resistant. Web UI + native desktop app.",
+  "description": "GrokBot — a versatile terminal coding harness / TUI / desktop shell, built on xAI's Grok Build CLI. Multi-provider, extensible, crash-resistant.",
   "type": "module",
   "private": true,
   "main": "electron/main.cjs",
@@ -29,8 +29,8 @@
     "node": ">=18.17"
   },
   "build": {
-    "appId": "com.codingharness.app",
-    "productName": "CodingHarness",
+    "appId": "com.grokbot.app",
+    "productName": "GrokBot",
     "files": [
       "bin/**",
       "dist/**",

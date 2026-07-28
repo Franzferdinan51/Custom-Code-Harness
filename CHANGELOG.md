@@ -16,6 +16,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Cost: Claude Opus 4.8 Fast Mode priced (was $5/$25 under-count)
+
+Anthropic launched Opus 4.8 Fast Mode on 2026-05-28 as a
+research preview. Standard Opus 4.8 is $5/$25; Fast Mode
+is a separate 2x-premium SKU at $10/$50.
+
+- `anthropic/claude-opus-4.8-fast` (OpenRouter id) — $10.00 / $50.00
+- `claude-opus-4-8-fast` (dash form, any future provider) — $10.00 / $50.00
+
+The new `claude-opus-4[\.\-]8-fast` pattern matches both
+the dot form (OpenRouter) and the dash form (hypothetical
+future provider) and is placed BEFORE the bare
+`^claude-opus-4-` catch-all (same prefix-stealing class as
+o1-mini vs o1 / gpt-5.6 vs gpt-5).
+
+Pre-fix: any OpenRouter call with the fast id fell through
+to the bare catch-all and was reported as $5/$25, a 50%
+under-count vs the actual $10/$50 charge.
+
+Known limitation (NOT a bug in this fix — would require
+restructuring `priceFor` to take a request-options
+parameter): on Anthropic's direct API, the model id is
+the same for standard and fast mode (`claude-opus-4-8`),
+and fast mode is a request parameter (`speed: "fast"`
+with the `fast-mode-2026-02-01` beta header). The cost
+tracker sees only the model id, so direct-API fast-mode
+calls are still reported at the standard $5/$25 rate.
+This is documented here for transparency; it does NOT
+cause a cost over-count, only an under-count on
+direct-API fast-mode calls. Tracked for follow-up.
+
+One new test in `src/__tests__/cost-approval.test.ts`
+pins the Fast Mode pricing and the standard-mode
+regression check.
+
+850 → 851 pass / 0 fail across 53 files (+1 test).
+
 ### Rebrand: structural rebrand (package.json, MCP server, paths, web UI, comments → grokbot)
 
 The identity-only rebrand from d5747f6 + 15c4fd7 (which only

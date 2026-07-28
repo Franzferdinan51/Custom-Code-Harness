@@ -107,6 +107,27 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // infinity bug in the cost tracker).
   { match: /^claude-haiku-4-/,       price: { input: 1.00,  output: 5.00,  provider: "anthropic", label: "Claude Haiku 4.x" } },
   { match: /^claude-sonnet-4-/,      price: { input: 3.00,  output: 15.00, provider: "anthropic", label: "Claude Sonnet 4.x" } },
+  // Claude Opus 4.8 Fast Mode (research preview, launched
+  // 2026-05-28). On Anthropic's direct API the model id is
+  // `claude-opus-4-8` and fast mode is a request parameter
+  // (`speed: "fast"` with the `fast-mode-2026-02-01` beta
+  // header), priced at $10/$50 (2x the standard rate). On
+  // OpenRouter the fast variant is a separate model id,
+  // `anthropic/claude-opus-4.8-fast`, with the same $10/$50
+  // pricing baked in.
+  // Pre-fix: any OpenRouter call with that id fell through to
+  // the bare `^claude-opus-4-` catch-all and was reported as
+  // $5/$25, a 50% under-count vs the actual fast-mode price.
+  // The Anthropic-direct fast mode is NOT representable in
+  // this table (model id is identical to standard mode; only
+  // the request parameter differs), so direct-API fast-mode
+  // calls are still reported at the standard $5/$25 rate —
+  // known limitation noted in the CHANGELOG. The bracket
+  // `[\.\-]` matches both the dot form (OpenRouter) and the
+  // dash form (any future provider that uses dashes).
+  // MUST come BEFORE the bare `^claude-opus-4-` catch-all
+  // (same prefix-stealing class as o1-mini vs o1).
+  { match: /claude-opus-4[\.\-]8-fast/, price: { input: 10.00, output: 50.00, provider: "openrouter",  label: "Claude Opus 4.8 Fast (research preview, $10/$50)" } },
   { match: /^claude-opus-4-/,        price: { input: 5.00,  output: 25.00, provider: "anthropic", label: "Claude Opus 4.x" } },
   // Claude Sonnet 5 (launched July 2026). Introductory
   // pricing $2/$10 through August 31, 2026; standard $3/$15

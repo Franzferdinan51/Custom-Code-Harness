@@ -45,6 +45,47 @@ test("priceFor: matches Claude Opus 4.x (was wrongly $15/$75 for Claude 3 Opus)"
   assert.equal(opus3.output, 75);
 });
 
+test("priceFor: Claude Opus 4.8 Fast Mode priced (was $5/$25 under-count via catch-all)", () => {
+  // Anthropic's Fast Mode is a research preview that launched
+  // 2026-05-28 alongside Claude Opus 4.8. Standard Opus 4.8
+  // is $5/$25 (the existing `^claude-opus-4-` rate); Fast Mode
+  // is a separate 2x-premium SKU at $10/$50.
+  //
+  // On Anthropic's direct API the model id is the same
+  // (`claude-opus-4-8`) and fast mode is a request parameter
+  // (`speed: "fast"` with the `fast-mode-2026-02-01` beta
+  // header). The cost tracker can't differentiate request
+  // parameters, so direct-API fast-mode calls are still
+  // reported at the standard $5/$25 rate — known limitation.
+  //
+  // On OpenRouter the fast variant is a SEPARATE model id,
+  // `anthropic/claude-opus-4.8-fast`, with the same $10/$50
+  // pricing baked in. Pre-fix: that id fell through to the
+  // bare `^claude-opus-4-` catch-all and was reported as
+  // $5/$25, a 50% under-count vs the actual charge.
+  // The new `claude-opus-4[\.\-]8-fast` pattern matches both
+  // the dot form (OpenRouter) and the dash form (any future
+  // provider) and is placed BEFORE the bare catch-all.
+  const openRouterFast = priceFor("anthropic/claude-opus-4.8-fast");
+  assert.equal(openRouterFast.input, 10);
+  assert.equal(openRouterFast.output, 50);
+  assert.match(openRouterFast.label!, /Fast/);
+
+  // Dash form (hypothetical future provider).
+  const dashFast = priceFor("claude-opus-4-8-fast");
+  assert.equal(dashFast.input, 10);
+  assert.equal(dashFast.output, 50);
+
+  // Standard Opus 4.8 (no fast) is NOT affected.
+  const opus48 = priceFor("claude-opus-4-8");
+  assert.equal(opus48.input, 5);
+  assert.equal(opus48.output, 25);
+
+  // callCost sanity check.
+  // Fast 1M/1M = $10 + $50 = $60.
+  assert.ok(Math.abs(callCost("anthropic/claude-opus-4.8-fast", 1_000_000, 1_000_000) - 60.00) < 0.01);
+});
+
 test("priceFor: matches Claude Haiku 4.x (was missing — fell through to $0/$0)", () => {
   // Regression: there was no `claude-haiku-4-*` entry, so any
   // Haiku 4.5 call was reported by `callCost` as $0.00 — a real

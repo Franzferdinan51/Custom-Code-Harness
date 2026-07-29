@@ -433,6 +433,43 @@ test("priceFor: DeepSeek V4 Pro / Flash / base match (mid-July 2026 launch — w
   assert.ok(Math.abs(callCost("deepseek-v4-flash", 1_000_000, 1_000_000) - 0.42) < 0.01);
 });
 
+test("priceFor: MiniMax-M3 (default model) priced (was $0/$0 unknown fallback)", () => {
+  // MiniMax-M3 is the default model in the `minimax`
+  // provider preset (see `src/providers/presets.ts:129`),
+  // which means every fresh-install default-model call
+  // goes through it. Released 2026-05-31 with a permanent
+  // 50% off the list price of $0.60/$2.40 — so the
+  // standard ≤ 512k input-context rate is $0.30/$1.20
+  // per 1M tokens. Uses MiniMax Sparse Attention (MSA)
+  // for roughly 1/20 the cost of the previous generation
+  // at 1M tokens. Pre-fix: no MiniMax-M3 entry existed,
+  // so the user's default-model calls were reported by
+  // the cost tracker as $0/$0 — a 100% under-count vs
+  // the actual $0.30/$1.20 charge.
+  const m3 = priceFor("MiniMax-M3");
+  assert.equal(m3.input, 0.30);
+  assert.equal(m3.output, 1.20);
+  assert.equal(m3.provider, "minimax");
+  assert.match(m3.label!, /M3/);
+
+  // Lowercase form (some gateways / LM Studio use lowercase).
+  const m3Lower = priceFor("minimax-m3");
+  assert.equal(m3Lower.input, 0.30);
+  assert.equal(m3Lower.output, 1.20);
+  assert.equal(m3Lower.provider, "minimax");
+
+  // Previous-generation MiniMax-M2 (legacy rate, preserved
+  // for callers still on the older API).
+  const m2 = priceFor("MiniMax-M2");
+  assert.equal(m2.input, 0.15);
+  assert.equal(m2.output, 0.60);
+  assert.equal(m2.provider, "minimax");
+
+  // callCost sanity check.
+  // M3 1M/1M = $0.30 + $1.20 = $1.50.
+  assert.ok(Math.abs(callCost("MiniMax-M3", 1_000_000, 1_000_000) - 1.50) < 0.01);
+});
+
 test("priceFor: Moonshot Kimi K3 matches at $3/$15 (2026-07-16 launch — were $0/$0)", () => {
   // Moonshot AI released Kimi K3 on July 16, 2026. 2.8T-
   // parameter MoE with native vision and 1M context.

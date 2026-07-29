@@ -162,6 +162,23 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^deepseek-v4/,           price: { input: 0.27,  output: 0.55,  provider: "deepseek", label: "DeepSeek V4 (1T base)" } },
   { match: /^deepseek-chat/,         price: { input: 0.27,  output: 1.10,  provider: "deepseek", label: "DeepSeek Chat (V3.x)" } },
   { match: /^deepseek-reasoner/,     price: { input: 0.55,  output: 2.19,  provider: "deepseek", label: "DeepSeek Reasoner (R1)" } },
+  // MiniMax M3 (released 2026-05-31). The default model in
+  // the `minimax` provider preset (see `src/providers/presets.ts:129`).
+  // Permanent 50% off the list price of $0.60/$2.40, with MSA
+  // (MiniMax Sparse Attention) cutting per-token compute at
+  // long context — roughly 1/20 the cost of the previous
+  // generation at 1M tokens. Standard tier is $0.30 / $1.20
+  // for ≤ 512k input context and $0.60 / $2.40 above that
+  // (we track the ≤ 512k rate, which is the default for most
+  // chat completions). Pre-fix: no MiniMax-M3 entry existed,
+  // so the cost tracker reported the user's default-model
+  // calls as $0/$0 — a 100% under-count vs the actual charge.
+  // The lowercase `minimax-m3` pattern is for the unprefixed
+  // id form (some gateways / LM Studio use lowercase).
+  { match: /^MiniMax-M3/,             price: { input: 0.30,  output: 1.20,  provider: "minimax",   label: "MiniMax-M3 (default model, ≤ 512k ctx; permanent 50% off list)" } },
+  { match: /^minimax-m3/,             price: { input: 0.30,  output: 1.20,  provider: "minimax",   label: "MiniMax-M3 (lowercase id, ≤ 512k ctx; permanent 50% off list)" } },
+  { match: /^MiniMax-M2/,             price: { input: 0.15,  output: 0.60,  provider: "minimax",   label: "MiniMax-M2 (previous generation; legacy rate)" } },
+  { match: /^minimax/,                price: { input: 0.30,  output: 1.20,  provider: "minimax",   label: "MiniMax (unknown tier; default M3 rate)" } },
   // xAI Grok — xAI launched Grok 4.5 on July 8, 2026 at
   // $2/$6 (and Grok 4.5 Fast at $4/$18). The bare /^grok-4/
   // catch-all was correct for the older 4.0/4.3 line at

@@ -16,6 +16,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Cost: MiniMax-M3 (default model) priced (was $0/$0 unknown fallback)
+
+The cost table picked up MiniMax-M3, the default model
+in the `minimax` provider preset. Every fresh-install
+default-model call goes through it.
+
+- `MiniMax-M3` — $0.30 / $1.20 (standard tier, ≤ 512k input ctx; permanent 50% off list)
+- `minimax-m3` — $0.30 / $1.20 (lowercase id form for gateways / LM Studio)
+- `MiniMax-M2` — $0.15 / $0.60 (previous generation; legacy rate)
+
+Released 2026-05-31 with MiniMax Sparse Attention (MSA),
+which replaces full attention with KV-block selection to
+cut per-token compute at long context — roughly 1/20 the
+cost of the previous generation at 1M tokens.
+
+Pre-fix: no MiniMax-M3 entry existed, so the user's
+default-model calls were reported by the cost tracker as
+$0/$0 — a 100% under-count vs the actual $0.30/$1.20
+charge. The bare `^minimax/` catch-all is preserved for
+unknown future MiniMax tiers at the default M3 rate.
+
+One new test in `src/__tests__/cost-approval.test.ts`
+pins the M3 pricing for both cases and the M2 legacy rate.
+
+851 → 852 pass / 0 fail across 53 files (+1 test).
+
 ### Cost: Claude Opus 4.8 Fast Mode priced (was $5/$25 under-count)
 
 Anthropic launched Opus 4.8 Fast Mode on 2026-05-28 as a

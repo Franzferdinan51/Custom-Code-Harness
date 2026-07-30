@@ -161,6 +161,61 @@ test("export: share format redacts Hugging Face / Replicate / Cohere / GitLab / 
   }
 });
 
+test("export: share format redacts Slack tokens, webhook secrets, and other vendor PATs (xoxb-/xoxp-/xapp-/whsec_/dop_v1_/dd_api_/npm_)", async () => {
+  // Pre-fix: SECRET_RE covered the major LLM / VCS / cloud
+  // key prefixes but missed a number of channel-plugin and
+  // infrastructure prefixes that show up in real workflows:
+  //   xoxb-    Slack bot token (channel plugin / integration)
+  //   xoxp-    Slack user OAuth token
+  //   xoxa-    Slack workspace OAuth token
+  //   xapp-    Slack app-level token (socket mode)
+  //   whsec_   Generic webhook signing secret (Stripe et al)
+  //   dop_v1_  DigitalOcean personal access token
+  //   dd_api_  Datadog API key
+  //   npm_     npm automation token
+  // A session that pasted any of these into a user message
+  // and then exported in `share` format would have leaked
+  // the key verbatim. Fix: extend SECRET_RE with all
+  // eight patterns. The test pins the redaction for each.
+  const cwd = freshDir();
+  try {
+    const s = await makeSession(cwd, "share-vendor-keys-3");
+    await s.append({
+      kind: "message",
+      message: {
+        role: "user",
+        // Each key is 24+ chars after the prefix to match
+        // the {20,} shape in SECRET_RE.
+        content:
+          "xoxb-" + "A".repeat(24) +
+          " xoxp-" + "B".repeat(24) +
+          " xoxa-" + "C".repeat(24) +
+          " xapp-" + "D".repeat(24) +
+          " whsec_" + "E".repeat(24) +
+          " dop_v1_" + "F".repeat(24) +
+          " dd_api_" + "G".repeat(24) +
+          " npm_" + "H".repeat(24),
+      },
+    });
+    const out = freshDir();
+    const r = await exportSession(s, { format: "share", outDir: out });
+    const content = readFileSync(r.path, "utf-8");
+    assert.ok(!content.includes("xoxb-" + "A".repeat(24)), "xoxb- key should be redacted");
+    assert.ok(!content.includes("xoxp-" + "B".repeat(24)), "xoxp- key should be redacted");
+    assert.ok(!content.includes("xoxa-" + "C".repeat(24)), "xoxa- key should be redacted");
+    assert.ok(!content.includes("xapp-" + "D".repeat(24)), "xapp- key should be redacted");
+    assert.ok(!content.includes("whsec_" + "E".repeat(24)), "whsec_ key should be redacted");
+    assert.ok(!content.includes("dop_v1_" + "F".repeat(24)), "dop_v1_ key should be redacted");
+    assert.ok(!content.includes("dd_api_" + "G".repeat(24)), "dd_api_ key should be redacted");
+    assert.ok(!content.includes("npm_" + "H".repeat(24)), "npm_ key should be redacted");
+    // All eight should be replaced with the [REDACTED] marker.
+    const redactions = content.match(/\[REDACTED\]/g) ?? [];
+    assert.ok(redactions.length >= 8, "expected at least 8 redactions, got " + redactions.length);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("export: share format replaces absolute cwd paths with relative", async () => {
   const cwd = freshDir();
   try {

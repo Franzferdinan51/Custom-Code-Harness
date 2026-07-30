@@ -16,6 +16,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Trajectory: share format now redacts 8 more vendor key prefixes
+
+The trajectory export's `SECRET_RE` (used by the `share`
+format and any other place the trajectory passes through
+`anonymize()`) extended with eight additional vendor-key
+prefixes that show up in real channel-plugin and
+infrastructure workflows:
+
+- `xoxb-` — Slack bot token (channel plugin / integration)
+- `xoxp-` — Slack user OAuth token
+- `xoxa-` — Slack workspace OAuth token
+- `xapp-` — Slack app-level token (socket mode)
+- `whsec_` — Generic webhook signing secret (Stripe et al)
+- `dop_v1_` — DigitalOcean personal access token
+- `dd_api_` — Datadog API key
+- `npm_` — npm automation token
+
+Pre-fix: a session that pasted any of these into a user
+message and then exported in `share` format would have
+leaked the key verbatim — same class of bug as the earlier
+`gsk-` / `pplx-` / `nvapi-` / `hf_` / `r8_` / `co-` / `glpat-`
+/ `PMAK-` fix. Note that `sk-or-` (OpenRouter) is
+already covered by the bare `sk-` pattern, and `ghp_`
+(GitHub PAT) + `github_pat_` (GitHub new PAT) are already
+covered from the previous commit.
+
+One new test in `src/__tests__/trajectory.test.ts`
+pins the redaction for each of the 8 new prefixes.
+
+852 → 853 pass / 0 fail across 53 files (+1 test).
+
 ### Cost: MiniMax-M3 (default model) priced (was $0/$0 unknown fallback)
 
 The cost table picked up MiniMax-M3, the default model

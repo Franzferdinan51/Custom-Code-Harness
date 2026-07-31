@@ -216,6 +216,82 @@ test("export: share format redacts Slack tokens, webhook secrets, and other vend
   }
 });
 
+test("export: share format redacts Stripe, GitHub OAuth, SendGrid, Linear, Google OAuth, PyPI, GitLab new PAT (sk_live_/sk_test_/rk_live_/gho_/ghu_/ghr_/ghs_/SG./lin_api_/ya29./pypi-/glsa1_)", async () => {
+  // Pre-fix: SECRET_RE covered the major LLM / VCS / cloud /
+  // channel-plugin prefixes but missed a second wave of
+  // common vendor prefixes that show up in real workflows:
+  //   sk_live_ / sk_test_ / rk_live_  Stripe secret + restricted keys
+  //                                    (NOT covered by the bare
+  //                                    sk- pattern, because Stripe
+  //                                    uses an underscore after `sk`,
+  //                                    not a dash)
+  //   gho_ / ghu_ / ghr_ / ghs_      GitHub OAuth / user / refresh /
+  //                                    server tokens (separate from
+  //                                    ghp_ which is the PAT format)
+  //   SG.                            SendGrid API key (literal
+  //                                    "SG." prefix, then base64-ish
+  //                                    payload, then ".", then more
+  //                                    payload)
+  //   lin_api_                       Linear API key
+  //   ya29.                          Google OAuth2 access token
+  //   pypi-...                       PyPI upload token (the project
+  //                                    base64-encodes a project URL
+  //                                    so we use a more permissive
+  //                                    pattern for the suffix)
+  //   glsa1_                         GitLab new PAT format (separate
+  //                                    from glpat- which is the older
+  //                                    format)
+  // A session that pasted any of these into a user message
+  // and then exported in `share` format would have leaked
+  // the key verbatim. Fix: extend SECRET_RE with all 11
+  // new patterns. The test pins the redaction for each.
+  const cwd = freshDir();
+  try {
+    const s = await makeSession(cwd, "share-vendor-keys-4");
+    await s.append({
+      kind: "message",
+      message: {
+        role: "user",
+        // Each key is 24+ chars after the prefix to match
+        // the {20,} shape in SECRET_RE.
+        content:
+          "sk_live_" + "A".repeat(24) +
+          " sk_test_" + "B".repeat(24) +
+          " rk_live_" + "C".repeat(24) +
+          " gho_" + "D".repeat(36) +
+          " ghu_" + "E".repeat(36) +
+          " ghr_" + "F".repeat(36) +
+          " ghs_" + "G".repeat(36) +
+          " SG." + "H".repeat(22) + "." + "I".repeat(22) +
+          " lin_api_" + "J".repeat(24) +
+          " ya29." + "K".repeat(24) +
+          " pypi-AgEIcHlwaS5vcmc" + "L".repeat(60) +
+          " glsa1_" + "M".repeat(24),
+      },
+    });
+    const out = freshDir();
+    const r = await exportSession(s, { format: "share", outDir: out });
+    const content = readFileSync(r.path, "utf-8");
+    assert.ok(!content.includes("sk_live_" + "A".repeat(24)), "sk_live_ key should be redacted");
+    assert.ok(!content.includes("sk_test_" + "B".repeat(24)), "sk_test_ key should be redacted");
+    assert.ok(!content.includes("rk_live_" + "C".repeat(24)), "rk_live_ key should be redacted");
+    assert.ok(!content.includes("gho_" + "D".repeat(36)), "gho_ key should be redacted");
+    assert.ok(!content.includes("ghu_" + "E".repeat(36)), "ghu_ key should be redacted");
+    assert.ok(!content.includes("ghr_" + "F".repeat(36)), "ghr_ key should be redacted");
+    assert.ok(!content.includes("ghs_" + "G".repeat(36)), "ghs_ key should be redacted");
+    assert.ok(!content.includes("SG." + "H".repeat(22) + "." + "I".repeat(22)), "SG. key should be redacted");
+    assert.ok(!content.includes("lin_api_" + "J".repeat(24)), "lin_api_ key should be redacted");
+    assert.ok(!content.includes("ya29." + "K".repeat(24)), "ya29. key should be redacted");
+    assert.ok(!content.includes("pypi-AgEIcHlwaS5vcmc" + "L".repeat(60)), "pypi- key should be redacted");
+    assert.ok(!content.includes("glsa1_" + "M".repeat(24)), "glsa1_ key should be redacted");
+    // All twelve should be replaced with the [REDACTED] marker.
+    const redactions = content.match(/\[REDACTED\]/g) ?? [];
+    assert.ok(redactions.length >= 12, "expected at least 12 redactions, got " + redactions.length);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("export: share format replaces absolute cwd paths with relative", async () => {
   const cwd = freshDir();
   try {

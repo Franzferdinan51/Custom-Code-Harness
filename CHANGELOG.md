@@ -16,6 +16,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Trajectory: share format now redacts 12 more vendor key prefixes (Stripe, GitHub OAuth, SendGrid, Linear, Google OAuth, PyPI, GitLab new PAT)
+
+The trajectory export's `SECRET_RE` extended with twelve
+more vendor-key prefixes that show up in real workflows
+but were not covered by the previous round:
+
+- `sk_live_` / `sk_test_` / `rk_live_` — Stripe secret + restricted keys (NOT covered by the bare `sk-` pattern because Stripe uses an underscore after `sk`, not a dash)
+- `gho_` / `ghu_` / `ghr_` / `ghs_` — GitHub OAuth / user / refresh / server tokens (separate from `ghp_` which is the PAT format)
+- `SG.` — SendGrid API key (literal `SG.` prefix, then base64-ish payload, then `.`, then more payload)
+- `lin_api_` — Linear API key
+- `ya29.` — Google OAuth2 access token
+- `pypi-AgEIcHlwaS5vcmc…` — PyPI upload token (the project base64-encodes a project URL; the regex requires 50+ chars after the literal)
+- `glsa1_` — GitLab new PAT format (separate from `glpat-` which is the older format)
+
+Pre-fix: any of these in a user message and exported in
+`share` format would leak the key verbatim — same class
+of bug as the previous redaction-batch fixes.
+
+One new test in `src/__tests__/trajectory.test.ts`
+pins the redaction for each of the 12 new prefixes.
+
+853 → 854 pass / 0 fail across 53 files (+1 test).
+
 ### Trajectory: share format now redacts 8 more vendor key prefixes
 
 The trajectory export's `SECRET_RE` (used by the `share`

@@ -136,7 +136,7 @@ function toOpenAIMessages(entries: ReturnType<Session["allEntries"]>, opts: ToOp
   return out;
 }
 
-const SECRET_RE = /(?:sk-[A-Za-z0-9_-]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{20,}|gsk-[A-Za-z0-9_-]{20,}|pplx-[A-Za-z0-9_-]{20,}|nvapi-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|r8_[A-Za-z0-9]{20,}|co-[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9_-]{20,}|PMAK-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{60,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|xoxb-[A-Za-z0-9-]{20,}|xoxp-[A-Za-z0-9-]{20,}|xoxa-[A-Za-z0-9-]{20,}|xapp-[A-Za-z0-9-]{20,}|whsec_[A-Za-z0-9]{20,}|dop_v1_[A-Za-z0-9]{20,}|dd_api_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----)/g;
+const SECRET_RE = /(?:sk-[A-Za-z0-9_-]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9]{20,}|sk_test_[A-Za-z0-9]{20,}|rk_live_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9_-]{20,}|gsk-[A-Za-z0-9_-]{20,}|pplx-[A-Za-z0-9_-]{20,}|nvapi-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|r8_[A-Za-z0-9]{20,}|co-[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9_-]{20,}|glsa1_[A-Za-z0-9_-]{20,}|PMAK-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|gho_[A-Za-z0-9]{30,}|ghu_[A-Za-z0-9]{30,}|ghr_[A-Za-z0-9]{30,}|ghs_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{60,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|ya29\.[A-Za-z0-9_-]{20,}|SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}|lin_api_[A-Za-z0-9]{20,}|pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}|xoxb-[A-Za-z0-9-]{20,}|xoxp-[A-Za-z0-9-]{20,}|xoxa-[A-Za-z0-9-]{20,}|xapp-[A-Za-z0-9-]{20,}|whsec_[A-Za-z0-9]{20,}|dop_v1_[A-Za-z0-9]{20,}|dd_api_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----)/g;
 
 function anonymize(text: string, cwd: string): string {
   if (!text) return text;

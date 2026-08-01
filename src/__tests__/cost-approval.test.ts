@@ -1070,6 +1070,52 @@ test("priceFor: Grok 4.5 + Grok 4.5 Fast match (2026-07-08 launch — were under
   assert.equal(g43.label, "Grok 4.x");
 });
 
+test("priceFor: xAI Grok 4.1 Fast + 4.20 + Code Fast 1 priced (were under-charged or $0/$0 unknown)", () => {
+  // xAI's volume tier is Grok 4.1 Fast at $0.20/$0.50 per
+  // 1M (2M-token context). Pre-fix: it matched the bare
+  // `^grok-4` catch-all and was reported as $1.25/$2.50
+  // (the Grok 4.3 rate) — a 6x error on input and 5x on
+  // output. The 4.1-fast pattern must come BEFORE the
+  // bare catch-all for the same prefix-stealing reason
+  // as o1-mini vs o1.
+  const g41fast = priceFor("grok-4.1-fast");
+  assert.equal(g41fast.input, 0.20);
+  assert.equal(g41fast.output, 0.50);
+  assert.equal(g41fast.provider, "xai");
+  assert.match(g41fast.label!, /4\.1 Fast/);
+
+  // Grok 4.20 — xAI's rebrand of the 4.5 model with the
+  // same $2/$6 rate.
+  const g420 = priceFor("grok-4.20");
+  assert.equal(g420.input, 2.00);
+  assert.equal(g420.output, 6.00);
+  assert.equal(g420.provider, "xai");
+
+  // Grok Code Fast 1 — a SEPARATE xAI family for code
+  // generation, $0.20/$1.50 per 1M (256K context). Does
+  // NOT match the `^grok-4` catch-all (different prefix),
+  // so pre-fix it fell through to the unknown-model
+  // $0/$0 fallback — a 100% under-count vs the actual
+  // $0.20/$1.50 charge.
+  const codeFast1 = priceFor("grok-code-fast-1");
+  assert.equal(codeFast1.input, 0.20);
+  assert.equal(codeFast1.output, 1.50);
+  assert.equal(codeFast1.provider, "xai");
+  assert.match(codeFast1.label!, /Code Fast 1/);
+
+  // Bare `grok-code` (no version) — the catch-all covers
+  // future Code models at the Code Fast 1 rate.
+  const codeFuture = priceFor("grok-code");
+  assert.equal(codeFuture.input, 0.20);
+  assert.equal(codeFuture.output, 1.50);
+
+  // callCost sanity check.
+  // 4.1 Fast 1M/1M = $0.20 + $0.50 = $0.70.
+  assert.ok(Math.abs(callCost("grok-4.1-fast", 1_000_000, 1_000_000) - 0.70) < 0.01);
+  // Code Fast 1 1M/1M = $0.20 + $1.50 = $1.70.
+  assert.ok(Math.abs(callCost("grok-code-fast-1", 1_000_000, 1_000_000) - 1.70) < 0.01);
+});
+
 test("priceFor: Meta Muse Spark 1.1 matches at $1.25/$4.25 (2026-07-09 launch — were $0/$0)", () => {
   // Meta released Muse Spark 1.1 on July 9, 2026 — Meta's
   // first proprietary model after the open Llama era.

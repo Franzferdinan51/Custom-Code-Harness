@@ -187,9 +187,27 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   // the bare /^grok-4/ catch-all to avoid the same
   // prefix-stealing class as o1-mini vs o1 / gpt-5.6 vs
   // gpt-5.
+  //
+  // Grok 4.1 Fast (the xAI volume tier) is also UNDER-
+  // CHARGED by the same catch-all: $0.20/$0.50 vs the
+  // catch-all's $1.25/$2.50 — a 6x error on input and 5x
+  // on output. The 4.1-fast pattern must come BEFORE the
+  // bare /^grok-4/ catch-all for the same prefix-stealing
+  // reason. The 4.20 SKU is at the same $2/$6 rate as
+  // 4.5 (a rebrand of the same model, no new pricing).
   { match: /^grok-4\.5-fast/,        price: { input: 4.00,  output: 18.00, provider: "xai", label: "Grok 4.5 Fast" } },
   { match: /^grok-4\.5/,             price: { input: 2.00,  output: 6.00,  provider: "xai", label: "Grok 4.5" } },
+  { match: /^grok-4\.1-fast/,        price: { input: 0.20,  output: 0.50,  provider: "xai", label: "Grok 4.1 Fast (volume tier, $0.20/$0.50; 2M ctx)" } },
+  { match: /^grok-4\.20/,            price: { input: 2.00,  output: 6.00,  provider: "xai", label: "Grok 4.20 (rebrand of 4.5, same $2/$6 rate)" } },
   { match: /^grok-4/,                price: { input: 1.25,  output: 2.50,  provider: "xai", label: "Grok 4.x" } },
+  // Grok Code Fast 1 — a separate xAI family for code
+  // generation, $0.20/$1.50 per 1M. Does NOT match the
+  // bare /^grok-4/ catch-all (different prefix), so it
+  // would otherwise fall through to the unknown-model
+  // $0/$0 fallback — a 100% under-count vs the actual
+  // $0.20/$1.50 charge.
+  { match: /^grok-code-fast-1/,     price: { input: 0.20,  output: 1.50,  provider: "xai", label: "Grok Code Fast 1 ($0.20/$1.50, 256K ctx)" } },
+  { match: /^grok-code/,             price: { input: 0.20,  output: 1.50,  provider: "xai", label: "Grok Code (unknown version; default Code Fast 1 rate)" } },
   // Meta Muse Spark 1.1 (launched July 9, 2026) — Meta's
   // first paid/proprietary model after the open Llama
   // era. $1.25/$4.25 per 1M. The bare /^muse/ catch-all

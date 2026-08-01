@@ -16,6 +16,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Cost: xAI Grok 4.1 Fast + 4.20 + Code Fast 1 priced (were under-charged or $0/$0 unknown)
+
+Three more xAI Grok entries added. Two were real
+under-charge bugs; one was a complete unknown-fallback
+miss.
+
+- `grok-4.1-fast` — $0.20 / $0.50 (volume tier, 2M ctx).
+  **Pre-fix:** matched the bare `^grok-4` catch-all
+  (the Grok 4.3 rate of $1.25/$2.50) and was reported
+  as $1.25/$2.50 — a 6x error on input and 5x on
+  output. The 4.1-fast pattern now comes BEFORE the
+  bare catch-all (same prefix-stealing discipline as
+  o1-mini vs o1 / gpt-5.6 vs gpt-5).
+- `grok-4.20` — $2.00 / $6.00 (xAI's rebrand of the 4.5
+  model with the same rate).
+- `grok-code-fast-1` — $0.20 / $1.50 (separate xAI
+  family for code generation, 256K context).
+  **Pre-fix:** did not match the `^grok-4` catch-all
+  (different prefix), so it fell through to the
+  unknown-model $0/$0 fallback — a 100% under-count
+  vs the actual $0.20/$1.50 charge.
+- bare `^grok-code/` catch-all at Code Fast 1 rate for
+  unknown future Code models.
+
+One new test in `src/__tests__/cost-approval.test.ts`
+pins the four new rates and includes a `callCost` sanity
+check for both fixes.
+
+854 → 855 pass / 0 fail across 53 files (+1 test).
+5/5 stable full-suite runs.
+
 ### Trajectory: share format now redacts 12 more vendor key prefixes (Stripe, GitHub OAuth, SendGrid, Linear, Google OAuth, PyPI, GitLab new PAT)
 
 The trajectory export's `SECRET_RE` extended with twelve

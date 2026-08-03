@@ -307,6 +307,30 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^mistral-medium-3\.1/,   price: { input: 0.40,  output: 2.00,  provider: "mistral", label: "Mistral Medium 3.1" } },
   { match: /^mistral-large-3/,       price: { input: 0.50,  output: 1.50,  provider: "mistral", label: "Mistral Large 3 (value workhorse)" } },
   { match: /^mistral-small-4/,       price: { input: 0.15,  output: 0.60,  provider: "mistral", label: "Mistral Small 4 (budget tier)" } },
+  // Mistral specialized code models. Codestral is a
+  // code-specialized model ($0.30/$0.90), Devstral 2 is
+  // an agentic-coding model ($0.40/$2.00), and Magistral
+  // Small / Medium are reasoning models at $0.50/$1.50
+  // and $2/$5 respectively. The Ministral family
+  // (3B/8B/14B) is the on-device tier; we use the 3B
+  // rate ($0.04/$0.04) for unknown future Ministral
+  // versions as a placeholder — Ministral tiers are
+  // cheap, so an under-count is at most a few cents.
+  // Pre-fix: any of these would fall through to either
+  // the `^mistral-` catch-all ($0/$0 unknown) or the
+  // legacy `mistral-large` (v1/v2 line at $2/$6, wrong
+  // for the specialized families). The specific
+  // patterns must come BEFORE the bare `^mistral-`/
+  // catch-all (same prefix-stealing discipline as
+  // o1-mini vs o1 / gpt-5.6 vs gpt-5).
+  { match: /^codestral/,             price: { input: 0.30,  output: 0.90,  provider: "mistral", label: "Mistral Codestral (code-specialized)" } },
+  { match: /^devstral/,              price: { input: 0.40,  output: 2.00,  provider: "mistral", label: "Mistral Devstral 2 (agentic coding)" } },
+  { match: /^magistral-medium/,      price: { input: 2.00,  output: 5.00,  provider: "mistral", label: "Mistral Magistral Medium (reasoning, Premier tier)" } },
+  { match: /^magistral-small/,       price: { input: 0.50,  output: 1.50,  provider: "mistral", label: "Mistral Magistral Small (reasoning, Premier tier)" } },
+  { match: /^ministral-14b/,         price: { input: 0.20,  output: 0.20,  provider: "mistral", label: "Mistral Ministral 14B (on-device tier, $0.20/$0.20)" } },
+  { match: /^ministral-8b/,          price: { input: 0.10,  output: 0.10,  provider: "mistral", label: "Mistral Ministral 8B (on-device tier, $0.10/$0.10)" } },
+  { match: /^ministral-3b/,          price: { input: 0.04,  output: 0.04,  provider: "mistral", label: "Mistral Ministral 3B (on-device tier, $0.04/$0.04, cheapest API model)" } },
+  { match: /^ministral/,             price: { input: 0.04,  output: 0.04,  provider: "mistral", label: "Mistral Ministral (unknown tier; default 3B rate)" } },
   // Mistral Leanstral 1.5 (released 2026-07-02). A 119B/6B-active
   // MoE specialized for Lean 4 formal verification (PutnamBench
   // 587/672, miniF2F 100%, FLTEval pass@8 43.2 — above Opus 4.6

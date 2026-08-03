@@ -16,6 +16,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Cost: Mistral specialized families (Codestral, Devstral, Magistral, Ministral) priced (were $0/$0 unknown or wrong catch-all)
+
+Mistral's specialized code / reasoning / on-device
+families added to the cost table. Per
+mistral.ai/pricing/api (verified July 2026):
+
+- `codestral` — $0.30 / $0.90 (code-specialized)
+- `devstral-2` — $0.40 / $2.00 (agentic coding)
+- `magistral-medium` — $2.00 / $5.00 (reasoning, Premier)
+- `magistral-small` — $0.50 / $1.50 (reasoning, Premier)
+- `ministral-14b` — $0.20 / $0.20 (on-device)
+- `ministral-8b` — $0.10 / $0.10 (on-device)
+- `ministral-3b` — $0.04 / $0.04 (on-device, **cheapest API model in the entire table**)
+- bare `^ministral/` catch-all at 3B rate for unknown future Ministral versions
+
+Pre-fix: any of these would fall through to either
+the `^mistral-` catch-all ($0/$0 unknown) or the legacy
+`^mistral-large` entry (v1/v2 line at $2/$6, wrong
+for the specialized families). The Ministral 3B is
+worth highlighting: at $0.04/$0.04 it's the cheapest
+API model in the entire cost table — a high-volume
+Ministral 3B caller would have been reported as $0/$0
+in the cost tracker with the pre-fix catch-all, so the
+real $0.08/M round-trip cost would have been silently
+dropped.
+
+The specific patterns are placed BEFORE the bare
+`^mistral-` catch-all (same prefix-stealing discipline
+as o1-mini vs o1 / gpt-5.6 vs gpt-5).
+
+One new test in `src/__tests__/cost-approval.test.ts`
+pins all 7 new rates and includes `callCost` sanity
+checks for both Codestral and Ministral 3B.
+
+855 → 856 pass / 0 fail across 53 files (+1 test).
+5/5 stable full-suite runs.
+
 ### Cost: xAI Grok 4.1 Fast + 4.20 + Code Fast 1 priced (were under-charged or $0/$0 unknown)
 
 Three more xAI Grok entries added. Two were real

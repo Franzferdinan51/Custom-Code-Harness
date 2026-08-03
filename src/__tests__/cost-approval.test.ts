@@ -631,6 +631,73 @@ test("priceFor: Mistral Medium 3.5 / Large 3 / Small 4 match the current Mistral
   assert.ok(Math.abs(callCost("mistral-small-4", 1_000_000, 1_000_000) - 0.75) < 0.01);
 });
 
+test("priceFor: Mistral specialized families (Codestral, Devstral, Magistral, Ministral) priced (were $0/$0 unknown or wrong catch-all)", () => {
+  // Mistral's specialized code / reasoning / on-device
+  // families, per mistral.ai/pricing/api (verified July
+  // 2026):
+  //   codestral          $0.30 / $0.90   code-specialized
+  //   devstral 2         $0.40 / $2.00   agentic coding
+  //   magistral-medium   $2.00 / $5.00   reasoning, Premier
+  //   magistral-small    $0.50 / $1.50   reasoning, Premier
+  //   ministral-14b      $0.20 / $0.20   on-device
+  //   ministral-8b       $0.10 / $0.10   on-device
+  //   ministral-3b       $0.04 / $0.04   on-device (cheapest
+  //                                        API model)
+  // Pre-fix: any of these would fall through to either
+  // the `^mistral-` catch-all ($0/$0 unknown) or the
+  // legacy `mistral-large` (v1/v2 line at $2/$6, wrong
+  // for the specialized families). The specific patterns
+  // must come BEFORE the bare `^mistral-` catch-all
+  // (same prefix-stealing discipline as o1-mini vs o1
+  // / gpt-5.6 vs gpt-5).
+  const codestral = priceFor("codestral");
+  assert.equal(codestral.input, 0.30);
+  assert.equal(codestral.output, 0.90);
+  assert.equal(codestral.provider, "mistral");
+  assert.match(codestral.label!, /Codestral/);
+
+  const devstral = priceFor("devstral-2");
+  assert.equal(devstral.input, 0.40);
+  assert.equal(devstral.output, 2.00);
+  assert.equal(devstral.provider, "mistral");
+  assert.match(devstral.label!, /Devstral/);
+
+  const magMedium = priceFor("magistral-medium");
+  assert.equal(magMedium.input, 2.00);
+  assert.equal(magMedium.output, 5.00);
+  assert.equal(magMedium.provider, "mistral");
+  assert.match(magMedium.label!, /Magistral Medium/);
+
+  const magSmall = priceFor("magistral-small");
+  assert.equal(magSmall.input, 0.50);
+  assert.equal(magSmall.output, 1.50);
+  assert.equal(magSmall.provider, "mistral");
+
+  const ministral3b = priceFor("ministral-3b");
+  assert.equal(ministral3b.input, 0.04);
+  assert.equal(ministral3b.output, 0.04);
+  assert.equal(ministral3b.provider, "mistral");
+
+  const ministral8b = priceFor("ministral-8b");
+  assert.equal(ministral8b.input, 0.10);
+  assert.equal(ministral8b.output, 0.10);
+
+  const ministral14b = priceFor("ministral-14b");
+  assert.equal(ministral14b.input, 0.20);
+  assert.equal(ministral14b.output, 0.20);
+
+  // catch-all for unknown future Ministral versions.
+  const ministralFuture = priceFor("ministral-2");
+  assert.equal(ministralFuture.input, 0.04);
+  assert.equal(ministralFuture.output, 0.04);
+
+  // callCost sanity check.
+  // Codestral 1M/1M = $0.30 + $0.90 = $1.20.
+  assert.ok(Math.abs(callCost("codestral", 1_000_000, 1_000_000) - 1.20) < 0.01);
+  // Ministral 3B 1M/1M = $0.04 + $0.04 = $0.08.
+  assert.ok(Math.abs(callCost("ministral-3b", 1_000_000, 1_000_000) - 0.08) < 0.01);
+});
+
 test("priceFor: Mistral Leanstral 1.5 (Lean 4 prover) priced (was $0/$0 unknown fallback)", () => {
   // Mistral released Leanstral 1.5 on 2026-07-02. A 119B/6B-active
   // MoE specialized for Lean 4 formal verification, Apache-2.0,

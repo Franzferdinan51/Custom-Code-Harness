@@ -292,6 +292,54 @@ test("export: share format redacts Stripe, GitHub OAuth, SendGrid, Linear, Googl
   }
 });
 
+test("export: share format redacts Discord bot tokens, Vercel tokens, and Google Maps API keys (dc0_/dck_/va_/vercel_/key-)", async () => {
+  // Pre-fix: SECRET_RE covered the major LLM / VCS / cloud /
+  // channel-plugin / payment / GitHub-OAuth / SendGrid /
+  // Linear / PyPI / GitLab-new-PAT / Slack / webhook-secret
+  // prefixes but missed a final wave of common developer
+  // tool prefixes that show up in real workflows:
+  //   dc0_      Discord bot token (new format, since 2024)
+  //   dck_      Discord bot token (compact, alternate)
+  //   va_       Vercel access token (older format)
+  //   vercel_   Vercel access token (newer format, longer)
+  //   key-      Google Maps / Places API key
+  // A session that pasted any of these into a user message
+  // and then exported in `share` format would have leaked
+  // the key verbatim. Fix: extend SECRET_RE with all five
+  // patterns. The test pins the redaction for each.
+  const cwd = freshDir();
+  try {
+    const s = await makeSession(cwd, "share-vendor-keys-5");
+    await s.append({
+      kind: "message",
+      message: {
+        role: "user",
+        // Each key is 24+ chars after the prefix to match
+        // the {20,} shape in SECRET_RE.
+        content:
+          "dc0_" + "A".repeat(24) +
+          " dck_" + "B".repeat(24) +
+          " va_" + "C".repeat(24) +
+          " vercel_" + "D".repeat(24) +
+          " key-" + "E".repeat(39),
+      },
+    });
+    const out = freshDir();
+    const r = await exportSession(s, { format: "share", outDir: out });
+    const content = readFileSync(r.path, "utf-8");
+    assert.ok(!content.includes("dc0_" + "A".repeat(24)), "dc0_ key should be redacted");
+    assert.ok(!content.includes("dck_" + "B".repeat(24)), "dck_ key should be redacted");
+    assert.ok(!content.includes("va_" + "C".repeat(24)), "va_ key should be redacted");
+    assert.ok(!content.includes("vercel_" + "D".repeat(24)), "vercel_ key should be redacted");
+    assert.ok(!content.includes("key-" + "E".repeat(39)), "key- key should be redacted");
+    // All five should be replaced with the [REDACTED] marker.
+    const redactions = content.match(/\[REDACTED\]/g) ?? [];
+    assert.ok(redactions.length >= 5, "expected at least 5 redactions, got " + redactions.length);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("export: share format replaces absolute cwd paths with relative", async () => {
   const cwd = freshDir();
   try {

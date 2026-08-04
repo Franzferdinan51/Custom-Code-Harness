@@ -16,6 +16,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Trajectory: share format now redacts 5 more developer-tool key prefixes (Discord, Vercel, Google Maps)
+
+`SECRET_RE` extended with a fourth wave of vendor-key
+prefixes that show up in real developer workflows but
+were not covered by the previous rounds:
+
+- `dc0_` — Discord bot token (new format, since 2024)
+- `dck_` — Discord bot token (compact, alternate)
+- `va_` — Vercel access token (older format)
+- `vercel_` — Vercel access token (newer format, longer)
+- `key-` — Google Maps / Places API key
+
+Pre-fix: any of these in a user message and exported in
+`share` format would leak the key verbatim — same class
+of bug as the previous redaction-batch fixes.
+
+One new test in `src/__tests__/trajectory.test.ts`
+pins the redaction for each of the 5 new prefixes.
+
+856 → 857 pass / 0 fail across 53 files (+1 test).
+5/5 stable full-suite runs.
+
 ### Cost: Mistral specialized families (Codestral, Devstral, Magistral, Ministral) priced (were $0/$0 unknown or wrong catch-all)
 
 Mistral's specialized code / reasoning / on-device

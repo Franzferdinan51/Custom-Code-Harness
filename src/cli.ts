@@ -1044,20 +1044,53 @@ async function runProviderCmd(ctx: SubcommandContext): Promise<number> {
   }
 
   // `ch provider login codex` — Codex device-code OAuth.
+  // `ch provider login xai`   — xAI (Grok) device-code OAuth.
   if (sub === "login") {
     const target = ctx.args[1];
-    if (target !== "codex") {
-      process.stderr.write("usage: ch provider login codex\n");
+    if (target !== "codex" && target !== "xai") {
+      process.stderr.write("usage: ch provider login <codex|xai>\n");
       return 2;
     }
-    const { buildCodexBrowserAuthUrl } = await import("./providers/oauth/codex.js");
+    if (target === "codex") {
+      const { buildCodexBrowserAuthUrl } = await import("./providers/oauth/codex.js");
+      const { execFile } = await import("node:child_process");
+      process.stdout.write("Starting Codex (ChatGPT) device-code login…\n");
+      const login = await runtime.loginCodexOAuth({
+        onProgress: (m) => { process.stdout.write(m + "\n"); },
+        onDeviceCode: async (prompt) => {
+          process.stdout.write("\nSign in with ChatGPT:\n");
+          process.stdout.write("  URL:  " + buildCodexBrowserAuthUrl(prompt) + "\n");
+          process.stdout.write("  Code: " + prompt.userCode + "\n\n");
+        },
+        openBrowser: async (url) => {
+          const cmd = process.platform === "darwin" ? "open" :
+                      process.platform === "win32" ? "start" : "xdg-open";
+          const args = process.platform === "win32" ? ["", url] : [url];
+          await new Promise<void>((resolve, reject) => {
+            execFile(cmd, args, (err) => err ? reject(err) : resolve());
+          }).catch(() => {
+            process.stdout.write("(could not open browser — copy the URL above)\n");
+          });
+        },
+      });
+      if (!login.ok) {
+        process.stderr.write("✗ login failed: " + (login.reason ?? "unknown") + "\n");
+        return 1;
+      }
+      process.stdout.write("✓ Codex OAuth saved\n");
+      process.stdout.write("  model: " + (runtime.model() ?? "(unset)") + "\n");
+      return 0;
+    }
+
+    // xAI (Grok) device-code OAuth path.
+    const { buildXaiBrowserAuthUrl } = await import("./providers/oauth/xai.js");
     const { execFile } = await import("node:child_process");
-    process.stdout.write("Starting Codex (ChatGPT) device-code login…\n");
-    const login = await runtime.loginCodexOAuth({
+    process.stdout.write("Starting xAI (Grok) device-code login…\n");
+    const xaiLogin = await runtime.loginXaiOAuth({
       onProgress: (m) => { process.stdout.write(m + "\n"); },
       onDeviceCode: async (prompt) => {
-        process.stdout.write("\nSign in with ChatGPT:\n");
-        process.stdout.write("  URL:  " + buildCodexBrowserAuthUrl(prompt) + "\n");
+        process.stdout.write("\nSign in with xAI (Grok):\n");
+        process.stdout.write("  URL:  " + buildXaiBrowserAuthUrl(prompt) + "\n");
         process.stdout.write("  Code: " + prompt.userCode + "\n\n");
       },
       openBrowser: async (url) => {
@@ -1071,11 +1104,11 @@ async function runProviderCmd(ctx: SubcommandContext): Promise<number> {
         });
       },
     });
-    if (!login.ok) {
-      process.stderr.write("✗ login failed: " + (login.reason ?? "unknown") + "\n");
+    if (!xaiLogin.ok) {
+      process.stderr.write("✗ xAI login failed: " + (xaiLogin.reason ?? "unknown") + "\n");
       return 1;
     }
-    process.stdout.write("✓ Codex OAuth saved\n");
+    process.stdout.write("✓ xAI OAuth saved\n");
     process.stdout.write("  model: " + (runtime.model() ?? "(unset)") + "\n");
     return 0;
   }

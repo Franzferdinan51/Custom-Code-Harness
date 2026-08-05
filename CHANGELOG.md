@@ -16,6 +16,58 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### feat(xai): xAI (Grok) device-code OAuth flow (closes the OAuth gap on the xai provider)
+
+The `xai` provider preset in `src/providers/presets.ts`
+has declared `authModes: ["oauth", "apiKey"]` with
+`defaultAuthMode: "oauth"` since the GrokBot rebrand, but
+**no xAI OAuth implementation existed** — only
+`src/providers/oauth/codex.ts` (which talks to
+`auth.openai.com`). A user who picked `ch onboard
+--provider xai --oauth` or `ch provider login xai` would
+hit a runtime `dynamic import()` failure with no
+resolver.
+
+This change fills that gap with a full device-code
+flow against `accounts.x.ai`, structured symmetrically
+with `codex.ts` so callers can wire it in the same way
+(same hook shape, same `applyXaiOAuthTokens` /
+`saveXaiOAuthTokens` / `ensureFreshXaiTokens` helpers,
+same `runtime.loginXaiOAuth` / `runtime.saveXaiOAuthTokens`
+methods on the `HarnessRuntime`).
+
+Differences from the codex flow (per RFC 8628):
+
+- The xAI device flow **returns tokens directly** from
+  the device-token poll endpoint, with no separate
+  authorization-code exchange step. The poll step stashes
+  the resolved tokens on the prompt and `loginXaiOAuth`
+  reads them out.
+- The OAuth endpoints are at
+  `https://accounts.x.ai/oauth/{device/code,device/token,token}`,
+  per the public xAI docs at `docs.x.ai/build/overview`
+  and the Hermes / GrokBot references.
+- The `client_id` is a public-client identifier registered
+  with xAI for the GrokBot desktop / CLI app. It defaults
+  to `app_grokbot` (a placeholder) and is **configurable
+  via the `XAI_OAUTH_CLIENT_ID` env var** so a self-hosted
+  or enterprise xAI tenant can override without
+  recompiling. If the default is not yet registered, the
+  device-code POST fails fast with a clear `invalid_client`
+  error, so the user knows to set the env var.
+
+`ch provider login xai` now works in addition to
+`ch provider login codex`. The new test file
+`src/__tests__/xai-oauth.test.ts` (9 tests) covers the
+device-code parsing, the browser-URL builder, the
+happy-path login (with a localhost stub that rewrites
+the xAI auth base), the token-refresh path, the
+settings round-trip, and the "still-fresh" short-circuit
+in `ensureFreshXaiTokens`.
+
+857 → 866 pass / 0 fail across 54 files (+9 tests,
++1 test file). 5/5 stable full-suite runs.
+
 ### Trajectory: share format now redacts 5 more developer-tool key prefixes (Discord, Vercel, Google Maps)
 
 `SECRET_RE` extended with a fourth wave of vendor-key

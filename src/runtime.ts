@@ -347,6 +347,29 @@ export class HarnessRuntime implements SlashRuntime {
     }
   }
 
+  /** Save xAI OAuth tokens from a device-code login flow. */
+  async saveXaiOAuthTokens(tokens: import("./providers/oauth/xai.js").XaiOAuthTokens, opts?: { makeDefault?: boolean; model?: string }): Promise<{ ok: boolean; reason?: string }> {
+    const { saveXaiOAuthTokens: persist } = await import("./providers/oauth/xai.js");
+    if (!tokens.accessToken || !tokens.refreshToken) {
+      return { ok: false, reason: "missing OAuth tokens" };
+    }
+    persist(this.settings, tokens, opts);
+    this.providerRegistry.invalidate("xai");
+    return { ok: true };
+  }
+
+  /** Run the xAI device-code OAuth login flow (CLI / slash / web). */
+  async loginXaiOAuth(hooks?: import("./providers/oauth/xai.js").XaiOAuthLoginHooks): Promise<{ ok: boolean; reason?: string }> {
+    const { loginXaiOAuth } = await import("./providers/oauth/xai.js");
+    try {
+      const tokens = await loginXaiOAuth(hooks);
+      await this.saveXaiOAuthTokens(tokens, { makeDefault: true });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message };
+    }
+  }
+
   /** True when no provider is configured at all (no env vars, no
    *  settings.json, no default). Used to trigger the onboarding
    *  prompt on first launch. */

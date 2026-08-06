@@ -67,6 +67,21 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^gpt-4o/,                price: { input: 2.50,  output: 10.00, provider: "openai", label: "GPT-4o" } },
   { match: /^gpt-4-turbo/,           price: { input: 10,    output: 30,    provider: "openai", label: "GPT-4 Turbo" } },
   { match: /^gpt-3\.5-turbo/,        price: { input: 0.50,  output: 1.50,  provider: "openai", label: "GPT-3.5 Turbo" } },
+  // OpenAI open-weight GPT-OSS family (released 2025-08-05).
+  // Pricing varies wildly by gateway (OpenAI direct $0.039/$0.10,
+  // OpenRouter $0.03/$0.15, Groq/Fireworks/Together $0.15/$0.60,
+  // Cerebras $0.35/$0.75, Baseten $0.10/$0.50), so we
+  // document the OpenAI-direct rates as the primary and
+  // include an OpenRouter-prefixed form for that gateway
+  // (different rate). Pre-fix: any GPT-OSS call would fall
+  // through to the bare `^gpt-` catch-all (if it existed) or
+  // the unknown-model $0/$0 fallback. The 20b variant is
+  // priced at 1/5 the 120b rate per OpenAI's published tier.
+  { match: /^gpt-oss-120b/,         price: { input: 0.039, output: 0.10,  provider: "openai",     label: "GPT-OSS 120B (OpenAI direct, $0.039/$0.10)" } },
+  { match: /^openai\/gpt-oss-120b/,  price: { input: 0.03,  output: 0.15,  provider: "openrouter", label: "GPT-OSS 120B (OpenRouter gateway, $0.03/$0.15)" } },
+  { match: /^gpt-oss-20b/,          price: { input: 0.01,  output: 0.03,  provider: "openai",     label: "GPT-OSS 20B (5x cheaper than 120B, $0.01/$0.03)" } },
+  { match: /^openai\/gpt-oss-20b/,   price: { input: 0.01,  output: 0.03,  provider: "openrouter", label: "GPT-OSS 20B (OpenRouter gateway)" } },
+  { match: /^gpt-oss/,               price: { input: 0.039, output: 0.10,  provider: "openai",     label: "GPT-OSS (unknown size; default 120B rate)" } },
   // o1 (full) must come AFTER o1-mini because `^o1` is a
   // prefix match without `$` and would otherwise steal the
   // o1-mini match. Pre-fix o1-mini was being charged at the

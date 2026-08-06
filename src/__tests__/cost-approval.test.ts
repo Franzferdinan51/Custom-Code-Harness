@@ -1137,6 +1137,46 @@ test("priceFor: Grok 4.5 + Grok 4.5 Fast match (2026-07-08 launch — were under
   assert.equal(g43.label, "Grok 4.x");
 });
 
+test("priceFor: OpenAI GPT-OSS 120B / 20B priced (were unknown $0/$0 fallback)", () => {
+  // OpenAI open-weight GPT-OSS family, released 2025-08-05.
+  // Pricing varies wildly by gateway, so we document the
+  // OpenAI-direct rate ($0.039/$0.10 for 120B; $0.01/$0.03
+  // for 20B, 1/5 the 120B rate) and an OpenRouter-prefixed
+  // form for the gateway. The 20b is intended for on-device
+  // and edge deployments, the 120b is a frontier-class
+  // open-weight alternative. Pre-fix: any GPT-OSS call fell
+  // through to the unknown-model $0/$0 fallback.
+  const gptoss120b = priceFor("gpt-oss-120b");
+  assert.equal(gptoss120b.input, 0.039);
+  assert.equal(gptoss120b.output, 0.10);
+  assert.equal(gptoss120b.provider, "openai");
+  assert.match(gptoss120b.label!, /GPT-OSS 120B/);
+
+  // OpenRouter gateway form (different rate).
+  const gptoss120bOR = priceFor("openai/gpt-oss-120b");
+  assert.equal(gptoss120bOR.input, 0.03);
+  assert.equal(gptoss120bOR.output, 0.15);
+  assert.equal(gptoss120bOR.provider, "openrouter");
+
+  // 20b is 1/5 the 120b rate per OpenAI's published tier.
+  const gptoss20b = priceFor("gpt-oss-20b");
+  assert.equal(gptoss20b.input, 0.01);
+  assert.equal(gptoss20b.output, 0.03);
+  assert.equal(gptoss20b.provider, "openai");
+  assert.match(gptoss20b.label!, /GPT-OSS 20B/);
+
+  // catch-all for unknown future GPT-OSS sizes at 120B rate.
+  const gptossFuture = priceFor("gpt-oss-30b");
+  assert.equal(gptossFuture.input, 0.039);
+  assert.equal(gptossFuture.output, 0.10);
+
+  // callCost sanity check.
+  // 120B 1M/1M = $0.039 + $0.10 = $0.139.
+  assert.ok(Math.abs(callCost("gpt-oss-120b", 1_000_000, 1_000_000) - 0.139) < 0.001);
+  // 20B 1M/1M = $0.01 + $0.03 = $0.04.
+  assert.ok(Math.abs(callCost("gpt-oss-20b", 1_000_000, 1_000_000) - 0.04) < 0.001);
+});
+
 test("priceFor: xAI Grok 4.1 Fast + 4.20 + Code Fast 1 priced (were under-charged or $0/$0 unknown)", () => {
   // xAI's volume tier is Grok 4.1 Fast at $0.20/$0.50 per
   // 1M (2M-token context). Pre-fix: it matched the bare

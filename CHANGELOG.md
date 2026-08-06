@@ -16,6 +16,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Cost: OpenAI GPT-OSS 120B / 20B priced (were $0/$0 unknown fallback)
+
+The cost table picked up OpenAI's open-weight
+GPT-OSS family (released 2025-08-05). Pricing varies
+widely by gateway, so the table documents the
+OpenAI-direct rate as the primary and includes an
+OpenRouter-prefixed form for that gateway (different
+rate).
+
+- `gpt-oss-120b` — $0.039 / $0.10 (OpenAI direct)
+- `openai/gpt-oss-120b` — $0.03 / $0.15 (OpenRouter gateway)
+- `gpt-oss-20b` — $0.01 / $0.03 (5x cheaper than 120B; for on-device / edge)
+- `openai/gpt-oss-20b` — $0.01 / $0.03 (OpenRouter gateway)
+- bare `^gpt-oss/` catch-all at 120B rate for unknown future sizes
+
+The 120B is a frontier-class open-weight alternative
+(MMLU 77.5, GPQA 67.2, 131K context); the 20B is
+1/5 the price for on-device and edge deployments.
+
+Pre-fix: any GPT-OSS call fell through to the
+unknown-model $0/$0 fallback — a 100% under-count vs
+the actual OpenAI-direct charges.
+
+One new test in `src/__tests__/cost-approval.test.ts`
+pins the 4 specific rates + the catch-all, with
+`callCost` sanity checks for both 120B and 20B.
+
+866 → 867 pass / 0 fail across 54 files (+1 test).
+5/5 stable full-suite runs.
+
 ### feat(xai): xAI (Grok) device-code OAuth flow (closes the OAuth gap on the xai provider)
 
 The `xai` provider preset in `src/providers/presets.ts`

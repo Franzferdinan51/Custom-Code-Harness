@@ -16,6 +16,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Trajectory: share format now redacts legacy Discord `MTk...` bot tokens
+
+`SECRET_RE` extended with one more vendor-key pattern:
+the **legacy Discord bot token format** (pre-2024),
+written as `MTk<24+ chars>.<24+ chars>.<24+ chars>.…`
+(8 dot-separated base64 segments, each 24+ chars).
+The literal `MTk` prefix is Discord's secret-name for
+bot tokens that pre-date the `dc0_` / `dck_` migration;
+still in active use for many existing bots and not
+yet rolled over.
+
+Pre-fix: a session that pasted a legacy `MTk…` token
+into a user message and exported in `share` format
+would have leaked the token verbatim. The pattern
+requires each of the 8 base64 segments to be 24+
+chars, so it does not collide with shorter Discord
+identifiers (user ids, message ids, etc.).
+
+The existing test in `src/__tests__/trajectory.test.ts`
+that covers `dc0_` / `dck_` / `va_` / `vercel_` /
+`key-` was extended to also cover `MTk…` (test count
+unchanged — same test, one more assertion).
+
+867 → 867 pass / 0 fail across 54 files (0 new tests;
+the existing test grew). 5/5 stable full-suite runs.
+
 ### Cost: OpenAI GPT-OSS 120B / 20B priced (were $0/$0 unknown fallback)
 
 The cost table picked up OpenAI's open-weight

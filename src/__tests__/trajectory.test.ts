@@ -292,7 +292,7 @@ test("export: share format redacts Stripe, GitHub OAuth, SendGrid, Linear, Googl
   }
 });
 
-test("export: share format redacts Discord bot tokens, Vercel tokens, and Google Maps API keys (dc0_/dck_/va_/vercel_/key-)", async () => {
+test("export: share format redacts Discord bot tokens, Vercel tokens, and Google Maps API keys (dc0_/dck_/va_/vercel_/key-/MTk...)", async () => {
   // Pre-fix: SECRET_RE covered the major LLM / VCS / cloud /
   // channel-plugin / payment / GitHub-OAuth / SendGrid /
   // Linear / PyPI / GitLab-new-PAT / Slack / webhook-secret
@@ -303,9 +303,16 @@ test("export: share format redacts Discord bot tokens, Vercel tokens, and Google
   //   va_       Vercel access token (older format)
   //   vercel_   Vercel access token (newer format, longer)
   //   key-      Google Maps / Places API key
+  //   MTk...    Discord legacy bot token (pre-2024 format;
+  //             4 dot-separated base64 segments, 24+ chars
+  //             each, starts with MTk — the literal
+  //             "MTk" prefix is Discord's secret-name for
+  //             bot tokens that pre-date the dc0_/dck_
+  //             migration; still in active use for many
+  //             existing bots and not yet rolled over)
   // A session that pasted any of these into a user message
   // and then exported in `share` format would have leaked
-  // the key verbatim. Fix: extend SECRET_RE with all five
+  // the key verbatim. Fix: extend SECRET_RE with all six
   // patterns. The test pins the redaction for each.
   const cwd = freshDir();
   try {
@@ -321,7 +328,8 @@ test("export: share format redacts Discord bot tokens, Vercel tokens, and Google
           " dck_" + "B".repeat(24) +
           " va_" + "C".repeat(24) +
           " vercel_" + "D".repeat(24) +
-          " key-" + "E".repeat(39),
+          " key-" + "E".repeat(39) +
+          " MTk" + "F".repeat(24) + "." + "G".repeat(24) + "." + "H".repeat(24) + "." + "I".repeat(24) + "." + "J".repeat(24) + "." + "K".repeat(24) + "." + "L".repeat(24) + "." + "M".repeat(24),
       },
     });
     const out = freshDir();
@@ -332,9 +340,10 @@ test("export: share format redacts Discord bot tokens, Vercel tokens, and Google
     assert.ok(!content.includes("va_" + "C".repeat(24)), "va_ key should be redacted");
     assert.ok(!content.includes("vercel_" + "D".repeat(24)), "vercel_ key should be redacted");
     assert.ok(!content.includes("key-" + "E".repeat(39)), "key- key should be redacted");
-    // All five should be replaced with the [REDACTED] marker.
+    assert.ok(!content.includes("MTk" + "F".repeat(24) + "."), "MTk legacy Discord bot token should be redacted");
+    // All six should be replaced with the [REDACTED] marker.
     const redactions = content.match(/\[REDACTED\]/g) ?? [];
-    assert.ok(redactions.length >= 5, "expected at least 5 redactions, got " + redactions.length);
+    assert.ok(redactions.length >= 6, "expected at least 6 redactions, got " + redactions.length);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

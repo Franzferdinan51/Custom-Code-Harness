@@ -16,6 +16,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Cost: Llama 3.3 70B / 8B + Llama 3.2 family priced (were $0/$0 unknown fallback)
+
+The cost table picked up Meta's Llama 3.3 (Dec 2024)
+and Llama 3.2 (Sep 2024) families. The 3.3 70B is
+Meta's workhorse open-weight model; 3.2 includes
+both text and vision variants (the 90B Vision is
+multimodal at $0.35/$0.40).
+
+- `llama-3.3-70b` — $0.13 / $0.40 (OpenRouter, current cheapest)
+- `llama-3.3-8b` — $0.02 / $0.05 (on-device tier)
+- `llama-3.3` (catch-all) — $0.13 / $0.40 (default 70B rate for unknown sizes)
+- `llama-3.2-90b-vision` — $0.35 / $0.40 (multimodal, Sep 2024)
+- `llama-3.2-11b-vision` — $0.05 / $0.05 (multimodal)
+- `llama-3.2-3b` — $0.02 / $0.02 (cheapest Llama, on-device)
+- `llama-3.2-1b` — $0.03 / $0.20 (on-device)
+- `llama-3.2` (catch-all) — $0.02 / $0.02 (default 3B rate for unknown sizes)
+
+Pre-fix: any Llama 3.3 or 3.2 call fell through to
+either the `^llama-3/` catch-all at the wrong rate or
+the unknown-model `$0/$0` fallback. The 3.3-70b
+pattern comes BEFORE the bare `^llama-3\.3/` catch-all
+(same prefix-stealing discipline as o1-mini vs o1).
+
+One new test in `src/__tests__/cost-approval.test.ts`
+pins the 3.3 70B/8B rates, the 3.2 vision/3B rates,
+and the two catch-alls, with a `callCost` sanity check
+for the 3.3 70B.
+
+867 → 868 pass / 0 fail across 54 files (+1 test).
+5/5 stable full-suite runs.
+
 ### Trajectory: share format now redacts legacy Discord `MTk...` bot tokens
 
 `SECRET_RE` extended with one more vendor-key pattern:

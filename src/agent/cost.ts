@@ -308,6 +308,24 @@ const TABLE: Array<{ match: RegExp; price: ModelPrice }> = [
   { match: /^llama-4-maverick/,     price: { input: 0.20,  output: 0.80,  provider: "meta", label: "Llama 4 Maverick (400B / 17B active, 1M ctx)" } },
   { match: /^llama-4-scout/,        price: { input: 0.11,  output: 0.34,  provider: "meta", label: "Llama 4 Scout (109B / 17B active, 10M ctx)" } },
   { match: /^llama-4/,              price: { input: 0.20,  output: 0.80,  provider: "meta", label: "Llama 4 (unknown tier)" } },
+  // Llama 3.3 family (released Dec 2024, OpenRouter current
+  // cheapest: $0.13/$0.40). Llama 3.2 family (released
+  // Sep 2024, vision + text variants). The 3.2 90B Vision
+  // is a multimodal model priced at $0.35/$0.40. Pre-fix:
+  // any Llama 3.3 or 3.2 call fell through to the
+  // `^llama-3/` catch-all at the wrong rate or to the
+  // `^llama/` unknown-fallback. The 3.3-70b-specific
+  // pattern must come BEFORE the bare `^llama-3\.3/`
+  // catch-all (same prefix-stealing class as o1-mini vs
+  // o1 / gpt-5.6 vs gpt-5).
+  { match: /^llama-3\.3-70b/,         price: { input: 0.13,  output: 0.40,  provider: "openrouter", label: "Llama 3.3 70B Instruct (Dec 2024, $0.13/$0.40 OpenRouter)" } },
+  { match: /^llama-3\.3-8b/,          price: { input: 0.02,  output: 0.05,  provider: "meta",        label: "Llama 3.3 8B Instruct (Dec 2024, $0.02/$0.05)" } },
+  { match: /^llama-3\.3/,             price: { input: 0.13,  output: 0.40,  provider: "openrouter", label: "Llama 3.3 (unknown size; default 70B rate)" } },
+  { match: /^llama-3\.2-90b-vision/, price: { input: 0.35,  output: 0.40,  provider: "meta",        label: "Llama 3.2 90B Vision Instruct (multimodal, Sep 2024)" } },
+  { match: /^llama-3\.2-11b-vision/, price: { input: 0.05,  output: 0.05,  provider: "meta",        label: "Llama 3.2 11B Vision Instruct (multimodal, Sep 2024)" } },
+  { match: /^llama-3\.2-3b/,          price: { input: 0.02,  output: 0.02,  provider: "meta",        label: "Llama 3.2 3B Instruct (Sep 2024, on-device tier, $0.02/$0.02)" } },
+  { match: /^llama-3\.2-1b/,          price: { input: 0.03,  output: 0.20,  provider: "meta",        label: "Llama 3.2 1B Instruct (Sep 2024, on-device tier, $0.03/$0.20)" } },
+  { match: /^llama-3\.2/,             price: { input: 0.02,  output: 0.02,  provider: "meta",        label: "Llama 3.2 (unknown tier; default 3B rate)" } },
   // Mistral family (current lineup as of July 2026, per
   // Mistral's API page). The Medium 3.5, Large 3, and
   // Small 4 entries cover the most current tiers; older

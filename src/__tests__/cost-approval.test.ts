@@ -502,6 +502,45 @@ test("priceFor: Moonshot Kimi K3 matches at $3/$15 (2026-07-16 launch — were $
   assert.ok(Math.abs(callCost("kimi-k3", 1_000_000, 1_000_000) - 18.00) < 0.01);
 });
 
+test("priceFor: Llama 3.3 70B / 8B + Llama 3.2 vision/text match (2024 releases — were $0/$0 unknown fallback)", () => {
+  // Llama 3.3 70B Instruct (Dec 2024): Meta's workhorse
+  // open-weight model. OpenRouter current rate $0.13/$0.40
+  // per 1M. Pre-fix: any Llama 3.3 70B call would fall
+  // through to the `^llama-3/` catch-all at the wrong
+  // rate or to the unknown-model $0/$0 fallback. The
+  // 3.3-70b pattern must come BEFORE any bare `^llama-3\.3/`
+  // catch-all (same prefix-stealing class as o1-mini vs o1).
+  const l3370b = priceFor("llama-3.3-70b");
+  assert.equal(l3370b.input, 0.13);
+  assert.equal(l3370b.output, 0.40);
+  assert.match(l3370b.label!, /3\.3 70B/);
+
+  // Llama 3.3 8B (on-device tier).
+  const l338b = priceFor("llama-3.3-8b");
+  assert.equal(l338b.input, 0.02);
+  assert.equal(l338b.output, 0.05);
+
+  // catch-all for unknown future 3.3 sizes at 70B rate.
+  const l33Future = priceFor("llama-3.3-22b");
+  assert.equal(l33Future.input, 0.13);
+  assert.equal(l33Future.output, 0.40);
+
+  // Llama 3.2 90B Vision (multimodal).
+  const l3290bv = priceFor("llama-3.2-90b-vision");
+  assert.equal(l3290bv.input, 0.35);
+  assert.equal(l3290bv.output, 0.40);
+  assert.match(l3290bv.label!, /Vision/);
+
+  // Llama 3.2 3B (on-device tier, cheapest Llama).
+  const l323b = priceFor("llama-3.2-3b");
+  assert.equal(l323b.input, 0.02);
+  assert.equal(l323b.output, 0.02);
+
+  // callCost sanity check.
+  // 3.3 70B 1M/1M = $0.13 + $0.40 = $0.53.
+  assert.ok(Math.abs(callCost("llama-3.3-70b", 1_000_000, 1_000_000) - 0.53) < 0.01);
+});
+
 test("priceFor: Llama 4 Maverick / Scout match (April 2025 release — were $0/$0)", () => {
   // Meta released the Llama 4 family in April 2025 under
   // the Llama 4 Community License. Two tiers as of July
